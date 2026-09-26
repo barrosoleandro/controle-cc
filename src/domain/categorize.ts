@@ -24,17 +24,8 @@ const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCa
  */
 export function categorize(tx: CategorizableTx, rules: Rule[], bankMap: BankMapEntry[], bank = 'BCP'): string {
   if (tx.bankCategory === CARD_PAYMENT) return TRANSFER
-  const desc = norm(tx.description)
-  // Rules learned from merchantKey() hold letters only ("PAG SERV BANCO"); also try the
-  // description without digits/punctuation so they still match "PAG SERV 21489/0209 BANCO".
-  const letters = desc.replace(/[^A-Z ]+/g, ' ').replace(/\s+/g, ' ').trim()
   const sorted = [...rules].filter((r) => r.active !== false).sort((a, b) => a.priority - b.priority)
-  for (const r of sorted) {
-    if (r.bank && r.bank !== bank) continue
-    if (r.sign === 'debit' && tx.amount >= 0) continue
-    if (r.sign === 'credit' && tx.amount < 0) continue
-    if (patternMatches(desc, r.pattern) || patternMatches(letters, r.pattern)) return r.category
-  }
+  for (const r of sorted) if (ruleMatches(r, tx, bank)) return r.category
   if (tx.bankCategory) {
     const exact = bankMap.find((m) => m.bank_category === tx.bankCategory && m.bank_subcategory === tx.bankSubcategory)
     if (exact) return exact.category
@@ -42,6 +33,18 @@ export function categorize(tx: CategorizableTx, rules: Rule[], bankMap: BankMapE
     if (any) return any.category
   }
   return tx.amount >= 0 ? 'Outras receitas' : 'Outros'
+}
+
+/** Whether one rule applies to a transaction (bank, sign and pattern). */
+export function ruleMatches(r: Pick<Rule, 'pattern' | 'bank' | 'sign'>, tx: { description: string; amount: number }, bank = 'BCP'): boolean {
+  if (r.bank && r.bank !== bank) return false
+  if (r.sign === 'debit' && tx.amount >= 0) return false
+  if (r.sign === 'credit' && tx.amount < 0) return false
+  const desc = norm(tx.description)
+  // Rules learned from merchantKey() hold letters only ("PAG SERV BANCO"); also try the
+  // description without digits/punctuation so they still match "PAG SERV 21489/0209 BANCO".
+  const letters = desc.replace(/[^A-Z ]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return patternMatches(desc, r.pattern) || patternMatches(letters, r.pattern)
 }
 
 /** Short merchant key used for grouping (subscriptions, top merchants). */

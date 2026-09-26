@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { addCategory, addRule, markAiNote, reapplyRules, setCategoryForTransactions, setTransactionCategory, setTransactionNote, updateRule } from '../lib/data'
+import { addCategory, markAiNote, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote } from '../lib/data'
+import { CategorySelect } from '../components/CategorySelect'
 import { money } from '../lib/format'
 import { today, useFmt, useSubscriptions } from '../lib/hooks'
 import { buildPeriod, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
@@ -16,15 +17,18 @@ const MONTHS: Record<string, number> = { '1 mês': 1, '6 meses': 6, '12 meses': 
 
 export function Transactions({ ctx }: { ctx: Ctx }) {
   const [view, setView] = useState<(typeof VIEWS)[number]>('6 meses')
+  const [merchant, setMerchant] = useState('') // set from a month view: the list shows only this merchant
   return <>
     <div className="row">{VIEWS.map((v) => (
-      <button key={v} className={v === view ? 'active' : ''} onClick={() => setView(v)}>{v}</button>
+      <button key={v} className={v === view ? 'active' : ''} onClick={() => { setView(v); setMerchant('') }}>{v}</button>
     ))}</div>
-    {view === 'Lista' ? <Lista ctx={ctx} /> : <Periodo ctx={ctx} n={MONTHS[view]} />}
+    {view === 'Lista'
+      ? <Lista ctx={ctx} merchant={merchant} onClearMerchant={() => setMerchant('')} />
+      : <Periodo ctx={ctx} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
   </>
 }
 
-function Lista({ ctx }: { ctx: Ctx }) {
+function Lista({ ctx, merchant, onClearMerchant }: { ctx: Ctx; merchant: string; onClearMerchant: () => void }) {
   const fmt = useFmt(ctx)
   const { data, etx } = ctx
   const [q, setQ] = useState('')
@@ -35,6 +39,7 @@ function Lista({ ctx }: { ctx: Ctx }) {
   const [cat, setCat] = useState('')
   const [acc, setAcc] = useState('')
   const [limit, setLimit] = useState(200)
+  const [ordem, setOrdem] = useState<'data' | 'valor'>('data')
   const [msg, setMsg] = useState<string | null>(null)
   const [sel, setSel] = useState<Set<string>>(() => new Set())
   const [bulkCat, setBulkCat] = useState('')
@@ -52,42 +57,41 @@ function Lista({ ctx }: { ctx: Ctx }) {
       const d = purchaseDate(t.description, t.booking_date)
       return (!de || d >= de) && (!ate || d <= ate)
     }
-    return etx.filter((t) => (!month || t.month === month) && (!acc || t.account_id === acc) && inRange(t)
+    return etx.filter((t) => (!merchant || t.merchant === merchant) && (!month || t.month === month) && (!acc || t.account_id === acc) && inRange(t)
       && (!cat || (cat === '__none' ? !t.category_id : t.category_id === cat))
       && (!qq || t.description.toUpperCase().includes(qq) || (t.notes ?? '').toUpperCase().includes(qq)))
-      .sort((a, b) => b.booking_date.localeCompare(a.booking_date))
-  }, [etx, q, month, cat, acc, de, ate])
+      // "valor": biggest spending first (most negative), then the rest.
+      .sort((a, b) => (ordem === 'valor' ? a.value - b.value : b.booking_date.localeCompare(a.booking_date)))
+  }, [etx, q, month, cat, acc, de, ate, merchant, ordem])
   const total = rows.reduce((s, t) => s + t.value, 0)
 
-  /**
-   * A category picked on one line applies to the whole history of that merchant, even rows
-   * chosen earlier by hand or by the AI, and becomes (or updates) the merchant's rule.
-   */
+  /** A category picked on one line applies to the merchant's whole history and its rule; see setMerchantCategory. */
   async function changeCategory(t: { id: string; merchant: string }, categoryId: string) {
-    const merchant = t.merchant
-    const wide = Boolean(categoryId) && merchant.length >= 2
-    const same = wide ? data.transactions.filter((x) => x.merchant === merchant) : data.transactions.filter((x) => x.id === t.id)
-    if (wide) await setCategoryForTransactions(same.map((x) => x.id), categoryId)
-    else await setTransactionCategory(t.id, categoryId || null)
-    await markAiNote(same, false)
-    if (wide) {
-      const rule = data.rules.find((r) => r.pattern.toUpperCase() === merchant.toUpperCase())
-      if (rule?.id) await updateRule(rule.id, { category_id: categoryId })
-      else await addRule(merchant, categoryId, null, Math.min(1000, ...data.rules.map((r) => r.priority)) - 1) // regras suas vencem as padrão
-      setMsg(`"${merchant}": ${same.length} lançamento(s) atualizados e regra salva para os próximos imports.`)
-    }
-    await ctx.reload()
+    setBusy(true); setMsg(null)
+    try {
+      if (categoryId && t.merchant.length >= 2) {
+        const n = await setMerchantCategory(data, t.merchant, categoryId)
+        setMsg(`"${t.merchant}": ${n} lançamento(s) atualizados e regra salva para os próximos imports.`)
+      } else {
+        await setTransactionCategory(t.id, categoryId || null)
+        await markAiNote(data.transactions.filter((x) => x.id === t.id), false)
+      }
+      await ctx.reload()
+    } catch (e) { setMsg(`Não foi possível mudar a categoria: ${(e as Error).message}`) } finally { setBusy(false) }
   }
 
   /** Only the selected lines change; they are locked so rules leave them alone, and the merchant rule stays as it is. */
   async function applyToSelected(categoryId: string) {
     const chosen = data.transactions.filter((x) => sel.has(x.id))
     if (!chosen.length || !categoryId) return
-    await setCategoryForTransactions(chosen.map((x) => x.id), categoryId)
-    await markAiNote(chosen, false)
-    setMsg(`${chosen.length} lançamento(s) alterados só nestas linhas; a regra do estabelecimento não mudou.`)
-    setSel(new Set()); setBulkCat('')
-    await ctx.reload()
+    setBusy(true); setMsg(null)
+    try {
+      await setCategoryForTransactions(chosen.map((x) => x.id), categoryId)
+      await markAiNote(chosen, false)
+      setMsg(`${chosen.length} lançamento(s) alterados só nestas linhas; a regra do estabelecimento não mudou.`)
+      setSel(new Set()); setBulkCat('')
+      await ctx.reload()
+    } catch (e) { setMsg(`Não foi possível mudar a categoria: ${(e as Error).message}`) } finally { setBusy(false) }
   }
 
   async function criarCategoria() {
@@ -124,11 +128,17 @@ function Lista({ ctx }: { ctx: Ctx }) {
         <label className="inline" title="Data da compra (FACT no extrato), não a data em que o banco lançou">Compra de
           <input type="date" value={de} onChange={(e) => setDe(e.target.value)} /></label>
         <label className="inline">até <input type="date" value={ate} onChange={(e) => setAte(e.target.value)} /></label>
+        <label className="inline">Ordenar por
+          <select value={ordem} onChange={(e) => setOrdem(e.target.value as 'data' | 'valor')}>
+            <option value="data">data</option><option value="valor">valor (maiores gastos primeiro)</option>
+          </select></label>
         <select value={acc} onChange={(e) => setAcc(e.target.value)}><option value="">Todas as contas</option>{data.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
         <select value={cat} onChange={(e) => setCat(e.target.value)}><option value="">Todas as categorias</option><option value="__none">(sem categoria)</option>{sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         <button onClick={exportCsv}>Exportar CSV</button>
         <button onClick={async () => { const n = await reapplyRules(data); setMsg(`${n} lançamentos recategorizados.`); ctx.reload() }}>Reaplicar regras</button>
       </div>
+      {merchant && <p className="row alert" style={{ justifyContent: 'space-between' }}>
+        <span>Só <strong>{merchant}</strong></span><button onClick={onClearMerchant}>Ver todos</button></p>}
       <p className="muted">{rows.length} lançamentos · saldo {fmt(total)}{msg ? ` · ${msg}` : ''}</p>
       <p className="muted" style={{ fontSize: 12 }}>
         Trocar a categoria na linha muda todo o histórico daquele estabelecimento. Para mudar só algumas linhas, marque-as e use
@@ -190,7 +200,7 @@ function Lista({ ctx }: { ctx: Ctx }) {
  * and recurring charges that deserve a look (price up, new, stopped, annual renewal
  * coming) are marked for review.
  */
-function Periodo({ ctx, n }: { ctx: Ctx; n: number }) {
+function Periodo({ ctx, n, onOpen }: { ctx: Ctx; n: number; onOpen: (merchant: string) => void }) {
   const fmt = useFmt(ctx)
   const { data, etx } = ctx
   const subs = useSubscriptions(ctx)
@@ -198,6 +208,7 @@ function Periodo({ ctx, n }: { ctx: Ctx; n: number }) {
   const [end, setEnd] = useState('') // último mês da janela; vazio = o mais recente com dados
   const [onlyAlerts, setOnlyAlerts] = useState(false)
   const [open, setOpen] = useState<Set<string>>(() => new Set())
+  const [sortBy, setSortBy] = useState<number | null>(null) // month column to sort by; null = total over the window
 
   const allMonths = useMemo(() => [...new Set(etx.map((t) => t.month))].sort(), [etx])
   const lastMonth = end || allMonths.at(-1) || ''
@@ -206,21 +217,36 @@ function Periodo({ ctx, n }: { ctx: Ctx; n: number }) {
   const all = useMemo(() => buildPeriod(etx.filter((t) => !acc || t.account_id === acc), months), [etx, acc, months])
 
   const needsLook = (m: PeriodRow) => m.flagged || Boolean(subOf.get(m.key)?.reason)
-  const groups = onlyAlerts
+  const col = sortBy !== null && sortBy < months.length ? sortBy : null
+  const val = (r: PeriodRow) => (col === null ? r.total : r.perMonth[col] ?? 0)
+  const bySort = (a: PeriodRow, b: PeriodRow) => val(b) - val(a)
+  const groups = (onlyAlerts
     ? all.map((g) => ({ ...g, merchants: g.merchants.filter(needsLook) })).filter((g) => g.flagged || g.merchants.length)
-    : all
+    : all).map((g) => ({ ...g, merchants: [...g.merchants].sort(bySort) })).sort(bySort)
+  const newCount = col === null ? 0 : all.reduce((s, g) => s + g.merchants.filter((m) => m.isNew[col]).length, 0)
   const columnTotals = months.map((_, i) => groups.reduce((s, g) => s + (g.perMonth[i] ?? 0), 0))
   const grand = columnTotals.reduce((s, v) => s + v, 0)
   const toReview = all.reduce((s, g) => s + g.merchants.filter((m) => subOf.get(m.key)?.reason).length, 0)
   const flagged = all.filter((g) => g.flagged).length
+
+  const catIdByName = new Map(data.categories.map((c) => [c.name, c.id]))
+  const [saving, setSaving] = useState<string | null>(null)
+  const [erro, setErro] = useState<string | null>(null)
+  async function moveMerchant(merchant: string, categoryId: string) {
+    if (!categoryId) return
+    setSaving(merchant); setErro(null)
+    try { await setMerchantCategory(data, merchant, categoryId); await ctx.reload() }
+    catch (e) { setErro(`Não foi possível mudar a categoria de ${merchant}: ${(e as Error).message}`) }
+    finally { setSaving(null) }
+  }
 
   const toggle = (k: string) => setOpen((prev) => { const next = new Set(prev); if (next.has(k)) next.delete(k); else next.add(k); return next })
   const sticky = { position: 'sticky' as const, left: 0, background: 'var(--card)' }
 
   const cells = (r: PeriodRow) => <>
     {r.perMonth.map((v, i) => (
-      <td key={i} className={`num ${r.outlier[i] ? 'neg' : ''}`} style={r.outlier[i] ? { fontWeight: 700 } : undefined}
-        title={r.outlier[i] ? `Fora do padrão: média ${fmt(r.avg)}` : undefined}>
+      <td key={i} className={`num ${r.outlier[i] ? 'neg' : ''} ${r.isNew[i] ? 'novo' : ''}`} style={r.outlier[i] ? { fontWeight: 700 } : undefined}
+        title={[r.isNew[i] && 'Novo: nada nos 6 meses anteriores', r.outlier[i] && `Fora do padrão: média ${fmt(r.avg)}`].filter(Boolean).join(' · ') || undefined}>
         {v === null ? <span className="muted">·</span> : fmt(v)}
       </td>
     ))}
@@ -249,16 +275,24 @@ function Periodo({ ctx, n }: { ctx: Ctx; n: number }) {
         Despesas {n === 1 ? `de ${months[0]}` : `de ${months[0]} a ${months.at(-1)}`} · total {fmt(grand)}
         {flagged > 0 && <> · <span className="neg">⚑ {flagged} categoria(s) fora da média</span></>}
         {toReview > 0 && <> · <span className="warn">↻ {toReview} assinatura(s) para revisar</span></>}
+        {col !== null && <> · <span style={{ background: 'var(--new)', padding: '0 4px' }}>{newCount} estabelecimento(s) novos em {months[col]}</span></>}
       </p>
+      {erro && <p className="err">{erro}</p>}
       <p className="muted" style={{ fontSize: 12 }}>
-        <span className="neg"><strong>Vermelho</strong></span>: mês pelo menos 50% acima da média da linha{n === 1 ? ' (média dos 6 meses anteriores)' : ''}.
-        ⚑: linha com algum mês fora da média. ↻: assinatura; <span className="warn">revisar</span> quando o preço subiu, é nova, parou de cobrar ou a renovação anual está perto.
+        Expanda uma categoria (▸) para mudar a categoria de um estabelecimento (vale para todo o histórico dele) ou abrir os lançamentos dele.
+        <br /><span className="neg"><strong>Vermelho</strong></span>: mês pelo menos 50% acima da média da linha{n === 1 ? ' (média dos 6 meses anteriores)' : ''}.
+        <span style={{ background: 'var(--new)', padding: '0 4px' }}>Amarelo</span>: gasto novo no mês (nada nos 6 meses anteriores).
+        Clique num mês para ordenar por ele, ou em Total para voltar. ⚑: linha com algum mês fora da média. ↻: assinatura; <span className="warn">revisar</span> quando o preço subiu, é nova, parou de cobrar ou a renovação anual está perto.
       </p>
       <div className="scroll"><table>
         <thead><tr>
-          <th style={sticky}>Categoria / estabelecimento</th>
-          {months.map((m) => <th key={m} className="num">{m.slice(2)}</th>)}
-          <th className="num">{n === 1 ? 'Média 6m' : 'Média'}</th><th className="num">Total</th>
+          <th style={sticky}>Categoria / estabelecimento</th><th>Mudar categoria</th>
+          {months.map((m, i) => (
+            <th key={m} className="num sortable" title="Ordenar por este mês" onClick={() => setSortBy(col === i ? null : i)}>
+              {m.slice(2)}{col === i ? ' ▼' : ''}</th>
+          ))}
+          <th className="num">{n === 1 ? 'Média 6m' : 'Média'}</th>
+          <th className="num sortable" title="Ordenar pelo total" onClick={() => setSortBy(null)}>Total{col === null ? ' ▼' : ''}</th>
         </tr></thead>
         <tbody>
           {groups.map((g) => {
@@ -272,6 +306,7 @@ function Periodo({ ctx, n }: { ctx: Ctx; n: number }) {
                     {g.flagged && <span className="neg" title="Algum mês fora da média"> ⚑</span>}
                     {reviews > 0 && <span className="warn" title="Assinaturas para revisar"> ↻{reviews}</span>}
                   </td>
+                  <td />
                   {cells(g)}
                 </tr>
                 {isOpen && g.merchants.map((m) => {
@@ -282,6 +317,11 @@ function Periodo({ ctx, n }: { ctx: Ctx; n: number }) {
                         {sub && <span title="Cobrança recorrente">↻ </span>}{m.key}
                         {m.flagged && <span className="neg" title="Algum mês fora da média"> ⚑</span>}
                         {sub?.reason && <span className="warn" title={sub.reason}> revisar: {sub.reason}</span>}
+                        {' '}<button className="link" style={{ fontWeight: 400, fontSize: 12 }} onClick={() => onOpen(m.key)}>ver lançamentos</button>
+                      </td>
+                      <td style={{ minWidth: 170 }}>
+                        <CategorySelect ctx={ctx} value={catIdByName.get(g.key) ?? ''} empty="—" disabled={saving === m.key}
+                          label={`Categoria de ${m.key}`} onChange={(id) => moveMerchant(m.key, id)} />
                       </td>
                       {cells(m)}
                     </tr>
@@ -292,7 +332,7 @@ function Periodo({ ctx, n }: { ctx: Ctx; n: number }) {
           })}
         </tbody>
         <tfoot><tr>
-          <th style={sticky}>Total do mês</th>
+          <th style={sticky}>Total do mês</th><th />
           {columnTotals.map((v, i) => <th key={i} className="num">{fmt(v)}</th>)}
           <th /><th className="num">{fmt(grand)}</th>
         </tr></tfoot>

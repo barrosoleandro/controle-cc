@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import type { Account, AccountHint, BankMapEntry, Category, Currency, ParseResult, Rule, Transaction } from '../domain/types'
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/defaults'
-import { categorize, merchantKey, TRANSFER } from '../domain/categorize'
+import { categorize, merchantKey, ruleMatches, TRANSFER } from '../domain/categorize'
 import { matchCardPayments, type StoredCardStatement } from '../domain/cards'
 import { withFingerprints } from '../domain/fingerprint'
 import { withAiNote } from '../domain/claudeExchange'
@@ -261,6 +261,21 @@ export async function setCategoryForTransactions(ids: string[], category_id: str
 export async function setTransactionNote(id: string, notes: string) {
   must(await supabase.from('transactions').update({ notes }).eq('id', id))
 }
+/**
+ * A category picked for a merchant applies to its whole history, even rows chosen earlier by
+ * hand or by the AI, and becomes (or updates) the merchant's rule. Returns the rows changed.
+ */
+export async function setMerchantCategory(data: AppData, merchant: string, categoryId: string): Promise<number> {
+  const same = data.transactions.filter((x) => x.merchant === merchant)
+  await setCategoryForTransactions(same.map((x) => x.id), categoryId)
+  await markAiNote(same, false)
+  const rule = data.rules.find((r) => r.pattern.toUpperCase() === merchant.toUpperCase())
+  if (rule?.id) await updateRule(rule.id, { category_id: categoryId })
+  else await addRule(merchant, categoryId, null, Math.min(1000, ...data.rules.map((r) => r.priority)) - 1) // regras suas vencem as padrão
+  // Other descriptions the new rule now catches (not chosen by hand) follow too.
+  return same.length + (await refreshCategories())
+}
+
 /** Adds (on) or removes the "defined by AI" marker in the notes of these transactions. */
 export async function markAiNote(txs: Pick<Transaction, 'id' | 'notes'>[], on: boolean) {
   const byNotes = new Map<string, string[]>()
@@ -286,6 +301,25 @@ export async function reapplyRules(data: AppData): Promise<number> {
     must(await supabase.from('transactions').upsert(rows, { onConflict: 'id' }))
   }
   return changed.length
+}
+
+/** Re-reads rules and bank map and re-runs them on every row not chosen by hand. Returns rows changed. */
+export async function refreshCategories(): Promise<number> {
+  return reapplyRules(await loadAll())
+}
+
+/**
+ * A rule now points to another category. Rows it matches that still carry the old category
+ * move with it, even locked ones (they were set for that merchant); rows deliberately put
+ * elsewhere stay. Then the whole base is re-run. Returns rows changed.
+ */
+export async function changeRuleCategory(data: AppData, rule: StoredRule, categoryId: string): Promise<number> {
+  must(await supabase.from('category_rules').update({ category_id: categoryId }).eq('id', rule.id))
+  const bankOf = new Map(data.accounts.map((a) => [a.id, a.bank]))
+  const ids = data.transactions.filter((t) => t.category_id === rule.category_id && ruleMatches(rule, t, bankOf.get(t.account_id))).map((t) => t.id)
+  for (let i = 0; i < ids.length; i += 500)
+    must(await supabase.from('transactions').update({ category_id: categoryId }).in('id', ids.slice(i, i + 500)))
+  return ids.length + (await refreshCategories())
 }
 
 export async function addRule(pattern: string, category_id: string, sign: 'debit' | 'credit' | null, priority: number) {

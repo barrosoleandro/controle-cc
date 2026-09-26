@@ -36,6 +36,21 @@ describe('period view', () => {
   })
 })
 
+describe('new in the month', () => {
+  it('marks a merchant with nothing in the months before, once there are three months of history', () => {
+    const history = monthWindow('2026-08', 8).map((m) => tx(m, 50, 'CARREFOUR'))
+    const [cat] = buildPeriod([...history, tx('2026-08', 30, 'LIDL'), tx('2026-02', 10, 'OLD'), tx('2026-08', 10, 'OLD')], ['2026-08'])
+    const byKey = new Map(cat.merchants.map((m) => [m.key, m]))
+    expect(byKey.get('LIDL')!.isNew).toEqual([true])
+    expect(byKey.get('CARREFOUR')!.isNew).toEqual([false])
+    expect(byKey.get('OLD')!.isNew).toEqual([false]) // bought in February, inside the six months
+    const [young] = buildPeriod([tx('2026-07', 50), tx('2026-08', 30, 'LIDL')], ['2026-08'])
+    expect(young.merchants.find((m) => m.key === 'LIDL')!.isNew).toEqual([false]) // one month of history: too little
+    const [three] = buildPeriod([tx('2026-05', 50), tx('2026-08', 30, 'LIDL')], ['2026-08'])
+    expect(three.merchants.find((m) => m.key === 'LIDL')!.isNew).toEqual([true]) // May–July is enough
+  })
+})
+
 describe('subscription review', () => {
   const sub = (over: Partial<Subscription>): Subscription => ({
     merchant: 'NETFLIX', cadence: 'monthly', intervalDays: 30, lastAmount: 10, avgAmount: 10, monthlyCost: 10, count: 6,

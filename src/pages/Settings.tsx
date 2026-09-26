@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Ctx } from '../App'
-import { addCategory, addRule, deleteRule, deriveOpening, mergeCategories, saveFx, setBudget, updateAccount, updateBankMap, updateCategory, updateRule } from '../lib/data'
+import { addCategory, addRule, changeRuleCategory, deleteRule, deriveOpening, mergeCategories, refreshCategories, saveFx, setBudget, updateAccount, updateBankMap, updateCategory, updateRule } from '../lib/data'
 import { fetchEurBrl } from '../domain/fx'
 import { balanceSeries } from '../domain/analytics'
 import { money } from '../lib/format'
@@ -173,21 +173,38 @@ function Rules({ ctx }: { ctx: Ctx }) {
   const { data } = ctx
   const [pattern, setPattern] = useState('')
   const [cat, setCat] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  /** Every rule change is followed by a refresh of the whole base, so the lists never lag behind. */
+  async function run(change: () => Promise<number | void>) {
+    setBusy(true); setMsg(null)
+    try {
+      const direct = await change() // a number means the change already refreshed the base
+      const n = typeof direct === 'number' ? direct : await refreshCategories()
+      setMsg(`${n} lançamento(s) recategorizados.`)
+      await ctx.reload()
+    } catch (e) { setMsg((e as Error).message) } finally { setBusy(false) }
+  }
   return <div className="grid">
     <div className="card" style={{ gridColumn: '1/-1' }}><h3>Regras por estabelecimento</h3>
       <p className="muted">Conferidas de cima para baixo (menor número de prioridade primeiro); a primeira que casar vence. O texto casa no início de uma palavra, ignorando acento e caixa. As regras rodam antes do mapa de categorias do banco.</p>
+      <p className="muted">Toda mudança aqui recategoriza a base inteira na hora. As linhas que você mudou à mão continuam como estão, exceto as que tinham a categoria antiga da regra alterada.</p>
+      <div className="row">
+        <button onClick={() => run(async () => { /* só atualizar */ })} disabled={busy}>Atualizar categorias agora</button>
+        {busy && <span className="muted">Atualizando…</span>}
+        {msg && <span className="muted">{msg}</span>}
+      </div>
       <div className="row"><input placeholder="Texto da descrição, ex.: TEKEL" value={pattern} onChange={(e) => setPattern(e.target.value)} />
         <CategorySelect ctx={ctx} value={cat} onChange={setCat} empty="Categoria…" label="Categoria da nova regra" />
-        <button disabled={pattern.trim().length < 2 || !cat} onClick={async () => { await addRule(pattern.trim(), cat, null, Math.min(1000, ...data.rules.map((r) => r.priority)) - 1); setPattern(''); ctx.reload() }}>Adicionar (prioridade máxima)</button></div>
+        <button disabled={busy || pattern.trim().length < 2 || !cat} onClick={() => run(async () => { await addRule(pattern.trim(), cat, null, Math.min(1000, ...data.rules.map((r) => r.priority)) - 1); setPattern('') })}>Adicionar (prioridade máxima)</button></div>
       <div className="scroll"><table><thead><tr><th className="num">Prio</th><th>Texto</th><th>Sinal</th><th>Categoria</th><th /></tr></thead><tbody>
         {data.rules.map((r) => (
-          <tr key={r.id}><td className="num"><input type="number" style={{ width: 70 }} defaultValue={r.priority} onBlur={(e) => Number(e.target.value) !== r.priority && updateRule(r.id, { priority: Number(e.target.value) }).then(ctx.reload)} /></td>
+          <tr key={r.id}><td className="num"><input type="number" style={{ width: 70 }} defaultValue={r.priority} onBlur={(e) => { if (Number(e.target.value) !== r.priority) run(() => updateRule(r.id, { priority: Number(e.target.value) })) }} /></td>
             <td>{r.pattern}</td><td>{r.sign === 'debit' ? 'saída' : r.sign === 'credit' ? 'entrada' : 'qualquer'}</td>
             <td><CategorySelect ctx={ctx} value={r.category_id} label={`Categoria da regra ${r.pattern}`}
-              onChange={(id) => updateRule(r.id, { category_id: id }).then(ctx.reload)} /></td>
-            <td><button onClick={() => deleteRule(r.id).then(ctx.reload)} aria-label="Excluir regra">✕</button></td></tr>
+              disabled={busy} onChange={(id) => run(() => changeRuleCategory(data, r, id))} /></td>
+            <td><button onClick={() => run(() => deleteRule(r.id))} disabled={busy} aria-label="Excluir regra">✕</button></td></tr>
         ))}</tbody></table></div>
-      <p className="muted">Depois de mexer nas regras, use Lançamentos → Reaplicar regras (as escolhas manuais são preservadas).</p>
     </div>
     <div className="card"><h3>Dúvidas em aberto no mapeamento</h3><ul>{MAPPING_OPEN_QUESTIONS.map((q) => <li key={q}>{q}</li>)}</ul></div>
   </div>
@@ -203,7 +220,7 @@ function BankMapping({ ctx }: { ctx: Ctx }) {
         <tr key={m.id} style={{ fontWeight: seen.has(`${m.bank_category}|${m.bank_subcategory}`) ? 600 : 400 }}>
           <td>{m.bank_category}</td><td>{m.bank_subcategory}</td>
           <td><CategorySelect ctx={ctx} value={m.category_id} label={`Categoria para ${m.bank_category}`}
-            onChange={(id) => updateBankMap(m.id, id).then(ctx.reload)} /></td></tr>
+            onChange={(id) => updateBankMap(m.id, id).then(refreshCategories).then(ctx.reload)} /></td></tr>
       ))}</tbody></table></div></div>
 }
 
