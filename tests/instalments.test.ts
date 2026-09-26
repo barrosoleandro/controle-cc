@@ -23,3 +23,22 @@ describe('future instalments', () => {
     expect(bills[1].parcels.map((p) => `${p.purchase} ${p.k}/${p.n}`)).toEqual(['LOJA B 3/3'])
   })
 })
+
+describe('bill debits', () => {
+  it('match the paying-account debit to an imported bill total near the due date, once', async () => {
+    const { matchBillDebits } = await import('../src/domain/cards')
+    const accounts = [
+      { id: 'card', type: 'card', parent_account_id: 'chk' },
+      { id: 'chk', type: 'checking', parent_account_id: null },
+    ] as never
+    const bill = (due_date: string, total: number) => ({ account_id: 'card', due_date, total, status: 'paga' as const })
+    const tx = (id: string, booking_date: string, amount: number) => ({ id, account_id: 'chk', booking_date, amount })
+    const m = matchBillDebits(accounts, [bill('2026-09-11', 25996.24), bill('2026-02-11', 18890.24), bill('2026-03-11', -301.75)], [
+      tx('a', '2026-09-10', -25996.24),
+      tx('b', '2026-02-20', -18890.24), // 9 days after the due date: too late
+      tx('c', '2026-02-09', -18890.24),
+      tx('d', '2026-09-10', -100),
+    ])
+    expect(m.map((x) => x.bankTx.id)).toEqual(['c', 'a'])
+  })
+})

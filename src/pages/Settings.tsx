@@ -12,7 +12,7 @@ import type { CategoryKind } from '../domain/types'
 import { byName } from '../domain/categorize'
 import { CategorySelect } from '../components/CategorySelect'
 import { planMerges } from '../domain/simplify'
-import { ACCENTS, loadTheme, saveTheme, type Mode, type Theme } from '../lib/theme'
+import { ACCENTS, SIDEBARS, loadTheme, saveTheme, type Mode, type Theme } from '../lib/theme'
 
 const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações', 'Aparência'] as const
 
@@ -35,11 +35,19 @@ function Appearance() {
   const [t, setT] = useState<Theme>(loadTheme)
   const set = (next: Theme) => { setT(next); saveTheme(next) }
   return <div className="card">
-    <h3>Cor do aplicativo</h3>
+    <h3>Cor de destaque</h3>
     <div className="swatches">
       {ACCENTS.map((a) => (
         <button key={a.id} className={t.accent === a.id ? 'active' : ''} aria-pressed={t.accent === a.id} onClick={() => set({ ...t, accent: a.id })}>
           <span className="dot" style={{ background: `light-dark(${a.light}, ${a.dark})` }} />{a.label}
+        </button>
+      ))}
+    </div>
+    <h3 style={{ marginTop: 18 }}>Barra lateral</h3>
+    <div className="swatches">
+      {SIDEBARS.map((b) => (
+        <button key={b.id} className={t.sidebar === b.id ? 'active' : ''} aria-pressed={t.sidebar === b.id} onClick={() => set({ ...t, sidebar: b.id })}>
+          <span className="dot menu" style={{ background: b.color, border: '1px solid var(--line)' }} />{b.label}
         </button>
       ))}
     </div>

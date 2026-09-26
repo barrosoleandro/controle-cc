@@ -7,36 +7,24 @@
 :root[data-accent=amarelo], :root:not([data-accent]) {
   --bg: #faf7ee; --card: #ffffff; --card-2: #fbf8ef; --line: #ebe4cf; --text: #1b1b1b; --muted: #676255;
   --accent: #f7c600; --accent-2: #e8b800; --accent-soft: #fff3bf; --on-accent: #111111; --accent-ink: #1b1b1b;
-  --menu-bg: #f7c600; --menu-fg: #3b3100; --menu-fg-hover: #000000; --menu-hover: rgba(0, 0, 0, .07);
-  --menu-active-bg: #141414; --menu-active-fg: #ffffff; --menu-line: #e2b400; --menu-title: #111111;
   --head-tint: #fbf3d4; --kpi-neutral: #fff8dc; --kpi-pos: #eaf7ef; --kpi-neg: #fdecec;
 }
 @media (prefers-color-scheme: dark) {
   :root[data-accent=amarelo]:not([data-theme=light]), :root:not([data-accent]):not([data-theme=light]) {
     --bg: #121315; --card: #1b1d21; --card-2: #212429; --line: #2d3036; --text: #ecebe6; --muted: #a8a495;
     --accent: #f5c400; --accent-2: #ffd43b; --accent-soft: #3a3312; --on-accent: #111111; --accent-ink: #ecebe6;
-    --menu-bg: #f5c400; --menu-fg: #3b3100; --menu-fg-hover: #000000; --menu-hover: rgba(0, 0, 0, .08);
-    --menu-active-bg: #141414; --menu-active-fg: #ffffff; --menu-line: #d9ac00; --menu-title: #111111;
     --head-tint: #24221a; --kpi-neutral: #2a2717; --kpi-pos: #16271e; --kpi-neg: #2c1a1a;
   }
 }
 :root[data-accent=amarelo][data-theme=dark], :root:not([data-accent])[data-theme=dark] {
   --bg: #121315; --card: #1b1d21; --card-2: #212429; --line: #2d3036; --text: #ecebe6; --muted: #a8a495;
   --accent: #f5c400; --accent-2: #ffd43b; --accent-soft: #3a3312; --on-accent: #111111; --accent-ink: #ecebe6;
-  --menu-bg: #f5c400; --menu-fg: #3b3100; --menu-fg-hover: #000000; --menu-hover: rgba(0, 0, 0, .08);
-  --menu-active-bg: #141414; --menu-active-fg: #ffffff; --menu-line: #d9ac00; --menu-title: #111111;
   --head-tint: #24221a; --kpi-neutral: #2a2717; --kpi-pos: #16271e; --kpi-neg: #2c1a1a;
 }
 
 /* Tint defaults for the other presets (no extra colour). */
 :root { --head-tint: transparent; --kpi-neutral: var(--card-2); --kpi-pos: var(--card-2); --kpi-neg: var(--card-2); }
 
-/* The app mark sits on the yellow menu: black tile, yellow symbol. */
-:root[data-accent=amarelo] .brand-mark, :root:not([data-accent]) .brand-mark { background: #141414; color: #f7c600; }
-@media (max-width: 900px) {
-  /* On the phone the header is light; the mark keeps the same black tile. */
-  header.top { border-bottom: 3px solid var(--accent); }
-}
 
 /* Colour-coded indicators: green income, red spending, yellow the rest. */
 .kpi { background: var(--kpi-neutral); border-left: 4px solid var(--accent); }
@@ -48,12 +36,49 @@
 .card h3:has(> input)::before { display: none; }
 thead th { background: var(--head-tint); }
 
-/* Main action in yellow with black text; selected toggles in black (from the menu tokens). */
+/* Main action in yellow with black text. */
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 button.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
 
-/* Dark mode: a black toggle would vanish on the dark page, so selected toggles are yellow with black text. */
-@media (prefers-color-scheme: dark) {
-  :root[data-accent=amarelo]:not([data-theme=light]) main button.active, :root:not([data-accent]):not([data-theme=light]) main button.active { background: var(--accent); color: #111111; }
+
+/* Selected toggles on the page: black with white text (light), yellow with black text (dark). */
+:root[data-accent=amarelo], :root:not([data-accent]) { --toggle-bg: #141414; --toggle-fg: #ffffff; }
+@media (prefers-color-scheme: dark) { :root[data-accent=amarelo]:not([data-theme=light]), :root:not([data-accent]):not([data-theme=light]) { --toggle-bg: #f5c400; --toggle-fg: #111111; } }
+:root[data-accent=amarelo][data-theme=dark], :root:not([data-accent])[data-theme=dark] { --toggle-bg: #f5c400; --toggle-fg: #111111; }
+
+/* ---------- Side menu colour (Ajustes → Aparência → Barra lateral); navy is the default ---------- */
+/* Dark menus: light text, a translucent highlight with a yellow bar, bright page icons. */
+:root:not([data-sidebar]), :root[data-sidebar=marinho], :root[data-sidebar=grafite], :root[data-sidebar=petroleo], :root[data-sidebar=vinho] {
+  --menu-fg: #cfd6e4; --menu-fg-hover: #ffffff; --menu-hover: rgba(255, 255, 255, .07);
+  --menu-active-bg: rgba(255, 255, 255, .13); --menu-active-fg: #ffffff; --menu-active-bar: #f7c600; --menu-title: #ffffff;
+  --brand-bg: #f7c600; --brand-fg: #111111;
+  --ic-1: #60a5fa; --ic-2: #4ade80; --ic-3: #a78bfa; --ic-4: #f472b6; --ic-5: #fbbf24; --ic-6: #2dd4bf; --ic-7: #fb923c; --ic-8: #818cf8; --ic-9: #cbd5e1;
 }
-:root[data-accent=amarelo][data-theme=dark] main button.active, :root:not([data-accent])[data-theme=dark] main button.active { background: var(--accent); color: #111111; }
+:root:not([data-sidebar]), :root[data-sidebar=marinho] { --menu-bg: #14213d; --menu-line: #22325a; }
+:root[data-sidebar=grafite] { --menu-bg: #23262b; --menu-line: #33373e; }
+:root[data-sidebar=petroleo] { --menu-bg: #0f3b46; --menu-line: #1a4f5c; }
+:root[data-sidebar=vinho] { --menu-bg: #3b1024; --menu-line: #551a36; }
+/* Yellow menu: dark text, the page in black, deep icon colours that read on yellow. */
+:root[data-sidebar=amarelo] {
+  --menu-bg: #f7c600; --menu-line: #e2b400; --menu-fg: #3b3100; --menu-fg-hover: #000000; --menu-hover: rgba(0, 0, 0, .07);
+  --menu-active-bg: #141414; --menu-active-fg: #ffffff; --menu-active-bar: transparent; --menu-title: #111111;
+  --brand-bg: #141414; --brand-fg: #f7c600;
+  --ic-1: #1e3a8a; --ic-2: #14532d; --ic-3: #4c1d95; --ic-4: #831843; --ic-5: #422006; --ic-6: #134e4a; --ic-7: #7c2d12; --ic-8: #312e81; --ic-9: #1f2937;
+}
+/* Light menu: page surface, a yellow bar on the selected page, deep icon colours. */
+:root[data-sidebar=claro] {
+  --menu-bg: var(--card); --menu-line: var(--line); --menu-fg: var(--muted); --menu-fg-hover: var(--text); --menu-hover: var(--card-2);
+  --menu-active-bg: var(--accent-soft); --menu-active-fg: var(--text); --menu-active-bar: #f7c600; --menu-title: var(--text);
+  --brand-bg: #141414; --brand-fg: #f7c600;
+  --ic-1: #1d4ed8; --ic-2: #15803d; --ic-3: #6d28d9; --ic-4: #be185d; --ic-5: #a16207; --ic-6: #0f766e; --ic-7: #c2410c; --ic-8: #4338ca; --ic-9: #475569;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-sidebar=claro]:not([data-theme=light]) { --ic-1: #60a5fa; --ic-2: #4ade80; --ic-3: #a78bfa; --ic-4: #f472b6; --ic-5: #fbbf24; --ic-6: #2dd4bf; --ic-7: #fb923c; --ic-8: #818cf8; --ic-9: #cbd5e1; --menu-active-bar: #f5c400; }
+}
+:root[data-sidebar=claro][data-theme=dark] { --ic-1: #60a5fa; --ic-2: #4ade80; --ic-3: #a78bfa; --ic-4: #f472b6; --ic-5: #fbbf24; --ic-6: #2dd4bf; --ic-7: #fb923c; --ic-8: #818cf8; --ic-9: #cbd5e1; --menu-active-bar: #f5c400; }
+/* Phone: the header gets a line in the menu colour. */
+@media (max-width: 900px) { header.top { border-bottom: 3px solid var(--menu-bg); } }
+.swatches .dot.menu { border-radius: 8px; }
+
+/* On the yellow menu the selected page is black: its icon turns yellow to stay visible. */
+:root[data-sidebar=amarelo] nav.side button.active svg, :root[data-sidebar=amarelo] .sheet button.active svg { color: #f7c600; }
