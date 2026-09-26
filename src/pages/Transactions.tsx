@@ -4,6 +4,7 @@ import { addCategory, markAiNote, reapplyRules, setCategoryForTransactions, setM
 import { CategorySelect } from '../components/CategorySelect'
 import { monthLabel, money } from '../lib/format'
 import { today, useFmt, useSubscriptions } from '../lib/hooks'
+import { balanceSeries } from '../domain/analytics'
 import { buildPeriod, monthBalances, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
 import type { CategoryKind } from '../domain/types'
 import { byName, isTithe } from '../domain/categorize'
@@ -89,6 +90,16 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
       .sort((a, b) => (ordem === 'valor' ? a.value - b.value : b.booking_date.localeCompare(a.booking_date)))
   }, [etx, q, month, cat, shown, de, ate, merchant, ordem])
   const total = rows.reduce((s, t) => s + t.value, 0)
+  // The real balance of each ticked account (own currency): at the end of the filtered month, or today.
+  const balances = useMemo(() => {
+    const until = month ? `${month}-31` : '9999-12-31'
+    return data.accounts.filter((a) => shown(a.id)).map((a) => {
+      const s = balanceSeries(a, data.transactions)
+      let bal = Number(a.opening_balance)
+      for (const p of s) { if (p.date > until) break; bal = p.balance }
+      return { a, bal }
+    })
+  }, [data.accounts, data.transactions, shown, month])
 
   /** A category picked on one line applies to the merchant's whole history and its rule; see setMerchantCategory. */
   async function changeCategory(t: { id: string; merchant: string }, categoryId: string) {
@@ -163,7 +174,13 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
       </div>
       {merchant && <p className="row alert" style={{ justifyContent: 'space-between' }}>
         <span>Só <strong>{merchant}</strong></span><button onClick={onClearMerchant}>Ver todos</button></p>}
-      <p className="muted">{rows.length} lançamentos · saldo {fmt(total)}{msg ? ` · ${msg}` : ''}</p>
+      <p className="muted">
+        {rows.length} lançamentos · soma dos lançamentos listados {fmt(total)}{msg ? ` · ${msg}` : ''}
+      </p>
+      <p className="muted" style={{ fontSize: 13 }}>
+        Saldo {month ? `no fim de ${month}` : 'atual'}:{' '}
+        {balances.map(({ a, bal }, i) => <span key={a.id}>{i > 0 && ' · '}{a.name} <strong className={bal < 0 ? 'neg' : ''}>{money(a.currency, 2)(bal)}</strong></span>)}
+      </p>
       <p className="muted" style={{ fontSize: 12 }}>
         Trocar a categoria na linha muda todo o histórico daquele estabelecimento. Para mudar só algumas linhas, marque-as e use
         “Aplicar só nestas linhas”. Em qualquer lista de categorias, “+ Nova categoria…” cria uma nova.
@@ -260,6 +277,10 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
     data.accounts.filter((a) => shown(a.id) && a.type !== 'card'), data.transactions, months,
     (amount, from, date) => ctx.fx.convert(amount, from, ctx.currency, date),
   ), [data.accounts, data.transactions, months, shown, ctx.fx, ctx.currency])
+  // Closing balance of each ticked account in its own currency, under the converted total.
+  const perAccount = useMemo(() => data.accounts.filter((a) => shown(a.id) && a.type !== 'card').map((a) => ({
+    a, closing: monthBalances([a], data.transactions, months, (amount) => amount).closing,
+  })), [data.accounts, data.transactions, months, shown])
 
   const needsLook = (m: PeriodRow) => m.flagged || Boolean(subOf.get(m.key)?.reason)
   const col = sortBy !== null && sortBy < months.length ? sortBy : null
@@ -399,10 +420,20 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
           <th /><th className="num neg">{fmt(saldos.outflow.reduce((s, v) => s + v, 0))}</th>
         </tr>
         <tr>
-          <th style={sticky}>Saldo final</th><th />
+          <th style={sticky}>Saldo final{perAccount.length > 1 || perAccount.some((x) => x.a.currency !== ctx.currency) ? ` (em ${ctx.currency})` : ''}</th><th />
           {saldos.closing.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : ''}`}>{fmt(v)}</th>)}
           <th /><th />
-        </tr></tfoot>
+        </tr>
+        {(perAccount.length > 1 || perAccount.some((x) => x.a.currency !== ctx.currency)) && perAccount.map(({ a, closing }) => {
+          const f = money(a.currency, 2)
+          return (
+            <tr key={a.id} className="sub-row">
+              <td style={sticky} className="muted">↳ {a.name}</td><td />
+              {closing.map((v, i) => <td key={i} className={`num ${v < 0 ? 'neg' : 'muted'}`}>{f(v)}</td>)}
+              <td /><td />
+            </tr>
+          )
+        })}</tfoot>
       </table></div>
     </div>
   )
