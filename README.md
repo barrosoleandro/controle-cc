@@ -34,7 +34,7 @@ The interface is in Portuguese; code and comments stay in English.
 ## Setup (≈20 minutes, once)
 
 1. **Supabase**: create a new project (e.g. `controle-cc`, region Frankfurt/Paris).
-   - SQL Editor → paste and run `supabase/migrations/001_schema.sql`, then `002_payslips.sql`, then `003_merchant_profiles.sql`.
+   - SQL Editor → paste and run `supabase/migrations/001_schema.sql`, then `002_payslips.sql`, then `003_merchant_profiles.sql`, then `004_cards.sql` (credit cards linked to accounts).
    - Authentication → Sign In / Providers → **disable "Allow new users to sign up"**.
    - Authentication → Multi-Factor → make sure **TOTP is enabled**.
    - For the e-mail code login: Authentication → Emails → the "Magic Link" template must contain `{{ .Token }}`,

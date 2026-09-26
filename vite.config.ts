@@ -9,6 +9,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       manifest: {
         name: 'Finanças Pessoais', short_name: 'Finanças', start_url: '/', display: 'standalone',
+        lang: 'pt-BR', description: 'Controle das contas de casa: extratos, recorrentes, holerites, simulações e investimentos.',
         background_color: '#111418', theme_color: '#2f6fde',
         icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }],
       },

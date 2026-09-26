@@ -1,7 +1,8 @@
 import { supabase } from './supabase'
-import type { Account, BankMapEntry, Category, Currency, ParseResult, Rule, Transaction } from '../domain/types'
+import type { Account, AccountHint, BankMapEntry, Category, Currency, ParseResult, Rule, Transaction } from '../domain/types'
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/defaults'
-import { categorize, merchantKey } from '../domain/categorize'
+import { categorize, merchantKey, TRANSFER } from '../domain/categorize'
+import { matchCardPayments, type StoredCardStatement } from '../domain/cards'
 import { withFingerprints } from '../domain/fingerprint'
 import type { ContractItem } from '../domain/payroll'
 
@@ -24,6 +25,7 @@ export interface AppData {
   fx: Map<string, number>
   settings: Settings
   scenarios: ScenarioRow[]
+  cardStatements: StoredCardStatement[]
 }
 
 const must = <T>(r: { data: T | null; error: { message: string } | null }): T => {
@@ -40,8 +42,13 @@ async function selectAll<T>(table: string, order: string): Promise<T[]> {
   }
 }
 
+/** Tables added by later migrations: the app keeps working (without the feature) until they are run. */
+async function selectOptional<T>(table: string, order: string): Promise<T[]> {
+  try { return await selectAll<T>(table, order) } catch { return [] }
+}
+
 export async function loadAll(): Promise<AppData> {
-  const [accounts, categories, rulesRaw, mapRaw, transactions, checkpoints, budgets, fxRows, settingsRows, scenarios] = await Promise.all([
+  const [accounts, categories, rulesRaw, mapRaw, transactions, checkpoints, budgets, fxRows, settingsRows, scenarios, cardStatements] = await Promise.all([
     selectAll<Account>('accounts', 'name'),
     selectAll<Category>('categories', 'sort'),
     selectAll<{ id: string; pattern: string; bank: string | null; sign: 'debit' | 'credit' | null; category_id: string; priority: number; active: boolean }>('category_rules', 'priority'),
@@ -52,6 +59,7 @@ export async function loadAll(): Promise<AppData> {
     selectAll<{ date: string; quote: string; rate: number }>('fx_rates', 'date'),
     selectAll<Settings>('user_settings', 'updated_at'),
     selectAll<ScenarioRow>('scenarios', 'name'),
+    selectOptional<StoredCardStatement>('card_statements', 'due_date'),
   ])
   const catName = new Map(categories.map((c) => [c.id, c.name]))
   return {
@@ -65,6 +73,7 @@ export async function loadAll(): Promise<AppData> {
     fx: new Map(fxRows.filter((r) => r.quote === 'BRL').map((r) => [r.date, Number(r.rate)])),
     settings: settingsRows[0] ?? { display_currency: 'EUR', dashboard: { widgets: [] }, dismissed_alerts: [] },
     scenarios,
+    cardStatements: cardStatements.map((c) => ({ ...c, total: Number(c.total) })),
   }
 }
 
@@ -140,14 +149,25 @@ export async function executeImport(plan: ImportPlan, data: AppData): Promise<nu
         bank_category: t.bankCategory ?? null, bank_subcategory: t.bankSubcategory ?? null,
         category_id: catId.get(categorize(t, data.rules, data.bankMap, acc.bank)) ?? null,
         source: plan.result.source, fingerprint: t.fingerprint, import_id: imp.id,
+        ...(t.statementDue ? { statement_due: t.statementDue } : {}), // column from migration 004
       }
     })
-  for (let i = 0; i < rows.length; i += 500)
-    must(await supabase.from('transactions').upsert(rows.slice(i, i + 500), { onConflict: 'user_id,fingerprint', ignoreDuplicates: true }))
+  for (let i = 0; i < rows.length; i += 500) {
+    const r = await supabase.from('transactions').upsert(rows.slice(i, i + 500), { onConflict: 'user_id,fingerprint', ignoreDuplicates: true })
+    if (r.error) throw new Error(needs004(r.error.message))
+  }
   const cps = plan.result.checkpoints.filter((c) => accByRef.has(c.accountRef)).map((c) => ({
     account_id: accByRef.get(c.accountRef)!.id, date: c.date, balance: c.balance, source: plan.result.source,
   }))
   if (cps.length) must(await supabase.from('balance_checkpoints').upsert(cps, { onConflict: 'account_id,date' }))
+  const bills = (plan.result.cardStatements ?? []).filter((c) => accByRef.has(c.accountRef)).map((c) => ({
+    account_id: accByRef.get(c.accountRef)!.id, due_date: c.dueDate, total: c.total, status: c.status,
+    file_name: plan.fileName, updated_at: new Date().toISOString(),
+  }))
+  if (bills.length) {
+    const r = await supabase.from('card_statements').upsert(bills, { onConflict: 'account_id,due_date' })
+    if (r.error) throw new Error(needs004(r.error.message))
+  }
   must(await supabase.from('imports').update({ rows_inserted: rows.length }).eq('id', imp.id))
   return rows.length
 }
@@ -170,8 +190,64 @@ export function deriveOpening(account: Account, txs: Transaction[], cps: Checkpo
 export async function updateAccount(id: string, patch: Partial<Account>) {
   must(await supabase.from('accounts').update(patch).eq('id', id))
 }
-export async function createAccount(a: Omit<Account, 'id' | 'opening_balance' | 'opening_date' | 'is_active'>) {
-  must(await supabase.from('accounts').insert(a))
+export async function createAccount(a: Omit<Account, 'id' | 'opening_balance' | 'opening_date' | 'is_active'>): Promise<Account> {
+  const r = await supabase.from('accounts').insert(a).select().single()
+  if (r.error) throw new Error(needs004(r.error.message))
+  return r.data as Account
+}
+
+function needs004(msg: string): string {
+  return /card_statements|statement_due|parent_account_id/.test(msg)
+    ? 'Cartões ainda não habilitados no banco: rode supabase/migrations/004_cards.sql no SQL Editor do Supabase.'
+    : msg
+}
+
+/** Fallback when a file names an account but brings no hint (older parsers). */
+function guessHint(ref: string): AccountHint {
+  const isItau = ref.includes('/')
+  return { ref, name: `${isItau ? 'Itaú' : 'BCP'} ${ref}`, bank: isItau ? 'ITAU' : 'BCP', currency: isItau ? 'BRL' : 'EUR', type: 'checking' }
+}
+
+/**
+ * Creates the accounts the files refer to and links each card to the account that pays it.
+ * Bank accounts first, so a card created in the same run can point at its parent.
+ */
+export async function ensureAccounts(plans: ImportPlan[], data: AppData): Promise<number> {
+  const hints = new Map<string, AccountHint>()
+  for (const p of plans) for (const h of p.result.accounts ?? []) hints.set(h.ref, h)
+  const byRef = new Map(data.accounts.map((a) => [a.external_ref, a]))
+  const wanted = [...new Set(plans.flatMap((p) => p.unknownRefs))].filter((ref) => !byRef.has(ref)).map((ref) => hints.get(ref) ?? guessHint(ref))
+  let created = 0
+  for (const h of wanted.sort((a, b) => Number(a.type === 'card') - Number(b.type === 'card'))) {
+    const parent = h.parentRef ? byRef.get(h.parentRef) : undefined
+    const acc = await createAccount({
+      name: h.name, bank: h.bank, currency: h.currency, type: h.type, external_ref: h.ref,
+      ...(parent ? { parent_account_id: parent.id } : {}),
+    })
+    byRef.set(h.ref, acc)
+    created++
+  }
+  // Cards that already existed but were never linked.
+  for (const h of hints.values()) {
+    const acc = byRef.get(h.ref), parent = h.parentRef ? byRef.get(h.parentRef) : undefined
+    if (acc && parent && !acc.parent_account_id) await updateAccount(acc.id, { parent_account_id: parent.id })
+  }
+  return created
+}
+
+/**
+ * Turns each matched bill payment in the paying account into a transfer (see
+ * matchCardPayments). Locked, so "Reaplicar regras" keeps it. Returns how many changed.
+ */
+export async function linkCardPayments(data: AppData): Promise<number> {
+  const transfer = data.categories.find((c) => c.name === TRANSFER)
+  if (!transfer) return 0
+  const ids = matchCardPayments(data.accounts, data.transactions)
+    .map((m) => data.transactions.find((t) => t.id === m.bankTx.id)!)
+    .filter((t) => t.category_id !== transfer.id)
+    .map((t) => t.id)
+  if (ids.length) await setCategoryForTransactions(ids, transfer.id)
+  return ids.length
 }
 export async function setTransactionCategory(id: string, category_id: string | null, locked = true) {
   must(await supabase.from('transactions').update({ category_id, category_locked: locked }).eq('id', id))
