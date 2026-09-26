@@ -4,7 +4,7 @@
  * fill (--on-accent) and accent-coloured text (--accent-ink) meet 4.5:1.
  */
 export const ACCENTS = [
-  { id: 'amarelo', label: 'Amarelo', light: '#f5c400', dark: '#facc15' },
+  { id: 'amarelo', label: 'Amarelo', light: '#f7c600', dark: '#f5c400' },
   { id: 'petroleo', label: 'Petróleo', light: '#0f6e8c', dark: '#4cc9e6' },
   { id: 'indigo', label: 'Índigo', light: '#4f46e5', dark: '#8b8cf8' },
   { id: 'esmeralda', label: 'Esmeralda', light: '#0f7a5a', dark: '#3ecf9a' },
@@ -39,7 +39,8 @@ export function applyTheme(t: Theme) {
   document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.remove())
   const meta = document.createElement('meta')
   meta.name = 'theme-color'
-  meta.content = dark ? '#161b24' : a.light
+  // The yellow theme keeps its yellow menu in dark mode, so the status bar stays yellow too.
+  meta.content = dark && a.id !== 'amarelo' ? '#161b24' : a.light
   document.head.appendChild(meta)
 }
 
