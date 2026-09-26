@@ -45,7 +45,7 @@ header.top .brand {
   padding: 0 18px; background: var(--menu-bg); color: var(--menu-title); border-right: 1px solid var(--menu-line); border-bottom: 1px solid var(--menu-line);
 }
 header.top h1 { font-size: 16px; margin: 0; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--accent); color: var(--on-accent); flex: none; }
+.brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--brand-bg, var(--accent)); color: var(--brand-fg, var(--on-accent)); flex: none; }
 .page-title { font-size: 18px; font-weight: 700; letter-spacing: -.01em; margin-right: auto; }
 .top-actions { display: flex; align-items: center; gap: 6px; }
 .seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--line); }
@@ -64,7 +64,8 @@ nav.side button {
   background: transparent; color: var(--menu-fg); font-weight: 500; text-align: left;
 }
 nav.side button:hover { background: var(--menu-hover); color: var(--menu-fg-hover); }
-nav.side button.active { background: var(--menu-active-bg); color: var(--menu-active-fg); font-weight: 650; }
+nav.side button.active { background: var(--menu-active-bg); color: var(--menu-active-fg); font-weight: 650; box-shadow: inset 3px 0 0 var(--menu-active-bar, transparent); }
+nav.side svg, nav.bottom svg, .sheet svg { color: var(--ic, currentColor); }
 
 nav.bottom { display: none; }
 .sheet-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(10, 14, 22, .45); display: flex; align-items: flex-end; }
@@ -119,7 +120,7 @@ button { cursor: pointer; font-weight: 500; transition: background .12s, border-
 button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
 button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
 button.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
-button.active { background: var(--menu-active-bg); border-color: transparent; color: var(--menu-active-fg); font-weight: 600; }
+button.active { background: var(--toggle-bg, var(--accent-soft)); border-color: transparent; color: var(--toggle-fg, var(--accent-ink)); font-weight: 600; }
 button:disabled { opacity: .5; cursor: default; }
 button.link { background: none; border: none; padding: 0; min-height: 0; text-align: left; font-weight: 600; color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; }
 input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -206,12 +207,9 @@ th.sortable { cursor: pointer; user-select: none; }
   --menu-active-bg: var(--accent-soft); --menu-active-fg: var(--accent-ink); --menu-line: var(--line); --menu-title: var(--text);
 }
 /* Yellow (default): bright fill with dark text on it; text/icons in dark ochre on light surfaces. */
-:root[data-accent=amarelo], :root:not([data-accent]) { --accent: #f5c400; --accent-2: #e0b000; --accent-soft: #f1f2f4; --on-accent: #111111; --accent-ink: #2b2f36;
-  --menu-bg: #23262b; --menu-fg: #b8bec8; --menu-fg-hover: #ffffff; --menu-hover: #2f333a; --menu-active-bg: #f5c400; --menu-active-fg: #111111; --menu-line: #33373e; --menu-title: #ffffff; }
-@media (prefers-color-scheme: dark) { :root[data-accent=amarelo]:not([data-theme=light]), :root:not([data-accent]):not([data-theme=light]) { --accent: #facc15; --accent-2: #fde047; --accent-soft: #2a2e35; --on-accent: #111111; --accent-ink: #e6e9f0;
-  --menu-bg: #0b0c0e; --menu-fg: #a3a9b3; --menu-fg-hover: #ffffff; --menu-hover: #1c1f24; --menu-active-bg: #facc15; --menu-active-fg: #111111; --menu-line: #23262b; --menu-title: #ffffff; } }
-:root[data-accent=amarelo][data-theme=dark], :root:not([data-accent])[data-theme=dark] { --accent: #facc15; --accent-2: #fde047; --accent-soft: #2a2e35; --on-accent: #111111; --accent-ink: #e6e9f0;
-  --menu-bg: #0b0c0e; --menu-fg: #a3a9b3; --menu-fg-hover: #ffffff; --menu-hover: #1c1f24; --menu-active-bg: #facc15; --menu-active-fg: #111111; --menu-line: #23262b; --menu-title: #ffffff; }
+:root[data-accent=amarelo], :root:not([data-accent]) { --accent: #f5c400; --accent-2: #e0b000; --accent-soft: #f1f2f4; --on-accent: #111111; --accent-ink: #2b2f36; }
+@media (prefers-color-scheme: dark) { :root[data-accent=amarelo]:not([data-theme=light]), :root:not([data-accent]):not([data-theme=light]) { --accent: #facc15; --accent-2: #fde047; --accent-soft: #2a2e35; --on-accent: #111111; --accent-ink: #e6e9f0; } }
+:root[data-accent=amarelo][data-theme=dark], :root:not([data-accent])[data-theme=dark] { --accent: #facc15; --accent-2: #fde047; --accent-soft: #2a2e35; --on-accent: #111111; --accent-ink: #e6e9f0; }
 
 /* ---------- Cartões: three equal columns ---------- */
 .cards3 { grid-column: 1 / -1; display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }

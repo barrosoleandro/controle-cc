@@ -13,10 +13,19 @@ export const ACCENTS = [
 ] as const
 export type Accent = (typeof ACCENTS)[number]['id']
 export type Mode = 'auto' | 'light' | 'dark'
-export interface Theme { accent: Accent; mode: Mode }
+export const SIDEBARS = [
+  { id: 'marinho', label: 'Marinho', color: '#14213d' },
+  { id: 'grafite', label: 'Grafite', color: '#23262b' },
+  { id: 'petroleo', label: 'Petróleo', color: '#0f3b46' },
+  { id: 'vinho', label: 'Vinho', color: '#3b1024' },
+  { id: 'amarelo', label: 'Amarelo', color: '#f7c600' },
+  { id: 'claro', label: 'Clara', color: '#ffffff' },
+] as const
+export type Sidebar = (typeof SIDEBARS)[number]['id']
+export interface Theme { accent: Accent; mode: Mode; sidebar: Sidebar }
 
 const KEY = 'appearance'
-export const DEFAULT_THEME: Theme = { accent: 'amarelo', mode: 'auto' }
+export const DEFAULT_THEME: Theme = { accent: 'amarelo', mode: 'auto', sidebar: 'marinho' }
 
 export function loadTheme(): Theme {
   try {
@@ -24,6 +33,7 @@ export function loadTheme(): Theme {
     return {
       accent: ACCENTS.some((a) => a.id === t.accent) ? t.accent! : DEFAULT_THEME.accent,
       mode: t.mode === 'light' || t.mode === 'dark' ? t.mode : 'auto',
+      sidebar: SIDEBARS.some((x) => x.id === t.sidebar) ? t.sidebar! : DEFAULT_THEME.sidebar,
     }
   } catch { return DEFAULT_THEME }
 }
@@ -31,6 +41,7 @@ export function loadTheme(): Theme {
 export function applyTheme(t: Theme) {
   const root = document.documentElement
   root.dataset.accent = t.accent
+  root.dataset.sidebar = t.sidebar
   if (t.mode === 'auto') delete root.dataset.theme
   else root.dataset.theme = t.mode
   // Browser/phone status bar follows the accent (light) or the dark surface.
@@ -39,8 +50,10 @@ export function applyTheme(t: Theme) {
   document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.remove())
   const meta = document.createElement('meta')
   meta.name = 'theme-color'
-  // The yellow theme keeps its yellow menu in dark mode, so the status bar stays yellow too.
-  meta.content = dark && a.id !== 'amarelo' ? '#161b24' : a.light
+  // Phone status bar: the menu colour (the bottom bar and header line use it too).
+  const menu = SIDEBARS.find((x) => x.id === t.sidebar)!
+  meta.content = menu.id === 'claro' ? (dark ? '#161b24' : '#ffffff') : menu.color
+  void a
   document.head.appendChild(meta)
 }
 

@@ -38,18 +38,23 @@ const must = <T>(r: { data: T | null; error: { message: string } | null }): T =>
   return r.data as T
 }
 
-async function selectAll<T>(table: string, order: string): Promise<T[]> {
+/**
+ * Every row of a table, 1000 at a time. The order must be total (ending in a unique column):
+ * sorting only by a date let rows with the same date move between pages, so some came twice
+ * and others never, and balances drifted by a few rows.
+ */
+async function selectAll<T>(table: string, order: string, unique = 'id'): Promise<T[]> {
   const out: T[] = []
   for (let from = 0; ; from += 1000) {
-    const page = must(await supabase.from(table).select('*').order(order).range(from, from + 999)) as T[]
+    const page = must(await supabase.from(table).select('*').order(order).order(unique).range(from, from + 999)) as T[]
     out.push(...page)
     if (page.length < 1000) return out
   }
 }
 
 /** Tables added by later migrations: the app keeps working (without the feature) until they are run. */
-async function selectOptional<T>(table: string, order: string): Promise<T[]> {
-  try { return await selectAll<T>(table, order) } catch { return [] }
+async function selectOptional<T>(table: string, order: string, unique = 'id'): Promise<T[]> {
+  try { return await selectAll<T>(table, order, unique) } catch { return [] }
 }
 
 export async function loadAll(): Promise<AppData> {
@@ -61,8 +66,8 @@ export async function loadAll(): Promise<AppData> {
     selectAll<Transaction>('transactions', 'booking_date'),
     selectAll<Checkpoint>('balance_checkpoints', 'date'),
     selectAll<Budget>('budgets', 'category_id'),
-    selectAll<{ date: string; quote: string; rate: number }>('fx_rates', 'date'),
-    selectAll<Settings>('user_settings', 'updated_at'),
+    selectAll<{ date: string; quote: string; rate: number }>('fx_rates', 'date', 'quote'), // unique (user, date, quote)
+    selectAll<Settings>('user_settings', 'updated_at', 'user_id'),
     selectAll<ScenarioRow>('scenarios', 'name'),
     selectOptional<StoredCardStatement>('card_statements', 'due_date'),
   ])
