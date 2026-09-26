@@ -276,18 +276,31 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
     return buildPeriod(etx.filter((t) => shown(t.account_id)), months)
       .map((g) => (isTithe(g.key) ? { ...quiet(g), merchants: g.merchants.map(quiet) } : g))
   }, [etx, shown, months])
-  // Transfers between the user's own accounts (and paid card bills), per month, split by direction.
+  // Transfers between the user's own accounts (and paid card bills) of the ticked accounts:
+  // per month by direction (for the totals) and per merchant (shown as their own category,
+  // sent positive, received negative, never part of the expense total).
   const transfers = useMemo(() => {
     const idx = new Map(months.map((m, i) => [m, i]))
     const cardIds = new Set(data.accounts.filter((a) => a.type === 'card').map((a) => a.id))
     const inn = months.map(() => 0), out = months.map(() => 0)
+    const byMerchant = new Map<string, number[]>()
     for (const t of etx) {
       const i = idx.get(t.month)
       if (i === undefined || t.kind !== 'transfer' || !shown(t.account_id) || cardIds.has(t.account_id)) continue
       if (t.value >= 0) inn[i] += t.value
       else out[i] -= t.value
+      const key = t.merchant || '(sem descrição)'
+      const row = byMerchant.get(key) ?? months.map(() => 0)
+      row[i] -= t.value
+      byMerchant.set(key, row)
     }
-    return { inn, out }
+    const asRow = (key: string, v: number[]): PeriodRow => {
+      const total = v.reduce((a, b) => a + b, 0)
+      return { key, perMonth: v.map((x) => (Math.abs(x) > 0.005 ? x : null)), outlier: v.map(() => false), isNew: v.map(() => false), avg: total / months.length, total, flagged: false }
+    }
+    const merchants = [...byMerchant].map(([k, v]) => asRow(k, v)).sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
+    const net = months.map((_, i) => out[i] - inn[i])
+    return { inn, out, group: merchants.length ? { ...asRow('Transferências', net), merchants } : null }
   }, [etx, months, shown, data.accounts])
   // Cards are left out of the total: their running sum is not a balance, and the bill is paid from an account shown here.
   const saldos = useMemo(() => monthBalances(
@@ -295,6 +308,9 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
     (amount, from, date) => ctx.fx.convert(amount, from, ctx.currency, date),
   ), [data.accounts, data.transactions, months, shown, ctx.fx, ctx.currency])
   // Closing balance of each ticked account in its own currency, under the converted total.
+  const entradas = saldos.inflow.map((v, i) => v - transfers.inn[i])
+  const saidas = saldos.outflow.map((v, i) => v - transfers.out[i])
+  const liquido = transfers.inn.map((v, i) => v - transfers.out[i])
   const perAccount = useMemo(() => data.accounts.filter((a) => shown(a.id) && a.type !== 'card').map((a) => ({
     a, closing: monthBalances([a], data.transactions, months, (amount) => amount).closing,
   })), [data.accounts, data.transactions, months, shown])
@@ -380,7 +396,7 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
           <th className="num sortable" title="Ordenar pelo total" onClick={() => setSortBy(null)}>Total{col === null ? ' ▼' : ''}</th>
         </tr>
         <tr className="muted">
-          <th style={sticky}>Saldo inicial<div className="rule">saldo das contas marcadas no último dia do mês anterior</div></th><th />
+          <th style={sticky}>Saldo inicial</th><th />
           {saldos.opening.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : ''}`}>{fmt(v)}</th>)}
           <th /><th />
         </tr></thead>
@@ -420,6 +436,34 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
               </Fragment>
             )
           })}
+          {transfers.group && !onlyAlerts && (() => {
+            const g = transfers.group
+            const isOpen = open.has(g.key)
+            return (
+              <Fragment key="transfers">
+                <tr className="transfer-row">
+                  <td style={{ ...sticky, whiteSpace: 'nowrap' }}>
+                    <button className="link" onClick={() => toggle(g.key)} aria-expanded={isOpen}>{isOpen ? '▾' : '▸'} Transferências</button>
+                    <span className="muted" style={{ fontSize: 12 }}> entre suas contas · fora do total</span>
+                  </td>
+                  <td />
+                  {cells(g)}
+                </tr>
+                {isOpen && g.merchants.map((m) => (
+                  <tr key={`transfers/${m.key}`} className="transfer-row">
+                    <td style={{ ...sticky, whiteSpace: 'nowrap', paddingLeft: 24, fontSize: 13 }}>
+                      {m.key}{' '}<button className="link" style={{ fontWeight: 400, fontSize: 12 }} onClick={() => onOpen(m.key)}>ver lançamentos</button>
+                    </td>
+                    <td style={{ minWidth: 170 }}>
+                      <CategorySelect ctx={ctx} value={catIdByName.get('Transfer') ?? ''} empty="—" disabled={saving === m.key}
+                        label={`Categoria de ${m.key}`} onChange={(id) => moveMerchant(m.key, id)} />
+                    </td>
+                    {cells(m)}
+                  </tr>
+                ))}
+              </Fragment>
+            )
+          })()}
         </tbody>
         <tfoot><tr>
           <th style={sticky}>Total das despesas<div className="rule">soma das categorias de despesa acima, incluindo as compras do cartão pago por uma conta marcada; estornos abatem; sem transferências</div></th><th />
@@ -427,27 +471,22 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
           <th /><th className="num">{fmt(grand)}</th>
         </tr>
         <tr>
-          <th style={sticky}>Total de entradas<div className="rule">todo dinheiro que entrou: receitas, reembolsos, estornos e transferências recebidas</div></th><th />
-          {saldos.inflow.map((v, i) => <th key={i} className="num pos">{fmt(v)}</th>)}
-          <th /><th className="num pos">{fmt(saldos.inflow.reduce((s, v) => s + v, 0))}</th>
-        </tr>
-        <tr className="sub-row">
-          <td style={sticky}>↳ transferências recebidas<div className="rule">vindas de outra conta sua (Livret, LDDS, outra conta); já incluídas nas entradas</div></td><td />
-          {transfers.inn.map((v, i) => <td key={i} className="num muted">{v ? fmt(v) : '—'}</td>)}
-          <td /><td className="num muted">{fmt(transfers.inn.reduce((s, v) => s + v, 0))}</td>
+          <th style={sticky}>Total de entradas</th><th />
+          {entradas.map((v, i) => <th key={i} className="num pos">{fmt(v)}</th>)}
+          <th /><th className="num pos">{fmt(entradas.reduce((s, v) => s + v, 0))}</th>
         </tr>
         <tr>
-          <th style={sticky}>Total de saídas<div className="rule">todo dinheiro que saiu: despesas, pagamentos de fatura e transferências enviadas</div></th><th />
-          {saldos.outflow.map((v, i) => <th key={i} className="num neg">{fmt(v)}</th>)}
-          <th /><th className="num neg">{fmt(saldos.outflow.reduce((s, v) => s + v, 0))}</th>
-        </tr>
-        <tr className="sub-row">
-          <td style={sticky}>↳ transferências enviadas<div className="rule">para outra conta sua ou pagamento de fatura importada do cartão; já incluídas nas saídas</div></td><td />
-          {transfers.out.map((v, i) => <td key={i} className="num muted">{v ? fmt(v) : '—'}</td>)}
-          <td /><td className="num muted">{fmt(transfers.out.reduce((s, v) => s + v, 0))}</td>
+          <th style={sticky}>Total de saídas</th><th />
+          {saidas.map((v, i) => <th key={i} className="num neg">{fmt(v)}</th>)}
+          <th /><th className="num neg">{fmt(saidas.reduce((s, v) => s + v, 0))}</th>
         </tr>
         <tr>
-          <th style={sticky}>Saldo final{perAccount.length > 1 || perAccount.some((x) => x.a.currency !== ctx.currency) ? ` (em ${ctx.currency})` : ''}<div className="rule">saldo inicial + entradas − saídas, no último dia do mês</div></th><th />
+          <th style={sticky}>Transferências (líquido)</th><th />
+          {liquido.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : v > 0 ? 'pos' : 'muted'}`}>{Math.abs(v) > 0.005 ? fmt(v) : '—'}</th>)}
+          <th /><th className="num">{fmt(liquido.reduce((s, v) => s + v, 0))}</th>
+        </tr>
+        <tr>
+          <th style={sticky}>Saldo final{perAccount.length > 1 || perAccount.some((x) => x.a.currency !== ctx.currency) ? ` (em ${ctx.currency})` : ''}</th><th />
           {saldos.closing.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : ''}`}>{fmt(v)}</th>)}
           <th /><th />
         </tr>
