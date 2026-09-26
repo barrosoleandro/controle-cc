@@ -79,3 +79,12 @@ export function parseExchangeAnswer(text: string, categories: string[], asked?: 
   if (!out.size) throw new Error('Nenhum estabelecimento da resposta corresponde aos exportados.')
   return [...out.values()]
 }
+
+/** Marker kept in a transaction's notes while its category is the one Claude chose. */
+export const AI_NOTE = 'Categoria definida pela IA'
+
+/** Adds or removes the marker, keeping whatever the user wrote in the notes. */
+export function withAiNote(notes: string | null | undefined, on: boolean): string {
+  const rest = (notes ?? '').split(' · ').map((p) => p.trim()).filter((p) => p && p !== AI_NOTE)
+  return (on ? [...rest, AI_NOTE] : rest).join(' · ')
+}

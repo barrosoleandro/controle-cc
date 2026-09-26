@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { addRule, reapplyRules, setTransactionCategory, setTransactionNote } from '../lib/data'
+import { addRule, markAiNote, reapplyRules, setCategoryForTransactions, setTransactionCategory, setTransactionNote, updateRule } from '../lib/data'
 import { money } from '../lib/format'
 import { useFmt, useSubscriptions } from '../lib/hooks'
 
@@ -37,13 +37,22 @@ function Lista({ ctx }: { ctx: Ctx }) {
   }, [etx, q, month, cat, acc])
   const total = rows.reduce((s, t) => s + t.value, 0)
 
-  async function changeCategory(id: string, categoryId: string, merchant: string) {
-    await setTransactionCategory(id, categoryId || null)
-    if (categoryId && merchant && confirm(`Usar sempre esta categoria para "${merchant}"?`)) {
-      const minPriority = Math.min(1000, ...data.rules.map((r) => r.priority))
-      await addRule(merchant, categoryId, null, minPriority - 1) // regras suas vencem as padrão
-      const n = await reapplyRules({ ...data, rules: [{ id: 'new', pattern: merchant, category: data.categories.find((c) => c.id === categoryId)!.name, category_id: categoryId, priority: minPriority - 1 }, ...data.rules] })
-      setMsg(`Regra criada; ${n} outros lançamentos atualizados.`)
+  /**
+   * A category picked on one line applies to the whole history of that merchant, even rows
+   * chosen earlier by hand or by the AI, and becomes (or updates) the merchant's rule.
+   */
+  async function changeCategory(t: { id: string; merchant: string }, categoryId: string) {
+    const merchant = t.merchant
+    const wide = Boolean(categoryId) && merchant.length >= 2
+    const same = wide ? data.transactions.filter((x) => x.merchant === merchant) : data.transactions.filter((x) => x.id === t.id)
+    if (wide) await setCategoryForTransactions(same.map((x) => x.id), categoryId)
+    else await setTransactionCategory(t.id, categoryId || null)
+    await markAiNote(same, false)
+    if (wide) {
+      const rule = data.rules.find((r) => r.pattern.toUpperCase() === merchant.toUpperCase())
+      if (rule?.id) await updateRule(rule.id, { category_id: categoryId })
+      else await addRule(merchant, categoryId, null, Math.min(1000, ...data.rules.map((r) => r.priority)) - 1) // regras suas vencem as padrão
+      setMsg(`"${merchant}": ${same.length} lançamento(s) atualizados e regra salva para os próximos imports.`)
     }
     await ctx.reload()
   }
@@ -77,7 +86,7 @@ function Lista({ ctx }: { ctx: Ctx }) {
                 <input style={{ marginTop: 4, width: '100%', fontSize: 12, padding: '2px 6px' }} placeholder="observação" defaultValue={t.notes ?? ''}
                   onBlur={(e) => { if (e.target.value !== (t.notes ?? '')) setTransactionNote(t.id, e.target.value) }} /></td>
               <td className="hide-sm">{t.accountName}</td>
-              <td><select value={t.category_id ?? ''} onChange={(e) => changeCategory(t.id, e.target.value, t.merchant)} style={{ maxWidth: 160, fontWeight: t.category_locked ? 600 : 400 }}>
+              <td><select value={t.category_id ?? ''} onChange={(e) => changeCategory(t, e.target.value)} style={{ maxWidth: 160, fontWeight: t.category_locked ? 600 : 400 }}>
                 <option value="">—</option>{sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></td>
               <td className={`num ${t.amount < 0 ? 'neg' : 'pos'}`}>{money(t.currency, 2)(t.amount)}</td>
             </tr>

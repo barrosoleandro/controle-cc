@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Ctx } from '../App'
 import { saveMerchantProfiles, vendorsToEnrich, type VendorSuggestion } from '../lib/ai'
 import { buildExchangeRequest, parseExchangeAnswer } from '../domain/claudeExchange'
-import { addRule, setCategoryForTransactions } from '../lib/data'
+import { addRule, markAiNote, setCategoryForTransactions } from '../lib/data'
 import { money } from '../lib/format'
 
 interface Row extends VendorSuggestion {
@@ -75,9 +75,10 @@ export function AiSuggestions({ ctx }: { ctx: Ctx }) {
       let priority = Math.min(1000, ...data.rules.map((r) => r.priority)) - 1
       let touched = 0
       for (const r of chosen) {
-        const ids = data.transactions.filter((t) => t.merchant === r.merchant).map((t) => t.id)
-        await setCategoryForTransactions(ids, r.categoryId)
-        touched += ids.length
+        const txs = data.transactions.filter((t) => t.merchant === r.merchant)
+        await setCategoryForTransactions(txs.map((t) => t.id), r.categoryId)
+        await markAiNote(txs, true) // shows in Lançamentos until the category is changed by hand
+        touched += txs.length
         // Same learning path as the rest of the app: a rule means the next import needs no AI.
         if (!data.rules.some((x) => x.pattern.toUpperCase() === r.merchant.toUpperCase())) {
           await addRule(r.merchant, r.categoryId, null, priority); priority--
