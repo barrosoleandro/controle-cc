@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildExchangeRequest, EXCHANGE_FORMAT, parseExchangeAnswer, type VendorQuery } from '../src/domain/claudeExchange'
+import { AI_NOTE, buildExchangeRequest, EXCHANGE_FORMAT, parseExchangeAnswer, withAiNote, type VendorQuery } from '../src/domain/claudeExchange'
 
 const CATS = ['Mercado', 'Restaurantes', 'Taxas bancárias']
 const vendor: VendorQuery = { merchant: 'LISBON DUTY FREE', samples: ['COMPRA 8695 LISBON DUTY FREE PIE LI CONTACTLESS'], sign: 'debit', currency: 'EUR', typicalAmount: 59.5 }
@@ -36,5 +36,15 @@ describe('Claude file exchange', () => {
     expect(() => parseExchangeAnswer(answer, CATS, ['LISBON DUTY FREE'])).toThrow(/Nenhum estabelecimento/)
     expect(() => parseExchangeAnswer('not json', CATS)).toThrow(/JSON válido/)
     expect(() => parseExchangeAnswer('{"foo":1}', CATS)).toThrow(/resultados/)
+  })
+})
+
+describe('AI note marker', () => {
+  it('adds the marker without losing what the user wrote, and removes it cleanly', () => {
+    expect(withAiNote(null, true)).toBe(AI_NOTE)
+    expect(withAiNote('presente da Carol', true)).toBe(`presente da Carol · ${AI_NOTE}`)
+    expect(withAiNote(`presente da Carol · ${AI_NOTE}`, true)).toBe(`presente da Carol · ${AI_NOTE}`)
+    expect(withAiNote(`presente da Carol · ${AI_NOTE}`, false)).toBe('presente da Carol')
+    expect(withAiNote(AI_NOTE, false)).toBe('')
   })
 })

@@ -4,6 +4,7 @@ import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/d
 import { categorize, merchantKey, TRANSFER } from '../domain/categorize'
 import { matchCardPayments, type StoredCardStatement } from '../domain/cards'
 import { withFingerprints } from '../domain/fingerprint'
+import { withAiNote } from '../domain/claudeExchange'
 import type { ContractItem } from '../domain/payroll'
 
 export interface DashboardPrefs { widgets: { id: string; visible: boolean }[] }
@@ -259,6 +260,17 @@ export async function setCategoryForTransactions(ids: string[], category_id: str
 }
 export async function setTransactionNote(id: string, notes: string) {
   must(await supabase.from('transactions').update({ notes }).eq('id', id))
+}
+/** Adds (on) or removes the "defined by AI" marker in the notes of these transactions. */
+export async function markAiNote(txs: Pick<Transaction, 'id' | 'notes'>[], on: boolean) {
+  const byNotes = new Map<string, string[]>()
+  for (const t of txs) {
+    const next = withAiNote(t.notes, on)
+    if (next !== (t.notes ?? '')) byNotes.set(next, [...(byNotes.get(next) ?? []), t.id])
+  }
+  for (const [notes, ids] of byNotes)
+    for (let i = 0; i < ids.length; i += 500)
+      must(await supabase.from('transactions').update({ notes: notes || null }).in('id', ids.slice(i, i + 500)))
 }
 
 /** Re-runs the rules on every transaction not categorized by hand. Returns number changed. */
