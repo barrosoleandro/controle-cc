@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Ctx } from '../App'
-import { addRule, deriveOpening, ensureAccounts, executeImport, importedHashes, linkCardPayments, loadAll, pendingOf, planImport, sha256, updateAccount, type ImportPlan } from '../lib/data'
+import { addRule, deriveOpening, ensureAccounts, executeImport, importedHashes, linkCardPayments, loadAll, pendingOf, planImport, sha256, updateAccount, type ImportPlan, type Pending } from '../lib/data'
 import { money } from '../lib/format'
 import { saveMerchantProfiles } from '../lib/ai'
 import { parseStatement } from '../parsers'
@@ -41,7 +41,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
     if (!files?.length) return
     setBusy(true); setDone(null); setErrors([]); setPlans([]); setChoices({}); setDupDecision(null); setKeepDups(new Set())
     const ps: ImportPlan[] = [], errs: string[] = []
-    const pending: { key: string; label: string }[] = [] // rows of the files planned so far
+    const pending: Pending[] = [] // rows of the files planned so far
     let ignored = 0, duplicateFiles = 0
     // A folder brings everything in it, including files that are not statements.
     const candidates = [...files].filter((f) => {
