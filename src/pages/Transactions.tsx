@@ -6,6 +6,7 @@ import { today, useFmt, useSubscriptions } from '../lib/hooks'
 import { buildPeriod, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
 import type { CategoryKind } from '../domain/types'
 import { byName } from '../domain/categorize'
+import { purchaseDate } from '../domain/simplify'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 const NEW = '__new' // select option that opens the new-category form
@@ -28,6 +29,9 @@ function Lista({ ctx }: { ctx: Ctx }) {
   const { data, etx } = ctx
   const [q, setQ] = useState('')
   const [month, setMonth] = useState('')
+  // Purchase-date range (the FACT date on card lines), e.g. the days of a business trip.
+  const [de, setDe] = useState('')
+  const [ate, setAte] = useState('')
   const [cat, setCat] = useState('')
   const [acc, setAcc] = useState('')
   const [limit, setLimit] = useState(200)
@@ -44,11 +48,15 @@ function Lista({ ctx }: { ctx: Ctx }) {
 
   const rows = useMemo(() => {
     const qq = q.trim().toUpperCase()
-    return etx.filter((t) => (!month || t.month === month) && (!acc || t.account_id === acc)
+    const inRange = (t: { description: string; booking_date: string }) => {
+      const d = purchaseDate(t.description, t.booking_date)
+      return (!de || d >= de) && (!ate || d <= ate)
+    }
+    return etx.filter((t) => (!month || t.month === month) && (!acc || t.account_id === acc) && inRange(t)
       && (!cat || (cat === '__none' ? !t.category_id : t.category_id === cat))
       && (!qq || t.description.toUpperCase().includes(qq) || (t.notes ?? '').toUpperCase().includes(qq)))
       .sort((a, b) => b.booking_date.localeCompare(a.booking_date))
-  }, [etx, q, month, cat, acc])
+  }, [etx, q, month, cat, acc, de, ate])
   const total = rows.reduce((s, t) => s + t.value, 0)
 
   /**
@@ -113,6 +121,9 @@ function Lista({ ctx }: { ctx: Ctx }) {
       <div className="row">
         <input placeholder="Buscar…" value={q} onChange={(e) => setQ(e.target.value)} />
         <select value={month} onChange={(e) => setMonth(e.target.value)}><option value="">Todos os meses</option>{months.map((m) => <option key={m}>{m}</option>)}</select>
+        <label className="inline" title="Data da compra (FACT no extrato), não a data em que o banco lançou">Compra de
+          <input type="date" value={de} onChange={(e) => setDe(e.target.value)} /></label>
+        <label className="inline">até <input type="date" value={ate} onChange={(e) => setAte(e.target.value)} /></label>
         <select value={acc} onChange={(e) => setAcc(e.target.value)}><option value="">Todas as contas</option>{data.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
         <select value={cat} onChange={(e) => setCat(e.target.value)}><option value="">Todas as categorias</option><option value="__none">(sem categoria)</option>{sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         <button onClick={exportCsv}>Exportar CSV</button>

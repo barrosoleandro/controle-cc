@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Ctx } from '../App'
-import { addCategory, addRule, deleteRule, deriveOpening, saveFx, setBudget, updateAccount, updateBankMap, updateCategory, updateRule } from '../lib/data'
+import { addCategory, addRule, deleteRule, deriveOpening, mergeCategories, saveFx, setBudget, updateAccount, updateBankMap, updateCategory, updateRule } from '../lib/data'
 import { fetchEurBrl } from '../domain/fx'
 import { balanceSeries } from '../domain/analytics'
 import { money } from '../lib/format'
@@ -8,6 +8,7 @@ import { MAPPING_OPEN_QUESTIONS } from '../domain/defaults'
 import type { CategoryKind } from '../domain/types'
 import { byName } from '../domain/categorize'
 import { CategorySelect } from '../components/CategorySelect'
+import { planMerges } from '../domain/simplify'
 
 const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações'] as const
 
@@ -63,10 +64,102 @@ function Budgets({ ctx }: { ctx: Ctx }) {
 }
 
 function Categories({ ctx }: { ctx: Ctx }) {
+  return <div className="grid">
+    <Simplify ctx={ctx} />
+    <Merge ctx={ctx} />
+    <CategoryList ctx={ctx} />
+  </div>
+}
+
+/** One-click version of the suggested simplification, with a preview of what each merge moves. */
+function Simplify({ ctx }: { ctx: Ctx }) {
+  const { data } = ctx
+  const steps = planMerges(data.categories)
+  const [skip, setSkip] = useState<Set<string>>(() => new Set())
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const count = new Map<string, number>()
+  for (const t of data.transactions) if (t.category_id) count.set(t.category_id, (count.get(t.category_id) ?? 0) + 1)
+  const chosen = steps.filter((s) => !skip.has(s.target))
+
+  async function aplicar() {
+    if (!confirm(`Aplicar ${chosen.length} fusões? As categorias de origem serão apagadas depois de mover lançamentos, regras e orçamentos.`)) return
+    setBusy(true); setMsg(null)
+    try {
+      let moved = 0
+      for (const s of chosen) {
+        let targetId = s.keep?.id
+        if (!targetId) targetId = (await addCategory(s.target, s.kind, '#888888', data.categories.length)).id
+        else if (s.keep!.name !== s.target || s.keep!.kind !== s.kind) await updateCategory(targetId, { name: s.target, kind: s.kind })
+        moved += await mergeCategories(s.absorb.map((c) => c.id), targetId, data.budgets)
+      }
+      setMsg(`${chosen.length} categorias ajustadas · ${moved} lançamentos movidos.`)
+      await ctx.reload()
+    } catch (e) { setMsg((e as Error).message) } finally { setBusy(false) }
+  }
+
+  if (!steps.length) return <div className="card" style={{ gridColumn: '1/-1' }}><h3>Simplificar categorias</h3><p className="pos">Suas categorias já estão simplificadas.</p>{msg && <p className="muted">{msg}</p>}</div>
+  return <div className="card" style={{ gridColumn: '1/-1' }}><h3>Simplificar categorias</h3>
+    <p className="muted">Proposta: menos categorias, mais largas. O nome do estabelecimento continua aparecendo dentro de cada categoria (Lançamentos → 6 meses → ▸).
+      Transfer, Cartão Itaú, Imóvel Brasil, Business Trips, Reembolso, Rendimentos e Outras receitas ficam como estão. Desmarque o que não quiser.</p>
+    <div className="scroll"><table>
+      <thead><tr><th /><th>Fica</th><th>Absorve</th><th className="num">Lançamentos</th></tr></thead>
+      <tbody>{steps.map((s) => (
+        <tr key={s.target}>
+          <td><input type="checkbox" checked={!skip.has(s.target)} disabled={busy} aria-label={`Aplicar ${s.target}`}
+            onChange={() => setSkip((prev) => { const n = new Set(prev); if (n.has(s.target)) n.delete(s.target); else n.add(s.target); return n })} /></td>
+          <td><strong>{s.target}</strong>{s.keep && s.keep.name !== s.target && <span className="muted"> (renomeia “{s.keep.name}”)</span>}
+            {s.note && <div className="warn" style={{ fontSize: 12 }}>{s.note}</div>}</td>
+          <td>{s.absorb.map((c) => c.name).join(', ') || <span className="muted">—</span>}</td>
+          <td className="num">{[s.keep, ...s.absorb].reduce((n, c) => n + (c ? count.get(c.id) ?? 0 : 0), 0)}</td>
+        </tr>
+      ))}</tbody>
+    </table></div>
+    <div className="row" style={{ marginTop: 10 }}>
+      <button className="primary" onClick={aplicar} disabled={busy || !chosen.length}>Aplicar {chosen.length} fusões</button>
+      {msg && <span className="muted">{msg}</span>}
+    </div>
+  </div>
+}
+
+/** Merge any category into another by hand. */
+function Merge({ ctx }: { ctx: Ctx }) {
+  const { data } = ctx
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const nameOf = (id: string) => data.categories.find((c) => c.id === id)?.name ?? ''
+  const n = data.transactions.filter((t) => t.category_id === from).length
+
+  async function mesclar() {
+    if (!confirm(`Mover ${n} lançamentos, as regras e o orçamento de “${nameOf(from)}” para “${nameOf(to)}” e apagar “${nameOf(from)}”?`)) return
+    setBusy(true); setMsg(null)
+    try {
+      const moved = await mergeCategories([from], to, data.budgets)
+      setMsg(`“${nameOf(from)}” mesclada em “${nameOf(to)}” · ${moved} lançamentos movidos.`)
+      setFrom('')
+      await ctx.reload()
+    } catch (e) { setMsg((e as Error).message) } finally { setBusy(false) }
+  }
+
+  return <div className="card" style={{ gridColumn: '1/-1' }}><h3>Mesclar categorias</h3>
+    <p className="muted">Move lançamentos, regras, mapa do banco e orçamento da primeira para a segunda e apaga a primeira. As escolhas feitas à mão continuam travadas.</p>
+    <div className="row">
+      <CategorySelect ctx={ctx} value={from} onChange={setFrom} empty="Mesclar esta…" label="Categoria de origem" disabled={busy} />
+      <span>→</span>
+      <CategorySelect ctx={ctx} value={to} onChange={setTo} empty="…nesta" label="Categoria de destino" disabled={busy} />
+      <button className="primary" onClick={mesclar} disabled={busy || !from || !to || from === to}>Mesclar{from ? ` (${n} lançamentos)` : ''}</button>
+    </div>
+    {msg && <p className="muted">{msg}</p>}
+  </div>
+}
+
+function CategoryList({ ctx }: { ctx: Ctx }) {
   const { data } = ctx
   const [name, setName] = useState('')
   const [kind, setKind] = useState<CategoryKind>('expense')
-  return <div className="card"><h3>Categorias</h3>
+  return <div className="card" style={{ gridColumn: '1/-1' }}><h3>Categorias</h3>
     <div className="row"><input placeholder="Nova categoria" value={name} onChange={(e) => setName(e.target.value)} />
       <select value={kind} onChange={(e) => setKind(e.target.value as CategoryKind)}><option value="expense">despesa</option><option value="income">receita</option><option value="transfer">transferência</option></select>
       <button disabled={!name.trim()} onClick={async () => { await addCategory(name.trim(), kind, '#888888', data.categories.length); setName(''); ctx.reload() }}>Adicionar</button></div>
