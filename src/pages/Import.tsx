@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Ctx } from '../App'
-import { addRule, deriveOpening, ensureAccounts, executeImport, importedHashes, linkCardPayments, loadAll, pendingOf, planImport, sha256, updateAccount, type ImportPlan } from '../lib/data'
+import { addRule, deriveOpening, ensureAccounts, executeImport, importedHashes, linkCardPayments, loadAll, pendingOf, planImport, sha256, updateAccount, type ImportPlan, type Pending } from '../lib/data'
 import { money } from '../lib/format'
 import { saveMerchantProfiles } from '../lib/ai'
 import { parseStatement } from '../parsers'
@@ -41,7 +41,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
     if (!files?.length) return
     setBusy(true); setDone(null); setErrors([]); setPlans([]); setChoices({}); setDupDecision(null); setKeepDups(new Set())
     const ps: ImportPlan[] = [], errs: string[] = []
-    const pending: { key: string; label: string }[] = [] // rows of the files planned so far
+    const pending: Pending[] = [] // rows of the files planned so far
     let ignored = 0, duplicateFiles = 0
     // A folder brings everything in it, including files that are not statements.
     const candidates = [...files].filter((f) => {
@@ -126,6 +126,8 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   const allDups = plans.flatMap((p) => p.duplicates.map((d) => ({ ...d, file: p.fileName })))
   const keptCount = dupDecision === 'import' ? allDups.length : dupDecision === 'pick' ? keepDups.size : 0
   const mustDecide = allDups.length > 0 && dupDecision === null
+  const dupsInBase = allDups.filter((d) => d.inBase).length
+  const dupsBetweenFiles = allDups.length - dupsInBase
 
   return (
     <div className="grid">
@@ -175,8 +177,13 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
           </table></div>
           {allDups.length > 0 && (
             <div className="alert warn" style={{ display: 'block', marginTop: 12 }}>
-              <strong>{allDups.length} linha(s) repetida(s)</strong> — já existem na base ou em outro arquivo desta seleção
-              (mesma conta, data, valor e estabelecimento). O que fazer?
+              <strong>{allDups.length} linha(s) repetida(s)</strong> (mesma conta, data, valor e estabelecimento):
+              <ul style={{ margin: '4px 0 6px 18px' }}>
+                {dupsInBase > 0 && <li>{dupsInBase} já estão gravadas na base;</li>}
+                {dupsBetweenFiles > 0 && <li>{dupsBetweenFiles} aparecem em dois arquivos desta seleção (por exemplo, o extrato do app e o Extrato Mensal
+                  do mesmo mês). A primeira cópia é importada normalmente; a pergunta é só sobre a segunda.</li>}
+              </ul>
+              O que fazer com as cópias repetidas?
               <div className="row" style={{ marginTop: 6 }}>
                 <label className="inline"><input type="radio" name="dups" checked={dupDecision === 'skip'} onChange={() => setDupDecision('skip')} disabled={busy} /> Pular todas (recomendado)</label>
                 <label className="inline"><input type="radio" name="dups" checked={dupDecision === 'import'} onChange={() => setDupDecision('import')} disabled={busy} /> Importar todas mesmo assim</label>

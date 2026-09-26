@@ -94,9 +94,15 @@ describe('fingerprints', () => {
 })
 
 describe('duplicate check across files (date + vendor + amount)', () => {
-  it('counts per key: one stored copy absorbs one incoming copy', () => {
-    const k = dedupeKey('X', '2026-01-01', -5, 'CB SHOP FACT 010126')
-    expect(dedupeKey('X', '2026-01-01', -5, 'Shop Paris')).toBe(k)
-    expect(markDuplicates([k, k, dedupeKey('X', '2026-01-01', -5, 'PICARD')], [k])).toEqual([true, false, false])
+  const it2 = (desc: string, amount = -5) => ({ key: dedupeKey('X', '2026-01-01', amount), desc })
+  it('matches the vendor by its words, in any order and without accents', () => {
+    expect(markDuplicates([it2('RESGATE CDB DI', 63133.08)], [it2('DI Resgate CDB', 63133.08)])).toEqual([true])
+    expect(markDuplicates([it2('PAG TIT INT 033')], [it2('INT Pag Tít 033')])).toEqual([true])
+    expect(markDuplicates([it2('TED D INT1660e50e')], [it2('INT TED D 1660e50e')])).toEqual([true])
+    expect(markDuplicates([it2('CB SHOP FACT 010126')], [it2('Shop Paris')])).toEqual([true])
+  })
+  it('keeps different vendors and counts copies: one stored row absorbs one incoming row', () => {
+    expect(markDuplicates([it2('CARTE CARREFOUR'), it2('CARTE CARREFOUR'), it2('CARTE PICARD')], [it2('CARREFOUR MARKET')])).toEqual([true, false, false])
+    expect(markDuplicates([it2('PICARD', -6)], [it2('PICARD', -5)])).toEqual([false])
   })
 })

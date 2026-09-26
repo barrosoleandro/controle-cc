@@ -3,7 +3,7 @@ import type { Account, AccountHint, BankMapEntry, Category, Currency, ParseResul
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/defaults'
 import { categorize, merchantKey, ruleMatches, TRANSFER } from '../domain/categorize'
 import { matchCardPayments, type StoredCardStatement } from '../domain/cards'
-import { dedupeKey, markDuplicates, withFingerprints } from '../domain/fingerprint'
+import { dedupeKey, markDuplicates, sameVendor, withFingerprints } from '../domain/fingerprint'
 import { withAiNote } from '../domain/claudeExchange'
 import type { ContractItem } from '../domain/payroll'
 
@@ -111,6 +111,7 @@ export interface DupRow {
   id: string // unique in the selection: file name + fingerprint
   tx: ParsedTransaction & { fingerprint: string }
   matches: string // what it matches, for the user to decide
+  inBase: boolean // true: already stored; false: repeats another file of this selection
 }
 
 export interface ImportPlan {
@@ -172,44 +173,47 @@ export async function importedHashes(): Promise<Set<string>> {
  * same account has a row with the same date, amount and vendor, whatever file it came
  * from (see markDuplicates), or the same fingerprint.
  */
-function newRowsOf(result: ParseResult, data: AppData, pending: { key: string; label: string }[] = []) {
+function newRowsOf(result: ParseResult, data: AppData, pending: Pending[] = []) {
   const refOf = new Map(data.accounts.map((a) => [a.id, a.external_ref]))
-  const stored = data.transactions.map((t) => ({
-    key: dedupeKey(refOf.get(t.account_id) ?? '', t.booking_date, Number(t.amount), t.description),
+  const stored: Pending[] = data.transactions.map((t) => ({
+    key: dedupeKey(refOf.get(t.account_id) ?? '', t.booking_date, Number(t.amount)),
+    desc: t.description,
     label: `já na base: ${t.booking_date} · ${t.description} · ${Number(t.amount).toFixed(2)}`,
   }))
   const pool = [...stored, ...pending]
-  const labelOf = new Map<string, string>()
-  for (const x of pool) if (!labelOf.has(x.key)) labelOf.set(x.key, x.label)
   const known = new Set(data.transactions.map((t) => t.fingerprint))
   const fp = withFingerprints(result.transactions, (r) => r)
-  const keys = fp.map((t) => dedupeKey(t.accountRef, t.bookingDate, t.amount, t.description))
-  const dup = markDuplicates(keys, pool.map((x) => x.key))
+  const items = fp.map((t) => ({ key: dedupeKey(t.accountRef, t.bookingDate, t.amount), desc: t.description }))
+  const dup = markDuplicates(items, pool)
+  const labelFor = (i: number) => pool.find((x) => x.key === items[i].key && sameVendor(x.desc, items[i].desc))?.label ?? 'mesmo lançamento já importado'
   const fresh = fp.filter((t, i) => !dup[i] && !known.has(t.fingerprint))
   const dups = fp.map((t, i) => ({ t, i })).filter(({ t, i }) => dup[i] || known.has(t.fingerprint))
-    .map(({ t, i }) => ({ tx: t, key: keys[i], matches: labelOf.get(keys[i]) ?? 'mesmo lançamento já importado' }))
-  return { fresh, dups, keys: fresh.map((t) => dedupeKey(t.accountRef, t.bookingDate, t.amount, t.description)) }
+    .map(({ t, i }) => ({ tx: t, matches: labelFor(i) }))
+  return { fresh, dups }
 }
+
+/** A row to check new files against: bucket key, description (for the vendor) and a label for the user. */
+export interface Pending { key: string; desc: string; label: string }
 
 /**
  * `pending`: rows of earlier files in the same selection, so a repeat between two new
  * files is also shown to the user before anything is written.
  */
-export function planImport(fileName: string, hash: string, result: ParseResult, data: AppData, pending: { key: string; label: string }[] = []): ImportPlan {
+export function planImport(fileName: string, hash: string, result: ParseResult, data: AppData, pending: Pending[] = []): ImportPlan {
   const refs = new Set(data.accounts.map((a) => a.external_ref))
   const unknownRefs = [...new Set([...result.transactions, ...result.checkpoints].map((t) => t.accountRef))].filter((r) => r && !refs.has(r))
   const { fresh, dups } = newRowsOf(result, data, pending)
   return {
     fileName, sha256: hash, result, unknownRefs, newRows: fresh.length, dupRows: dups.length,
-    duplicates: dups.map((d) => ({ id: `${fileName}#${d.tx.fingerprint}`, tx: d.tx, matches: d.matches })),
+    duplicates: dups.map((d) => ({ id: `${fileName}#${d.tx.fingerprint}`, tx: d.tx, matches: d.matches, inBase: d.matches.startsWith('já na base') })),
   }
 }
 
 /** Keys and labels of a plan's new rows, to check the next files of the same selection against. */
-export function pendingOf(plan: ImportPlan): { key: string; label: string }[] {
+export function pendingOf(plan: ImportPlan): Pending[] {
   const dupFp = new Set(plan.duplicates.map((d) => d.tx.fingerprint))
   return withFingerprints(plan.result.transactions, (r) => r).filter((t) => !dupFp.has(t.fingerprint))
-    .map((t) => ({ key: dedupeKey(t.accountRef, t.bookingDate, t.amount, t.description), label: `no arquivo ${plan.fileName}: ${t.bookingDate} · ${t.description} · ${t.amount.toFixed(2)}` }))
+    .map((t) => ({ key: dedupeKey(t.accountRef, t.bookingDate, t.amount), desc: t.description, label: `no arquivo ${plan.fileName}: ${t.bookingDate} · ${t.description} · ${t.amount.toFixed(2)}` }))
 }
 
 /**
