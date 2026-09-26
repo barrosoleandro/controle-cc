@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Ctx } from '../App'
-import { addRule, deriveOpening, ensureAccounts, executeImport, importedHashes, linkCardPayments, loadAll, planImport, sha256, updateAccount, type ImportPlan } from '../lib/data'
+import { addRule, deriveOpening, ensureAccounts, executeImport, importedHashes, linkCardPayments, loadAll, pendingOf, planImport, sha256, updateAccount, type ImportPlan } from '../lib/data'
+import { money } from '../lib/format'
 import { saveMerchantProfiles } from '../lib/ai'
 import { parseStatement } from '../parsers'
 import { LearnedRules } from '../components/LearnedRules'
@@ -25,6 +26,9 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   const [progress, setProgress] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [choices, setChoices] = useState<Record<string, Choice>>({})
+  // Repeated rows are never written silently: the user decides before importing.
+  const [dupDecision, setDupDecision] = useState<'skip' | 'import' | 'pick' | null>(null)
+  const [keepDups, setKeepDups] = useState<Set<string>>(() => new Set())
   const dirRef = useRef<HTMLInputElement>(null)
 
   // webkitdirectory is not in React's prop types; set it on the element itself.
@@ -35,8 +39,9 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
 
   async function onFiles(files: FileList | null) {
     if (!files?.length) return
-    setBusy(true); setDone(null); setErrors([]); setPlans([]); setChoices({})
+    setBusy(true); setDone(null); setErrors([]); setPlans([]); setChoices({}); setDupDecision(null); setKeepDups(new Set())
     const ps: ImportPlan[] = [], errs: string[] = []
+    const pending: { key: string; label: string }[] = [] // rows of the files planned so far
     let ignored = 0, duplicateFiles = 0
     // A folder brings everything in it, including files that are not statements.
     const candidates = [...files].filter((f) => {
@@ -62,7 +67,9 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         seen.add(hash)
         const { loadPdf } = await import('../lib/pdf') // pdf.js is loaded only when importing
         const res = await parseStatement(f.name, bytes, loadPdf)
-        ps.push(planImport(f.name, hash, res, ctx.data))
+        const plan = planImport(f.name, hash, res, ctx.data, pending)
+        ps.push(plan)
+        pending.push(...pendingOf(plan))
       } catch (e) { errs.push(`${f.name}: ${(e as Error).message}`) }
     }
     setPlans(ps); setErrors(errs); setSkipped({ ignored, duplicateFiles })
@@ -93,7 +100,9 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
       let i = 0
       for (const p of plans) {
         setProgress(`Importando ${++i} de ${plans.length}: ${p.fileName}`)
-        total += await executeImport(planImport(p.fileName, p.sha256, p.result, data), data)
+        const fresh = planImport(p.fileName, p.sha256, p.result, data)
+        const forced = new Set(dupDecision === 'import' ? p.duplicates.map((d) => d.id) : dupDecision === 'pick' ? p.duplicates.filter((d) => keepDups.has(d.id)).map((d) => d.id) : [])
+        total += await executeImport({ ...fresh, duplicates: p.duplicates }, data, forced)
         data = await loadAll()
       }
       // Rebuild opening balances from the bank's own balances.
@@ -107,13 +116,16 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         (chosen.length ? ` · ${chosen.length} regras criadas` : '') +
         (linked ? ` · ${linked} pagamentos de fatura marcados como transferência` : '') +
         '. Saldos iniciais recalculados — confira a conciliação em Ajustes → Contas.')
-      setPlans([]); setChoices({})
+      setPlans([]); setChoices({}); setDupDecision(null); setKeepDups(new Set())
       await ctx.reload()
     } catch (e) { setErrors([(e as Error).message]) } finally { setProgress(null); setBusy(false) }
   }
 
   const totalNew = plans.reduce((s, p) => s + p.newRows, 0)
   const totalDup = plans.reduce((s, p) => s + p.dupRows, 0)
+  const allDups = plans.flatMap((p) => p.duplicates.map((d) => ({ ...d, file: p.fileName })))
+  const keptCount = dupDecision === 'import' ? allDups.length : dupDecision === 'pick' ? keepDups.size : 0
+  const mustDecide = allDups.length > 0 && dupDecision === null
 
   return (
     <div className="grid">
@@ -122,7 +134,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         <p className="muted">
           Aceita o CSV do Banque BCP, o relevé mensal do BCP em PDF, os relevés do CCF em PDF, o extrato de conta do Itaú em PDF (do app ou o Extrato Mensal),
           a fatura do cartão Itaú em PDF ou Excel (.xlsx) e o extrato combinado do Millennium bcp em PDF.
-          Pode selecionar tudo de uma vez: linhas repetidas são descartadas sozinhas.
+          Pode selecionar tudo de uma vez. Se alguma linha já existir (mesma conta, data, valor e estabelecimento, de qualquer arquivo), o app pergunta o que fazer antes de gravar.
         </p>
         <div className="row">
           <label className="inline">Arquivos
@@ -152,7 +164,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         </details>}
 
         {plans.length > 0 && <>
-          <p><strong>{plans.length} arquivos prontos</strong> · {totalNew} linhas novas · {totalDup} repetidas serão descartadas</p>
+          <p><strong>{plans.length} arquivos prontos</strong> · {totalNew} linhas novas · {totalDup} repetidas</p>
           <div className="scroll"><table style={{ marginTop: 12 }}>
             <thead><tr><th>Arquivo</th><th>Tipo</th><th className="num">Novas</th><th className="num">Repetidas</th><th className="num">Saldos</th><th>Observações</th></tr></thead>
             <tbody>{plans.map((p) => (
@@ -161,9 +173,38 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
                 <td>{[...p.result.warnings, ...p.unknownRefs.map((r) => `a conta ${r} será criada`)].join('; ')}</td></tr>
             ))}</tbody>
           </table></div>
+          {allDups.length > 0 && (
+            <div className="alert warn" style={{ display: 'block', marginTop: 12 }}>
+              <strong>{allDups.length} linha(s) repetida(s)</strong> — já existem na base ou em outro arquivo desta seleção
+              (mesma conta, data, valor e estabelecimento). O que fazer?
+              <div className="row" style={{ marginTop: 6 }}>
+                <label className="inline"><input type="radio" name="dups" checked={dupDecision === 'skip'} onChange={() => setDupDecision('skip')} disabled={busy} /> Pular todas (recomendado)</label>
+                <label className="inline"><input type="radio" name="dups" checked={dupDecision === 'import'} onChange={() => setDupDecision('import')} disabled={busy} /> Importar todas mesmo assim</label>
+                <label className="inline"><input type="radio" name="dups" checked={dupDecision === 'pick'} onChange={() => setDupDecision('pick')} disabled={busy} /> Escolher linha a linha</label>
+              </div>
+              <details open={dupDecision === 'pick'}>
+                <summary className="muted">Ver as linhas repetidas</summary>
+                <div className="scroll" style={{ maxHeight: 320, overflowY: 'auto' }}><table>
+                  <thead><tr>{dupDecision === 'pick' && <th>Importar</th>}<th>Arquivo</th><th>Data</th><th>Descrição</th><th className="num">Valor</th><th className="hide-sm">Igual a</th></tr></thead>
+                  <tbody>{allDups.map((d) => (
+                    <tr key={d.id}>
+                      {dupDecision === 'pick' && <td><input type="checkbox" checked={keepDups.has(d.id)} disabled={busy} aria-label={`Importar ${d.tx.description}`}
+                        onChange={() => setKeepDups((prev) => { const n = new Set(prev); if (n.has(d.id)) n.delete(d.id); else n.add(d.id); return n })} /></td>}
+                      <td style={{ fontSize: 12, wordBreak: 'break-all' }}>{d.file}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{d.tx.bookingDate}</td>
+                      <td>{d.tx.description}</td>
+                      <td className="num">{money(d.tx.currency, 2)(d.tx.amount)}</td>
+                      <td className="hide-sm muted" style={{ fontSize: 12 }}>{d.matches}</td>
+                    </tr>
+                  ))}</tbody>
+                </table></div>
+              </details>
+            </div>
+          )}
           <ImportCategories ctx={ctx} plans={plans} choices={choices} setChoices={setChoices} busy={busy} />
           <div className="row" style={{ marginTop: 10 }}>
-            <button className="primary" onClick={run} disabled={busy}>Importar {totalNew} linhas{Object.values(choices).filter((c) => c.categoryId).length ? ` e criar ${Object.values(choices).filter((c) => c.categoryId).length} regras` : ''}</button>
+            <button className="primary" onClick={run} disabled={busy || mustDecide} title={mustDecide ? 'Escolha antes o que fazer com as linhas repetidas' : undefined}>
+              Importar {totalNew + keptCount} linhas{keptCount ? ` (${keptCount} repetidas mantidas)` : ''}{Object.values(choices).filter((c) => c.categoryId).length ? ` e criar ${Object.values(choices).filter((c) => c.categoryId).length} regras` : ''}</button>
             <button onClick={() => setPlans([])} disabled={busy}>Cancelar</button>
           </div>
         </>}

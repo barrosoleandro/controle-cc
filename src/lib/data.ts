@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Account, AccountHint, BankMapEntry, Category, Currency, ParseResult, Rule, Transaction } from '../domain/types'
+import type { Account, AccountHint, BankMapEntry, Category, Currency, ParseResult, ParsedTransaction, Rule, Transaction } from '../domain/types'
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/defaults'
 import { categorize, merchantKey, ruleMatches, TRANSFER } from '../domain/categorize'
 import { matchCardPayments, type StoredCardStatement } from '../domain/cards'
@@ -106,6 +106,13 @@ export async function seedDefaults() {
   must(await supabase.from('user_settings').upsert({ display_currency: 'EUR' }))
 }
 
+/** A parsed row that matches one already stored (or in an earlier file of the same selection). */
+export interface DupRow {
+  id: string // unique in the selection: file name + fingerprint
+  tx: ParsedTransaction & { fingerprint: string }
+  matches: string // what it matches, for the user to decide
+}
+
 export interface ImportPlan {
   fileName: string
   sha256: string
@@ -113,6 +120,7 @@ export interface ImportPlan {
   unknownRefs: string[]
   newRows: number
   dupRows: number
+  duplicates: DupRow[]
 }
 
 export async function sha256(bytes: Uint8Array) {
@@ -164,31 +172,60 @@ export async function importedHashes(): Promise<Set<string>> {
  * same account has a row with the same date, amount and vendor, whatever file it came
  * from (see markDuplicates), or the same fingerprint.
  */
-function newRowsOf(result: ParseResult, data: AppData) {
+function newRowsOf(result: ParseResult, data: AppData, pending: { key: string; label: string }[] = []) {
   const refOf = new Map(data.accounts.map((a) => [a.id, a.external_ref]))
-  const existing = data.transactions.map((t) => dedupeKey(refOf.get(t.account_id) ?? '', t.booking_date, Number(t.amount), t.description))
+  const stored = data.transactions.map((t) => ({
+    key: dedupeKey(refOf.get(t.account_id) ?? '', t.booking_date, Number(t.amount), t.description),
+    label: `já na base: ${t.booking_date} · ${t.description} · ${Number(t.amount).toFixed(2)}`,
+  }))
+  const pool = [...stored, ...pending]
+  const labelOf = new Map<string, string>()
+  for (const x of pool) if (!labelOf.has(x.key)) labelOf.set(x.key, x.label)
   const known = new Set(data.transactions.map((t) => t.fingerprint))
   const fp = withFingerprints(result.transactions, (r) => r)
-  const dup = markDuplicates(fp.map((t) => dedupeKey(t.accountRef, t.bookingDate, t.amount, t.description)), existing)
-  return fp.filter((t, i) => !dup[i] && !known.has(t.fingerprint))
+  const keys = fp.map((t) => dedupeKey(t.accountRef, t.bookingDate, t.amount, t.description))
+  const dup = markDuplicates(keys, pool.map((x) => x.key))
+  const fresh = fp.filter((t, i) => !dup[i] && !known.has(t.fingerprint))
+  const dups = fp.map((t, i) => ({ t, i })).filter(({ t, i }) => dup[i] || known.has(t.fingerprint))
+    .map(({ t, i }) => ({ tx: t, key: keys[i], matches: labelOf.get(keys[i]) ?? 'mesmo lançamento já importado' }))
+  return { fresh, dups, keys: fresh.map((t) => dedupeKey(t.accountRef, t.bookingDate, t.amount, t.description)) }
 }
 
-export function planImport(fileName: string, hash: string, result: ParseResult, data: AppData): ImportPlan {
+/**
+ * `pending`: rows of earlier files in the same selection, so a repeat between two new
+ * files is also shown to the user before anything is written.
+ */
+export function planImport(fileName: string, hash: string, result: ParseResult, data: AppData, pending: { key: string; label: string }[] = []): ImportPlan {
   const refs = new Set(data.accounts.map((a) => a.external_ref))
   const unknownRefs = [...new Set([...result.transactions, ...result.checkpoints].map((t) => t.accountRef))].filter((r) => r && !refs.has(r))
-  const newRows = newRowsOf(result, data).length
-  return { fileName, sha256: hash, result, unknownRefs, newRows, dupRows: result.transactions.length - newRows }
+  const { fresh, dups } = newRowsOf(result, data, pending)
+  return {
+    fileName, sha256: hash, result, unknownRefs, newRows: fresh.length, dupRows: dups.length,
+    duplicates: dups.map((d) => ({ id: `${fileName}#${d.tx.fingerprint}`, tx: d.tx, matches: d.matches })),
+  }
 }
 
-/** Writes the parsed file: new transactions (categorized), bank balances, import log. */
-export async function executeImport(plan: ImportPlan, data: AppData): Promise<number> {
+/** Keys and labels of a plan's new rows, to check the next files of the same selection against. */
+export function pendingOf(plan: ImportPlan): { key: string; label: string }[] {
+  const dupFp = new Set(plan.duplicates.map((d) => d.tx.fingerprint))
+  return withFingerprints(plan.result.transactions, (r) => r).filter((t) => !dupFp.has(t.fingerprint))
+    .map((t) => ({ key: dedupeKey(t.accountRef, t.bookingDate, t.amount, t.description), label: `no arquivo ${plan.fileName}: ${t.bookingDate} · ${t.description} · ${t.amount.toFixed(2)}` }))
+}
+
+/**
+ * Writes the parsed file: new transactions (categorized), bank balances, import log.
+ * `forced`: ids of duplicate rows the user chose to import anyway.
+ */
+export async function executeImport(plan: ImportPlan, data: AppData, forced: Set<string> = new Set()): Promise<number> {
   const accByRef = new Map(data.accounts.map((a) => [a.external_ref, a]))
   const catId = new Map(data.categories.map((c) => [c.name, c.id]))
   const imp = must(await supabase.from('imports').insert({
     file_name: plan.fileName, file_sha256: plan.sha256, source: plan.result.source,
     rows_total: plan.result.transactions.length, rows_inserted: 0,
   }).select().single()) as { id: string }
-  const rows = newRowsOf(plan.result, data)
+  // Rows the user chose to keep although they repeat get their own fingerprint.
+  const kept = plan.duplicates.filter((d) => forced.has(d.id)).map((d, i) => ({ ...d.tx, fingerprint: `${d.tx.fingerprint}|mantida-${Date.now()}-${i}` }))
+  const rows = [...newRowsOf(plan.result, data).fresh, ...kept]
     .filter((t) => accByRef.has(t.accountRef))
     .map((t) => {
       const acc = accByRef.get(t.accountRef)!
