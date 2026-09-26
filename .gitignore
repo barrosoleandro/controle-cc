@@ -9,3 +9,6 @@ out/
 *.csv
 *.xlsx
 *.docx
+
+# Supabase CLI local state
+supabase/.temp/

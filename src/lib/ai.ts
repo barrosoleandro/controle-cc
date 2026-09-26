@@ -1,26 +1,8 @@
 import { supabase } from './supabase'
 import type { AppData } from './data'
 import type { Transaction } from '../domain/types'
-
-/** One merchant sent for enrichment, described only by what the statement already shows. */
-export interface VendorQuery {
-  merchant: string
-  samples: string[]
-  bankCategory?: string | null
-  bankSubcategory?: string | null
-  sign: 'debit' | 'credit'
-  currency: string
-  typicalAmount?: number
-}
-
-export interface VendorSuggestion {
-  merchant: string
-  category: string | null // a name from the user's own list, or null when unsure
-  description: string
-  confidence: number
-}
-
-const CHUNK = 30 // merchants per call: keeps each response small and costs predictable
+import type { VendorQuery } from '../domain/claudeExchange'
+export type { VendorQuery, VendorSuggestion } from '../domain/claudeExchange'
 
 /**
  * Merchants worth asking about: no category, or a category nobody chose on purpose.
@@ -54,38 +36,6 @@ export function vendorsToEnrich(data: AppData, txs: Transaction[] = data.transac
         typicalAmount: Math.round((g.weight / g.txs.length) * 100) / 100,
       } satisfies VendorQuery
     })
-}
-
-/**
- * Calls the enrich-transactions Edge Function. The Anthropic key lives there,
- * never in the browser — see supabase/functions/enrich-transactions/index.ts.
- */
-export async function enrichVendors(
-  vendors: VendorQuery[],
-  categories: string[],
-  onProgress?: (done: number, total: number) => void,
-): Promise<VendorSuggestion[]> {
-  const out: VendorSuggestion[] = []
-  for (let i = 0; i < vendors.length; i += CHUNK) {
-    const chunk = vendors.slice(i, i + CHUNK)
-    const { data, error } = await supabase.functions.invoke<{ results?: VendorSuggestion[]; error?: string }>(
-      'enrich-transactions',
-      { body: { vendors: chunk, categories } },
-    )
-    if (error) throw new Error(describeInvokeError(error))
-    if (data?.error) throw new Error(data.error)
-    out.push(...(data?.results ?? []))
-    onProgress?.(Math.min(i + CHUNK, vendors.length), vendors.length)
-  }
-  return out
-}
-
-/** functions.invoke hides the body of a non-2xx response; say something useful instead. */
-function describeInvokeError(error: unknown): string {
-  const msg = (error as Error).message ?? String(error)
-  if (/Failed to send a request|Failed to fetch/i.test(msg))
-    return 'Não foi possível chamar a função enrich-transactions. Ela já foi publicada? (supabase functions deploy enrich-transactions)'
-  return msg
 }
 
 export interface MerchantProfile {
