@@ -1,9 +1,13 @@
 import { Fragment, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { addRule, markAiNote, reapplyRules, setCategoryForTransactions, setTransactionCategory, setTransactionNote, updateRule } from '../lib/data'
+import { addCategory, addRule, markAiNote, reapplyRules, setCategoryForTransactions, setTransactionCategory, setTransactionNote, updateRule } from '../lib/data'
 import { money } from '../lib/format'
 import { today, useFmt, useSubscriptions } from '../lib/hooks'
 import { buildPeriod, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
+import type { CategoryKind } from '../domain/types'
+
+const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
+const NEW = '__new' // select option that opens the new-category form
 
 const VIEWS = ['1 mês', '6 meses', '12 meses', 'Lista'] as const
 const MONTHS: Record<string, number> = { '1 mês': 1, '6 meses': 6, '12 meses': 12 }
@@ -27,6 +31,13 @@ function Lista({ ctx }: { ctx: Ctx }) {
   const [acc, setAcc] = useState('')
   const [limit, setLimit] = useState(200)
   const [msg, setMsg] = useState<string | null>(null)
+  const [sel, setSel] = useState<Set<string>>(() => new Set())
+  const [bulkCat, setBulkCat] = useState('')
+  // Where a category created in the form goes: the selected lines, or one line's whole merchant.
+  const [nova, setNova] = useState<null | { target: 'sel' } | { target: 'row'; id: string; merchant: string }>(null)
+  const [nome, setNome] = useState('')
+  const [tipo, setTipo] = useState<CategoryKind>('expense')
+  const [busy, setBusy] = useState(false)
   const months = useMemo(() => [...new Set(etx.map((t) => t.month))].sort().reverse(), [etx])
   const sortedCats = [...data.categories].sort((a, b) => a.name.localeCompare(b.name))
 
@@ -59,6 +70,35 @@ function Lista({ ctx }: { ctx: Ctx }) {
     await ctx.reload()
   }
 
+  /** Only the selected lines change; they are locked so rules leave them alone, and the merchant rule stays as it is. */
+  async function applyToSelected(categoryId: string) {
+    const chosen = data.transactions.filter((x) => sel.has(x.id))
+    if (!chosen.length || !categoryId) return
+    await setCategoryForTransactions(chosen.map((x) => x.id), categoryId)
+    await markAiNote(chosen, false)
+    setMsg(`${chosen.length} lançamento(s) alterados só nestas linhas; a regra do estabelecimento não mudou.`)
+    setSel(new Set()); setBulkCat('')
+    await ctx.reload()
+  }
+
+  async function criarCategoria() {
+    const limpo = nome.trim()
+    if (!limpo || !nova) return
+    setBusy(true); setMsg(null)
+    try {
+      const repetida = data.categories.find((c) => c.name.toLowerCase() === limpo.toLowerCase())
+      const criada = repetida ?? (await addCategory(limpo, tipo, '#888888', data.categories.length))
+      if (nova.target === 'sel') await applyToSelected(criada.id)
+      else await changeCategory({ id: nova.id, merchant: nova.merchant }, criada.id)
+      setNova(null); setNome('')
+    } catch (e) { setMsg((e as Error).message) } finally { setBusy(false) }
+  }
+
+  const openNova = (target: NonNullable<typeof nova>) => { setNova(target); setNome(''); setTipo('expense') }
+  const visible = rows.slice(0, limit)
+  const allSelected = visible.length > 0 && visible.every((t) => sel.has(t.id))
+  const toggleRow = (id: string) => setSel((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
+
   function exportCsv() {
     const esc = (s: string) => `"${s.replace(/"/g, '""')}"`
     const lines = ['data;conta;descricao;valor;moeda;categoria;observacao', ...rows.map((t) =>
@@ -78,18 +118,50 @@ function Lista({ ctx }: { ctx: Ctx }) {
         <button onClick={async () => { const n = await reapplyRules(data); setMsg(`${n} lançamentos recategorizados.`); ctx.reload() }}>Reaplicar regras</button>
       </div>
       <p className="muted">{rows.length} lançamentos · saldo {fmt(total)}{msg ? ` · ${msg}` : ''}</p>
+      <p className="muted" style={{ fontSize: 12 }}>
+        Trocar a categoria na linha muda todo o histórico daquele estabelecimento. Para mudar só algumas linhas, marque-as e use
+        “Aplicar só nestas linhas”. Em qualquer lista de categorias, “+ Nova categoria…” cria uma nova.
+      </p>
+      {sel.size > 0 && (
+        <div className="row alert">
+          <strong>{sel.size} selecionada(s)</strong>
+          <select value={bulkCat} disabled={busy} aria-label="Categoria para as linhas selecionadas"
+            onChange={(e) => (e.target.value === NEW ? openNova({ target: 'sel' }) : setBulkCat(e.target.value))}>
+            <option value="">Escolha a categoria…</option>
+            {sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <option value={NEW}>+ Nova categoria…</option>
+          </select>
+          <button className="primary" disabled={!bulkCat || busy} onClick={() => applyToSelected(bulkCat)}>Aplicar só nestas linhas</button>
+          <button onClick={() => setSel(new Set())} disabled={busy}>Limpar seleção</button>
+        </div>
+      )}
+      {nova && (
+        <div className="row alert">
+          <span>Nova categoria {nova.target === 'sel' ? `para ${sel.size} linha(s) selecionada(s)` : `para todo o histórico de “${nova.merchant}”`}</span>
+          <input placeholder="Nome da categoria" value={nome} onChange={(e) => setNome(e.target.value)} disabled={busy} autoFocus
+            onKeyDown={(e) => { if (e.key === 'Enter') criarCategoria() }} />
+          <select value={tipo} onChange={(e) => setTipo(e.target.value as CategoryKind)} disabled={busy}>
+            {(Object.keys(TIPO) as CategoryKind[]).map((k) => <option key={k} value={k}>{TIPO[k]}</option>)}
+          </select>
+          <button className="primary" onClick={criarCategoria} disabled={busy || !nome.trim()}>Criar e aplicar</button>
+          <button onClick={() => setNova(null)} disabled={busy}>Cancelar</button>
+        </div>
+      )}
       <div className="scroll"><table>
-        <thead><tr><th>Data</th><th>Descrição</th><th className="hide-sm">Conta</th><th>Categoria</th><th className="num">Valor</th></tr></thead>
+        <thead><tr><th><input type="checkbox" checked={allSelected} aria-label="Selecionar todas as linhas visíveis"
+          onChange={() => setSel(allSelected ? new Set() : new Set(visible.map((t) => t.id)))} /></th><th>Data</th><th>Descrição</th><th className="hide-sm">Conta</th><th>Categoria</th><th className="num">Valor</th></tr></thead>
         <tbody>
-          {rows.slice(0, limit).map((t) => (
+          {visible.map((t) => (
             <tr key={t.id}>
+              <td><input type="checkbox" checked={sel.has(t.id)} onChange={() => toggleRow(t.id)} aria-label={`Selecionar ${t.description}`} /></td>
               <td style={{ whiteSpace: 'nowrap' }}>{t.booking_date.slice(5)}</td>
               <td>{t.description}{t.bank_subcategory && <div className="muted" style={{ fontSize: 12 }}>{t.bank_subcategory}</div>}
                 <input style={{ marginTop: 4, width: '100%', fontSize: 12, padding: '2px 6px' }} placeholder="observação" defaultValue={t.notes ?? ''}
                   onBlur={(e) => { if (e.target.value !== (t.notes ?? '')) setTransactionNote(t.id, e.target.value) }} /></td>
               <td className="hide-sm">{t.accountName}</td>
-              <td><select value={t.category_id ?? ''} onChange={(e) => changeCategory(t, e.target.value)} style={{ maxWidth: 160, fontWeight: t.category_locked ? 600 : 400 }}>
-                <option value="">—</option>{sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></td>
+              <td><select value={t.category_id ?? ''} onChange={(e) => (e.target.value === NEW ? openNova({ target: 'row', id: t.id, merchant: t.merchant }) : changeCategory(t, e.target.value))} style={{ maxWidth: 160, fontWeight: t.category_locked ? 600 : 400 }}>
+                <option value="">—</option>{sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <option value={NEW}>+ Nova categoria…</option></select></td>
               <td className={`num ${t.amount < 0 ? 'neg' : 'pos'}`}>{money(t.currency, 2)(t.amount)}</td>
             </tr>
           ))}
