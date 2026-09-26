@@ -48,5 +48,9 @@ label.inline { display: flex; gap: 6px; align-items: center; }
 .form label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
 .form input, .form select { width: 100%; text-align: left; }
 @media (max-width: 600px) { .hide-sm { display: none; } main { padding: 12px; } }
+:root { --new: #fff1b8; }
+@media (prefers-color-scheme: dark) { :root { --new: #4a3d0c; } }
+td.novo { background: var(--new); }
+th.sortable { cursor: pointer; user-select: none; }
 :root { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --grid: #e5e7eb; }
 @media (prefers-color-scheme: dark) { :root { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --grid: #2b313a; } }
