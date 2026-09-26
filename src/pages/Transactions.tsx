@@ -272,6 +272,19 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
     return buildPeriod(etx.filter((t) => shown(t.account_id)), months)
       .map((g) => (isTithe(g.key) ? { ...quiet(g), merchants: g.merchants.map(quiet) } : g))
   }, [etx, shown, months])
+  // Transfers between the user's own accounts (and paid card bills), per month, split by direction.
+  const transfers = useMemo(() => {
+    const idx = new Map(months.map((m, i) => [m, i]))
+    const cardIds = new Set(data.accounts.filter((a) => a.type === 'card').map((a) => a.id))
+    const inn = months.map(() => 0), out = months.map(() => 0)
+    for (const t of etx) {
+      const i = idx.get(t.month)
+      if (i === undefined || t.kind !== 'transfer' || !shown(t.account_id) || cardIds.has(t.account_id)) continue
+      if (t.value >= 0) inn[i] += t.value
+      else out[i] -= t.value
+    }
+    return { inn, out }
+  }, [etx, months, shown, data.accounts])
   // Cards are left out of the total: their running sum is not a balance, and the bill is paid from an account shown here.
   const saldos = useMemo(() => monthBalances(
     data.accounts.filter((a) => shown(a.id) && a.type !== 'card'), data.transactions, months,
@@ -363,7 +376,7 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
           <th className="num sortable" title="Ordenar pelo total" onClick={() => setSortBy(null)}>Total{col === null ? ' ▼' : ''}</th>
         </tr>
         <tr className="muted">
-          <th style={sticky}>Saldo inicial</th><th />
+          <th style={sticky}>Saldo inicial<div className="rule">saldo das contas marcadas no último dia do mês anterior</div></th><th />
           {saldos.opening.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : ''}`}>{fmt(v)}</th>)}
           <th /><th />
         </tr></thead>
@@ -405,22 +418,32 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
           })}
         </tbody>
         <tfoot><tr>
-          <th style={sticky}>Total das despesas</th><th />
+          <th style={sticky}>Total das despesas<div className="rule">soma das categorias de despesa acima; estornos abatem; sem transferências</div></th><th />
           {columnTotals.map((v, i) => <th key={i} className="num">{fmt(v)}</th>)}
           <th /><th className="num">{fmt(grand)}</th>
         </tr>
         <tr>
-          <th style={sticky}>Total de entradas</th><th />
+          <th style={sticky}>Total de entradas<div className="rule">todo dinheiro que entrou: receitas, reembolsos, estornos e transferências recebidas</div></th><th />
           {saldos.inflow.map((v, i) => <th key={i} className="num pos">{fmt(v)}</th>)}
           <th /><th className="num pos">{fmt(saldos.inflow.reduce((s, v) => s + v, 0))}</th>
         </tr>
+        <tr className="sub-row">
+          <td style={sticky}>↳ transferências recebidas<div className="rule">vindas de outra conta sua (Livret, LDDS, outra conta); já incluídas nas entradas</div></td><td />
+          {transfers.inn.map((v, i) => <td key={i} className="num muted">{v ? fmt(v) : '—'}</td>)}
+          <td /><td className="num muted">{fmt(transfers.inn.reduce((s, v) => s + v, 0))}</td>
+        </tr>
         <tr>
-          <th style={sticky}>Total de saídas</th><th />
+          <th style={sticky}>Total de saídas<div className="rule">todo dinheiro que saiu: despesas, pagamentos de fatura e transferências enviadas</div></th><th />
           {saldos.outflow.map((v, i) => <th key={i} className="num neg">{fmt(v)}</th>)}
           <th /><th className="num neg">{fmt(saldos.outflow.reduce((s, v) => s + v, 0))}</th>
         </tr>
+        <tr className="sub-row">
+          <td style={sticky}>↳ transferências enviadas<div className="rule">para outra conta sua ou pagamento de fatura importada do cartão; já incluídas nas saídas</div></td><td />
+          {transfers.out.map((v, i) => <td key={i} className="num muted">{v ? fmt(v) : '—'}</td>)}
+          <td /><td className="num muted">{fmt(transfers.out.reduce((s, v) => s + v, 0))}</td>
+        </tr>
         <tr>
-          <th style={sticky}>Saldo final{perAccount.length > 1 || perAccount.some((x) => x.a.currency !== ctx.currency) ? ` (em ${ctx.currency})` : ''}</th><th />
+          <th style={sticky}>Saldo final{perAccount.length > 1 || perAccount.some((x) => x.a.currency !== ctx.currency) ? ` (em ${ctx.currency})` : ''}<div className="rule">saldo inicial + entradas − saídas, no último dia do mês</div></th><th />
           {saldos.closing.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : ''}`}>{fmt(v)}</th>)}
           <th /><th />
         </tr>
