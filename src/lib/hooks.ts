@@ -6,9 +6,13 @@ import { money } from './format'
 
 export const today = () => new Date().toISOString().slice(0, 10)
 
-/** Current balance of each account in display currency. */
+/**
+ * Current balance of each account in display currency. Cards are left out: without the
+ * bank's statement balance their running sum is not a balance, and what they owe is
+ * already paid from (and shown in) the linked account.
+ */
 export function useBalances(ctx: Ctx) {
-  return useMemo(() => ctx.data.accounts.map((a) => {
+  return useMemo(() => ctx.data.accounts.filter((a) => a.type !== 'card').map((a) => {
     const series = balanceSeries(a, ctx.data.transactions)
     const native = series.at(-1)?.balance ?? a.opening_balance
     return { account: a, native, display: ctx.fx.convert(native, a.currency, ctx.currency, today()), series }

@@ -13,8 +13,9 @@ import { Simulation } from './pages/Simulation'
 import { SettingsPage } from './pages/Settings'
 import { Payslips } from './pages/Payslips'
 import { Investments } from './pages/Investments'
+import { Cards } from './pages/Cards'
 
-const TABS = ['Painel', 'Lançamentos', 'Recorrentes', 'Simulação', 'Investimentos', 'Holerites', 'Importar', 'Ajustes'] as const
+const TABS = ['Painel', 'Lançamentos', 'Cartões', 'Recorrentes', 'Simulação', 'Investimentos', 'Holerites', 'Importar', 'Ajustes'] as const
 type Tab = (typeof TABS)[number]
 // Aos 15 minutos a tela trava mas a sessão fica de pé: voltar custa só o código do
 // autenticador. Aos 60 minutos parados, sai de verdade.
@@ -103,6 +104,7 @@ function Shell() {
       <main>
         {tab === 'Painel' && <Dashboard ctx={ctx} />}
         {tab === 'Lançamentos' && <Transactions ctx={ctx} />}
+        {tab === 'Cartões' && <Cards ctx={ctx} />}
         {tab === 'Recorrentes' && <Subscriptions ctx={ctx} />}
         {tab === 'Simulação' && <Simulation ctx={ctx} />}
         {tab === 'Investimentos' && <Investments ctx={ctx} />}

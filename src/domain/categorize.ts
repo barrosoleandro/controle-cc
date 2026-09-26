@@ -7,6 +7,13 @@ export interface CategorizableTx {
   bankSubcategory?: string | null
 }
 
+/**
+ * bank_category given to a credit-card bill payment (on the card side). It moves money
+ * between two of the user's own accounts, so it is always a transfer — never spending.
+ */
+export const CARD_PAYMENT = 'PAGAMENTO FATURA'
+export const TRANSFER = 'Transfer'
+
 const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
 
 /**
@@ -14,13 +21,17 @@ const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCa
  * Order: merchant rules (by priority) → bank category map (exact sub-category, then '*') → default.
  */
 export function categorize(tx: CategorizableTx, rules: Rule[], bankMap: BankMapEntry[], bank = 'BCP'): string {
+  if (tx.bankCategory === CARD_PAYMENT) return TRANSFER
   const desc = norm(tx.description)
+  // Rules learned from merchantKey() hold letters only ("PAG SERV BANCO"); also try the
+  // description without digits/punctuation so they still match "PAG SERV 21489/0209 BANCO".
+  const letters = desc.replace(/[^A-Z ]+/g, ' ').replace(/\s+/g, ' ').trim()
   const sorted = [...rules].filter((r) => r.active !== false).sort((a, b) => a.priority - b.priority)
   for (const r of sorted) {
     if (r.bank && r.bank !== bank) continue
     if (r.sign === 'debit' && tx.amount >= 0) continue
     if (r.sign === 'credit' && tx.amount < 0) continue
-    if (patternMatches(desc, r.pattern)) return r.category
+    if (patternMatches(desc, r.pattern) || patternMatches(letters, r.pattern)) return r.category
   }
   if (tx.bankCategory) {
     const exact = bankMap.find((m) => m.bank_category === tx.bankCategory && m.bank_subcategory === tx.bankSubcategory)

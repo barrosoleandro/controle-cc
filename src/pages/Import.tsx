@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Ctx } from '../App'
-import { createAccount, deriveOpening, executeImport, importedHashes, loadAll, planImport, sha256, updateAccount, type ImportPlan } from '../lib/data'
+import { addRule, deriveOpening, ensureAccounts, executeImport, importedHashes, linkCardPayments, loadAll, planImport, sha256, updateAccount, type ImportPlan } from '../lib/data'
+import { saveMerchantProfiles } from '../lib/ai'
 import { parseStatement } from '../parsers'
 import { LearnedRules } from '../components/LearnedRules'
 import { AiSuggestions } from '../components/AiSuggestions'
 import { ImportCategories } from '../components/ImportCategories'
 
-const SUPPORTED = /\.(csv|pdf)$/i
+const SUPPORTED = /\.(csv|pdf|xlsx)$/i
+
+/** Category picked for a merchant before importing (by hand or pre-filled by the AI). */
+export interface Choice { categoryId: string; description?: string; confidence?: number; source: 'ai' | 'manual' }
 
 /**
  * Files are parsed in the browser; only the extracted rows go to the database.
@@ -19,6 +23,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
+  const [choices, setChoices] = useState<Record<string, Choice>>({})
   const dirRef = useRef<HTMLInputElement>(null)
 
   // webkitdirectory is not in React's prop types; set it on the element itself.
@@ -29,7 +34,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
 
   async function onFiles(files: FileList | null) {
     if (!files?.length) return
-    setBusy(true); setDone(null); setErrors([]); setPlans([])
+    setBusy(true); setDone(null); setErrors([]); setPlans([]); setChoices({})
     const ps: ImportPlan[] = [], errs: string[] = []
     let ignored = 0, duplicateFiles = 0
     // A folder brings everything in it, including files that are not statements.
@@ -66,11 +71,19 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   async function run() {
     setBusy(true)
     try {
-      // Create accounts for unknown account numbers first.
-      const unknown = [...new Set(plans.flatMap((p) => p.unknownRefs))]
-      for (const ref of unknown) {
-        const isItau = ref.includes('/')
-        await createAccount({ name: `${isItau ? 'Itaú' : 'BCP'} ${ref}`, bank: isItau ? 'ITAU' : 'BCP', currency: isItau ? 'BRL' : 'EUR', type: 'checking', external_ref: ref })
+      // Create accounts for unknown account numbers first (cards linked to their paying account).
+      await ensureAccounts(plans, await loadAll()) // fresh: a failed earlier run may have created some
+      // Categories chosen in the review (AI or by hand) become rules, so the rows are
+      // born categorized and the next import already knows these merchants.
+      const chosen = Object.entries(choices).filter(([m, c]) => c.categoryId && !ctx.data.rules.some((r) => r.pattern.toUpperCase() === m.toUpperCase()))
+      let priority = Math.min(1000, ...ctx.data.rules.map((r) => r.priority)) - 1
+      for (const [merchant, c] of chosen) { await addRule(merchant, c.categoryId, null, priority); priority-- }
+      if (chosen.length) {
+        try {
+          await saveMerchantProfiles(chosen.map(([merchant, c]) => ({
+            merchant, description: c.description ?? '', suggested_category_id: c.categoryId, confidence: c.confidence ?? null, source: c.source,
+          })), true)
+        } catch { /* migration 003 not run: the rules alone are enough */ }
       }
       let data = await loadAll()
       let total = 0
@@ -87,8 +100,13 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         const o = deriveOpening(a, data.transactions, data.checkpoints)
         if (o && (o.opening_balance !== a.opening_balance || o.opening_date !== a.opening_date)) await updateAccount(a.id, o)
       }
-      setDone(`${total} lançamentos novos importados de ${plans.length} arquivos. Saldos iniciais recalculados — confira a conciliação em Ajustes → Contas.`)
-      setPlans([])
+      // Card bills now in the app: their payments in the paying account become transfers.
+      const linked = await linkCardPayments(await loadAll())
+      setDone(`${total} lançamentos novos importados de ${plans.length} arquivos` +
+        (chosen.length ? ` · ${chosen.length} regras criadas` : '') +
+        (linked ? ` · ${linked} pagamentos de fatura marcados como transferência` : '') +
+        '. Saldos iniciais recalculados — confira a conciliação em Ajustes → Contas.')
+      setPlans([]); setChoices({})
       await ctx.reload()
     } catch (e) { setErrors([(e as Error).message]) } finally { setProgress(null); setBusy(false) }
   }
@@ -101,19 +119,20 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
       <div className="card" style={{ gridColumn: '1/-1' }}>
         <h3>Importar arquivos do banco</h3>
         <p className="muted">
-          Aceita o CSV do Banque BCP, o relevé mensal do BCP em PDF e o extrato de conta do Itaú em PDF.
+          Aceita o CSV do Banque BCP, o relevé mensal do BCP em PDF, o extrato de conta do Itaú em PDF,
+          a fatura do cartão Itaú em Excel (.xlsx) e o extrato combinado do Millennium bcp em PDF.
           Pode selecionar tudo de uma vez: linhas repetidas são descartadas sozinhas.
         </p>
         <div className="row">
           <label className="inline">Arquivos
-            <input type="file" multiple accept=".csv,.pdf" onChange={(e) => onFiles(e.target.files)} disabled={busy} />
+            <input type="file" multiple accept=".csv,.pdf,.xlsx" onChange={(e) => onFiles(e.target.files)} disabled={busy} />
           </label>
           <label className="inline">Pasta inteira
             <input ref={dirRef} type="file" multiple onChange={(e) => onFiles(e.target.files)} disabled={busy} />
           </label>
         </div>
         <p className="muted" style={{ fontSize: 12 }}>
-          A opção de pasta varre todas as subpastas e ignora o que não for CSV nem PDF. No iPhone/iPad o Safari não permite
+          A opção de pasta varre todas as subpastas e ignora o que não for CSV, PDF ou XLSX. No iPhone/iPad o Safari não permite
           selecionar pastas — use a seleção de arquivos, ou faça a importação em massa no computador.
         </p>
         {progress && <p className="muted">{progress}</p>}
@@ -122,7 +141,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         {(skipped.ignored > 0 || skipped.duplicateFiles > 0) && !busy && (
           <p className="muted">
             {skipped.duplicateFiles > 0 && `${skipped.duplicateFiles} arquivo(s) já importados anteriormente foram pulados. `}
-            {skipped.ignored > 0 && `${skipped.ignored} arquivo(s) fora do formato CSV/PDF foram ignorados.`}
+            {skipped.ignored > 0 && `${skipped.ignored} arquivo(s) fora do formato CSV/PDF/XLSX foram ignorados.`}
           </p>
         )}
         {errors.length > 0 && <details>
@@ -141,9 +160,9 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
                 <td>{[...p.result.warnings, ...p.unknownRefs.map((r) => `a conta ${r} será criada`)].join('; ')}</td></tr>
             ))}</tbody>
           </table></div>
-          <ImportCategories ctx={ctx} plans={plans} />
+          <ImportCategories ctx={ctx} plans={plans} choices={choices} setChoices={setChoices} busy={busy} />
           <div className="row" style={{ marginTop: 10 }}>
-            <button className="primary" onClick={run} disabled={busy}>Importar {totalNew} linhas</button>
+            <button className="primary" onClick={run} disabled={busy}>Importar {totalNew} linhas{Object.values(choices).filter((c) => c.categoryId).length ? ` e criar ${Object.values(choices).filter((c) => c.categoryId).length} regras` : ''}</button>
             <button onClick={() => setPlans([])} disabled={busy}>Cancelar</button>
           </div>
         </>}
