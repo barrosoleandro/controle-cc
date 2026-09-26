@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { enrichVendors, saveMerchantProfiles, vendorsToEnrich, type VendorSuggestion } from '../lib/ai'
+import { saveMerchantProfiles, vendorsToEnrich, type VendorSuggestion } from '../lib/ai'
+import { buildExchangeRequest, parseExchangeAnswer } from '../domain/claudeExchange'
 import { addRule, setCategoryForTransactions } from '../lib/data'
 import { money } from '../lib/format'
 
@@ -13,14 +14,13 @@ interface Row extends VendorSuggestion {
 }
 
 /**
- * Identifies merchants the rules could not place, using the enrich-transactions
- * Edge Function. Nothing is applied until the user accepts a row.
+ * Identifies merchants the rules could not place with Claude, through a file exchange
+ * (see domain/claudeExchange). Nothing is applied until the user accepts a row.
  */
 export function AiSuggestions({ ctx }: { ctx: Ctx }) {
   const { data } = ctx
   const [rows, setRows] = useState<Row[] | null>(null)
   const [busy, setBusy] = useState(false)
-  const [progress, setProgress] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
 
@@ -28,17 +28,22 @@ export function AiSuggestions({ ctx }: { ctx: Ctx }) {
   const catByName = useMemo(() => new Map(data.categories.map((c) => [c.name, c.id])), [data.categories])
   const sortedCats = useMemo(() => [...data.categories].sort((a, b) => a.name.localeCompare(b.name)), [data.categories])
 
-  async function identify() {
-    setBusy(true); setError(null); setMsg(null); setProgress('Consultando…')
+  function exportForClaude() {
+    setError(null); setMsg(null)
+    const request = buildExchangeRequest(pending, data.categories.map((c) => c.name))
+    const url = URL.createObjectURL(new Blob([JSON.stringify(request, null, 2)], { type: 'application/json' }))
+    const a = document.createElement('a')
+    a.href = url; a.download = `categorias-para-claude-${new Date().toISOString().slice(0, 10)}.json`; a.click()
+    URL.revokeObjectURL(url)
+    setMsg(`Arquivo com ${pending.length} estabelecimentos baixado. Peça ao Claude para categorizá-lo e importe a resposta aqui.`)
+  }
+
+  async function importAnswer(file: File) {
+    setBusy(true); setError(null); setMsg(null)
     try {
-      const suggestions = await enrichVendors(
-        pending, data.categories.map((c) => c.name),
-        (done, total) => setProgress(`${done} de ${total} estabelecimentos…`),
-      )
-      const byMerchant = new Map(pending.map((v) => [v.merchant, v]))
+      const suggestions = parseExchangeAnswer(await file.text(), data.categories.map((c) => c.name), pending.map((v) => v.merchant))
       const stats = new Map<string, { charges: number; total: number; currency: string }>()
       for (const t of data.transactions) {
-        if (!byMerchant.has(t.merchant)) continue
         const s = stats.get(t.merchant) ?? { charges: 0, total: 0, currency: t.currency }
         s.charges++; s.total += Math.abs(Number(t.amount))
         stats.set(t.merchant, s)
@@ -58,8 +63,7 @@ export function AiSuggestions({ ctx }: { ctx: Ctx }) {
         suggested_category_id: s.category ? catByName.get(s.category) ?? null : null,
         confidence: s.confidence, source: 'ai' as const,
       })))
-      setProgress(null)
-    } catch (e) { setError((e as Error).message); setProgress(null) } finally { setBusy(false) }
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
 
   async function apply() {
@@ -93,14 +97,18 @@ export function AiSuggestions({ ctx }: { ctx: Ctx }) {
     <div className="card">
       <h3>Identificar com IA</h3>
       <p className="muted">
-        Envia só a chave do estabelecimento e trechos da descrição do extrato — nunca o arquivo, o saldo ou o número da conta.
-        A IA sugere uma categoria da <em>sua</em> lista e escreve o que o estabelecimento vende. Nada é aplicado sem você aceitar.
+        1. Baixe o arquivo com os estabelecimentos sem categoria. Ele leva só a chave do estabelecimento e trechos da
+        descrição do extrato, nunca o arquivo, o saldo ou o número da conta. 2. Peça ao Claude (Claude Code ou claude.ai)
+        para categorizá-lo. 3. Importe o arquivo de resposta. O Claude escolhe só entre as <em>suas</em> categorias, e nada é
+        aplicado sem você aceitar.
       </p>
       <div className="row">
-        <button className="primary" onClick={identify} disabled={busy || !pending.length}>
-          {pending.length ? `Identificar ${pending.length} estabelecimentos sem categoria` : 'Nada sem categoria'}
+        <button className="primary" onClick={exportForClaude} disabled={busy || !pending.length}>
+          {pending.length ? `Baixar ${pending.length} estabelecimentos sem categoria` : 'Nada sem categoria'}
         </button>
-        {progress && <span className="muted">{progress}</span>}
+        <label className="inline"><span className="muted">Importar resposta do Claude</span>
+          <input type="file" accept=".json,application/json" disabled={busy}
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) importAnswer(f) }} /></label>
       </div>
       {error && <p className="err">{error}</p>}
       {msg && <p className="pos">{msg}</p>}

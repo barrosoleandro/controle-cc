@@ -16,7 +16,7 @@ The interface is in Portuguese; code and comments stay in English.
 | Subscriptions | Automatic detection of recurring charges; alerts for price increases, new subscriptions, upcoming charges and annual renewals. |
 | Payslips | Import your *bulletins de paie* (PDF, parsed in the browser). Monthly detail of every line (earnings, contributions, employer cost, PAS), month-over-month changes, and a **contract check**: base salary, prime d'impatriation and car benefit must match the contract amounts (editable). One payslip per month — re-importing replaces, never duplicates. |
 | Investments | Study screen for the investment **types** available in Brazil and France (Tesouro, CDB/LCI, ações, FIIs, ETFs; Livret A, PEA, assurance-vie, CTO, PER) with liquidity, risk and general tax notes. Emergency-reserve check, allocation per risk profile and a real-return projection, all from your own numbers. Editable assumptions, no specific security or broker is ever recommended. |
-| AI enrichment | During an import, merchants the rules cannot place are sent to Claude through a Supabase Edge Function, which suggests a category **from your own list** and writes one line saying what the vendor sells. Only the merchant key and statement snippets leave the browser — never the file, the balance or the account number. Nothing is applied until you accept it. |
+| AI enrichment | Uses your Claude plan, no API key. **Importar → Identificar com IA** downloads a JSON of the merchants the rules cannot place; ask Claude (Claude Code or claude.ai) to categorize it, then import its answer file. Claude picks a category **from your own list** and writes one line saying what the vendor sells. The file holds only the merchant key and statement snippets — never the statement, the balance or the account number. Nothing is applied until you accept it, and accepted merchants are remembered for the next imports. |
 | Learning | Every category you set by hand becomes a merchant rule, so the next import repeats the choice. The Import tab also derives rules from your history and lets you set categories **before** the rows are written. |
 | Simulation | Country scenarios (FR, PT incl. IFICI, LU, BR, custom): gross/year → net/month, rent, school, cost-of-living index, extra costs, savings projection (nominal and real), side-by-side comparison, savings proposals. The baseline is calculated from your real data. |
 
@@ -51,16 +51,8 @@ The interface is in Portuguese; code and comments stay in English.
    ```
 3. **Vercel**: New Project → import the repo → Environment Variables:
    `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` → Deploy.
-4. **AI enrichment (optional)**: the Anthropic key stays server-side, never in the browser.
-   ```
-   npx supabase link --project-ref <your-project-ref>
-   npx supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
-   npx supabase functions deploy enrich-transactions
-   ```
-   Without this step everything else works; only the "Identificar com IA" button fails, saying the function is not deployed.
-   The function refuses any request whose JWT is not `aal2`, mirroring the RLS policies.
-5. On your phone, open the Vercel URL → Share/menu → **Add to Home Screen**.
-6. First login: scan the QR code with an authenticator app. Then go to **Importar**, pick the whole statements folder at once ("Pasta inteira"), and click Import.
+4. On your phone, open the Vercel URL → Share/menu → **Add to Home Screen**.
+5. First login: scan the QR code with an authenticator app. Then go to **Importar**, pick the whole statements folder at once ("Pasta inteira"), and click Import.
 
 Local development: `npm install`, copy `.env.example` to `.env.local` and fill it in, then `npm run dev`.
 
@@ -70,10 +62,8 @@ Local development: `npm install`, copy `.env.example` to `.env.local` and fill i
 - `npm run rebuild -- "<folder with statements>"`: offline rebuild + reconciliation report (writes `out/`, which is git-ignored).
 - The tax parameters are in `src/domain/tax.ts` (`TAX_PARAMS`). Update them every January.
 - Adding a bank: add a parser in `src/parsers/`, register it in `src/parsers/index.ts`, and add tests.
-- The Edge Function lives in `supabase/functions/enrich-transactions/`. It runs on Deno and is **not** covered by
-  `npm run build` or `npm test`; after changing it, redeploy and exercise the button once.
-- The AI model is pinned in that function (`MODEL`). It answers through a strict tool schema whose category list is an
-  enum of your own categories, so it can never invent a category name.
+- The Claude file exchange (export format, instructions, answer parsing) is in `src/domain/claudeExchange.ts`. An answer
+  naming a category that is not in your list is read as "unsure", so Claude can never invent a category.
 
 ## Known limits (be aware)
 

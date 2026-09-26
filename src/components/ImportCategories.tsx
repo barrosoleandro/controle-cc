@@ -3,7 +3,7 @@ import type { Ctx } from '../App'
 import type { Choice } from '../pages/Import'
 import { categorize, merchantKey } from '../domain/categorize'
 import { addCategory, type ImportPlan } from '../lib/data'
-import { enrichVendors, loadMerchantProfiles, saveMerchantProfiles, type MerchantProfile, type VendorQuery } from '../lib/ai'
+import { loadMerchantProfiles, type MerchantProfile } from '../lib/ai'
 import type { CategoryKind, Currency } from '../domain/types'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
@@ -28,15 +28,14 @@ interface Props {
 }
 
 /**
- * Before anything is written: lists the merchants the rules cannot place, asks the AI
- * (merchant memory first, then the enrich-transactions function) and pre-selects its
- * category when confident. Everything stays editable; on import each chosen category
- * becomes a rule, so the rows are born categorized.
+ * Before anything is written: lists the merchants the rules cannot place and pre-selects
+ * what the merchant memory (earlier Claude answers or picks) already knows. Everything
+ * stays editable; on import each chosen category becomes a rule, so the rows are born
+ * categorized. The rest can be sent to Claude afterwards from "Identificar com IA".
  */
 export function ImportCategories({ ctx, plans, choices, setChoices, busy }: Props) {
   const { data } = ctx
   const [aiStatus, setAiStatus] = useState<string | null>(null)
-  const [aiError, setAiError] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [criandoPara, setCriandoPara] = useState<string | null>(null)
   const [nome, setNome] = useState('')
@@ -68,53 +67,26 @@ export function ImportCategories({ ctx, plans, choices, setChoices, busy }: Prop
 
   const identify = useCallback(async (list: Pendente[], isCancelled: () => boolean) => {
     if (!list.length) return
-    setAiError(null)
     const catById = new Map(data.categories.map((c) => [c.id, c]))
-    const catByName = new Map(data.categories.map((c) => [c.name, c.id]))
-    const fill = (entries: [string, Choice][]) =>
-      setChoices((prev) => {
-        const next = { ...prev }
-        for (const [m, c] of entries) if (!next[m]) next[m] = c // never overwrite a hand-picked choice
-        return next
-      })
-    try {
-      // 1. Memory: merchants the AI (or the user) already described in earlier imports.
-      setAiStatus('Consultando o histórico de estabelecimentos…')
-      let profiles = new Map<string, MerchantProfile>()
-      try { profiles = await loadMerchantProfiles() } catch { /* migration 003 not run yet */ }
-      if (isCancelled()) return
-      fill(list.flatMap((p) => {
-        const pr = profiles.get(p.merchant)
-        if (!pr?.suggested_category_id || !catById.has(pr.suggested_category_id)) return []
-        if (!pr.accepted && (pr.confidence ?? 0) < MIN_CONF) return []
-        return [[p.merchant, { categoryId: pr.suggested_category_id, description: pr.description, confidence: pr.confidence ?? undefined, source: pr.source }]]
-      }))
-      // 2. The rest goes to the AI.
-      const ask = list.filter((p) => !profiles.has(p.merchant))
-      if (!ask.length) { setAiStatus(null); return }
-      const vendors: VendorQuery[] = ask.map((p) => ({
-        merchant: p.merchant, samples: p.exemplos, sign: p.debit ? 'debit' : 'credit', currency: p.currency,
-        typicalAmount: Math.round((p.total / p.linhas) * 100) / 100,
-      }))
-      const res = await enrichVendors(vendors, data.categories.map((c) => c.name),
-        (done, total) => !isCancelled() && setAiStatus(`IA identificando estabelecimentos: ${done} de ${total}…`))
-      if (isCancelled()) return
-      try {
-        await saveMerchantProfiles(res.map((s) => ({
-          merchant: s.merchant, description: s.description, confidence: s.confidence, source: 'ai' as const,
-          suggested_category_id: s.category ? catByName.get(s.category) ?? null : null,
-        })))
-      } catch { /* optional memory */ }
-      const confident = res.filter((s) => s.category && catByName.has(s.category) && s.confidence >= MIN_CONF)
-      fill(confident.map((s) => [s.merchant, { categoryId: catByName.get(s.category!)!, description: s.description, confidence: s.confidence, source: 'ai' }]))
-      // Unsure answers still show what the merchant is, with no category pre-selected.
-      fill(res.filter((s) => !confident.includes(s)).map((s) => [s.merchant, { categoryId: '', description: s.description, confidence: s.confidence, source: 'ai' }]))
-      setAiStatus(`IA sugeriu categoria para ${confident.length} de ${ask.length} estabelecimentos novos. Confira antes de importar.`)
-    } catch (e) {
-      if (isCancelled()) return
-      setAiStatus(null)
-      setAiError(`IA indisponível (${(e as Error).message}). Defina as categorias à mão ou tente de novo.`)
-    }
+    setAiStatus('Consultando o histórico de estabelecimentos…')
+    let profiles = new Map<string, MerchantProfile>()
+    try { profiles = await loadMerchantProfiles() } catch { /* migration 003 not run yet */ }
+    if (isCancelled()) return
+    const known = list.flatMap((p): [string, Choice][] => {
+      const pr = profiles.get(p.merchant)
+      if (!pr?.suggested_category_id || !catById.has(pr.suggested_category_id)) return []
+      if (!pr.accepted && (pr.confidence ?? 0) < MIN_CONF) return []
+      return [[p.merchant, { categoryId: pr.suggested_category_id, description: pr.description, confidence: pr.confidence ?? undefined, source: pr.source }]]
+    })
+    setChoices((prev) => {
+      const next = { ...prev }
+      for (const [m, c] of known) if (!next[m]) next[m] = c // never overwrite a hand-picked choice
+      return next
+    })
+    const rest = list.length - known.length
+    setAiStatus(rest
+      ? `${known.length} reconhecido(s) pelo histórico. Os outros ${rest} você pode definir aqui ou, depois de importar, mandar para o Claude em “Identificar com IA”.`
+      : null)
   }, [data.categories, setChoices])
 
   // Runs once per file selection (not on every rule/category reload).
@@ -151,12 +123,10 @@ export function ImportCategories({ ctx, plans, choices, setChoices, busy }: Prop
     <div style={{ marginTop: 12 }}>
       <h4>Categorias antes de importar</h4>
       <p className="muted">
-        {pendentes.length} estabelecimento(s) destes arquivos não casam com nenhuma regra. A IA recebe só o nome do estabelecimento
-        e trechos da descrição (nunca o arquivo, o saldo ou a conta) e pré-seleciona a categoria quando tem confiança ≥ {MIN_CONF * 100}%.
-        Ao importar, cada categoria escolhida vira regra. O que ficar em branco entra como “Outros”.
+        {pendentes.length} estabelecimento(s) destes arquivos não casam com nenhuma regra. Os que o Claude já identificou antes
+        vêm pré-selecionados. Ao importar, cada categoria escolhida vira regra. O que ficar em branco entra como “Outros”.
       </p>
       {aiStatus && <p className="muted">{aiStatus}</p>}
-      {aiError && <p className="warn">{aiError} <button onClick={() => identify(pendentes.filter((p) => !choices[p.merchant]), () => false)} disabled={off}>Tentar de novo</button></p>}
       <p><strong>{definidos}</strong> de {pendentes.length} com categoria.</p>
       <div className="scroll"><table>
         <thead><tr><th>Estabelecimento</th><th className="hide-sm">O que é</th><th className="num">Linhas</th><th>Categoria</th><th className="num">IA</th></tr></thead>
