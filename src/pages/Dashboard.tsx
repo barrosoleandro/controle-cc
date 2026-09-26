@@ -11,6 +11,7 @@ import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
 import { COUNTRIES, countryOf, flowsByCountry, type Country } from '../domain/countries'
 import { monthWindow } from '../domain/period'
 import { cumulative, linearTrend } from '../domain/trend'
+import { isTithe } from '../domain/categorize'
 
 /** yyyy-mm plus n months. */
 const addMonths = (m: string, n: number) => { const [y, mm] = m.split('-').map(Number); return new Date(Date.UTC(y, mm - 1 + n, 1)).toISOString().slice(0, 7) }
@@ -35,7 +36,23 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   const fmt = useFmt(ctx)
   const { data, etx, currency, fx } = ctx
   const months = useMemo(() => [...new Set(etx.map((t) => t.month))].sort(), [etx])
-  const [month, setMonth] = useState(() => months.at(-1) ?? today().slice(0, 7))
+  // Several months can be picked; totals, categories, budget and merchants add them up,
+  // and the charts over time end at the latest picked month. Shortcuts end at the latest
+  // month that already happened (card instalments can be dated in the future).
+  const lastReal = [...months].reverse().find((m) => m <= today().slice(0, 7)) ?? months.at(-1) ?? today().slice(0, 7)
+  const [picked, setPicked] = useState<Set<string>>(() => new Set([lastReal]))
+  const selMonths = useMemo(() => [...picked].sort(), [picked])
+  const selSet = useMemo(() => new Set(selMonths), [selMonths])
+  const month = selMonths.at(-1) ?? lastReal
+  const contiguous = monthWindow(month, selMonths.length).join() === selMonths.join()
+  const period = selMonths.length === 1 ? monthLabel(month)
+    : contiguous ? `${monthLabel(selMonths[0])} – ${monthLabel(month)}` : `${selMonths.length} meses`
+  const pickLast = (n: number) => setPicked(new Set(monthWindow(lastReal, n)))
+  const toggleMonth = (m: string) => setPicked((prev) => {
+    const next = new Set(prev)
+    if (next.has(m)) { if (next.size > 1) next.delete(m) } else next.add(m)
+    return next
+  })
   // Unticked accounts: an account created by a later import shows up ticked.
   const [hidden, setHidden] = useState<Set<string>>(() => new Set())
   const shown = (id: string) => !hidden.has(id)
@@ -43,8 +60,12 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
 
   const txs = useMemo(() => etx.filter((t) => !hidden.has(t.account_id)), [etx, hidden])
   const series = useMemo(() => monthly(txs).slice(-12), [txs])
-  const cur = series.find((m) => m.month === month)
-  const cats = useMemo(() => byCategory(txs, new Set([month])), [txs, month])
+  const cur = useMemo(() => {
+    const ms = monthly(txs).filter((m) => selSet.has(m.month))
+    const income = ms.reduce((s, m) => s + m.income, 0), expense = ms.reduce((s, m) => s + m.expense, 0)
+    return { income, expense, net: income - expense }
+  }, [txs, selSet])
+  const cats = useMemo(() => byCategory(txs, selSet), [txs, selSet])
   const balances = useBalances(ctx)
   const subs = useSubscriptions(ctx)
   const budgets = useMemo(() => {
@@ -52,7 +73,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     return new Map(data.budgets.filter((b) => b.month === null).map((b) => [catName.get(b.category_id) ?? '', b.amount * (currency === 'BRL' ? fx.latest() : 1)]))
   }, [data, currency, fx])
   const checking = balances.filter((b) => b.account.type === 'checking' && b.account.currency === 'EUR').reduce((s, b) => s + b.display, 0)
-  const insights = useMemo(() => savingsInsights({ txs, last3: last3(), current: today().slice(0, 7), budgets, subs, checkingBalance: checking, fmt }), [txs, subs, checking, fmt, budgets])
+  const insights = useMemo(() => savingsInsights({ txs: txs.filter((t) => !isTithe(t.categoryName)), last3: last3(), current: today().slice(0, 7), budgets, subs, checkingBalance: checking, fmt }), [txs, subs, checking, fmt, budgets])
   const alerts = subscriptionAlerts(subs, today(), fmt).filter((a) => !data.settings.dismissed_alerts.includes(a.key))
 
   // Widget layout (order + visibility) is stored per user in user_settings.dashboard.
@@ -123,9 +144,9 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
               <div className="kpi" key={b.account.id}><div className="l">{b.account.name}</div><div className="v">{fmt(b.display)}</div></div>
             ))}
             <div className="kpi"><div className="l">Total</div><div className="v">{fmt(balances.filter((b) => shown(b.account.id)).reduce((s, b) => s + b.display, 0))}</div></div>
-            <div className="kpi"><div className="l">Receitas {monthLabel(month)}</div><div className="v pos">{fmt(cur?.income ?? 0)}</div></div>
-            <div className="kpi"><div className="l">Despesas {monthLabel(month)}</div><div className="v neg">{fmt(cur?.expense ?? 0)}</div></div>
-            <div className="kpi"><div className="l">Resultado {monthLabel(month)}</div><div className={`v ${(cur?.net ?? 0) >= 0 ? 'pos' : 'neg'}`}>{fmt(cur?.net ?? 0)}</div></div>
+            <div className="kpi"><div className="l">Receitas {period}</div><div className="v pos">{fmt(cur?.income ?? 0)}</div></div>
+            <div className="kpi"><div className="l">Despesas {period}</div><div className="v neg">{fmt(cur?.expense ?? 0)}</div></div>
+            <div className="kpi"><div className="l">Resultado {period}</div><div className={`v ${(cur?.net ?? 0) >= 0 ? 'pos' : 'neg'}`}>{fmt(cur?.net ?? 0)}</div></div>
           </div>
         </div>)
       case 'alerts': return (
@@ -214,7 +235,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
           <p className="muted" style={{ fontSize: 12 }}>Linha tracejada: reta que melhor se ajusta aos últimos 12 meses, prolongada 3 meses. É tendência, não previsão.</p>
         </div>)
       case 'categories': return (
-        <div className="card"><h3>Gastos por categoria — {monthLabel(month)}</h3>
+        <div className="card"><h3>Gastos por categoria — {period}</h3>
           <table><tbody>
             {cats.map((c) => (
               <tr key={c.name}><td style={{ width: '38%' }}>{c.name}</td>
@@ -225,9 +246,10 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
         </div>)
       case 'budget': {
         const actual = new Map(cats.map((c) => [c.name, c.value]))
-        const rows = [...budgets].filter(([, b]) => b > 0).map(([name, b]) => ({ name, b, a: actual.get(name) ?? 0 })).sort((x, y) => y.a / y.b - x.a / x.b)
+        // Monthly budgets scale with the number of picked months.
+        const rows = [...budgets].filter(([, b]) => b > 0).map(([name, b]) => ({ name, b: b * selMonths.length, a: actual.get(name) ?? 0 })).sort((x, y) => y.a / y.b - x.a / x.b)
         return (
-          <div className="card"><h3>Orçado x realizado — {monthLabel(month)}</h3>
+          <div className="card"><h3>Orçado x realizado — {period}{selMonths.length > 1 ? ` (orçamento × ${selMonths.length} meses)` : ''}</h3>
             <p className="muted" style={{ fontSize: 12 }}>
               <span className="pos">✓ dentro</span> (até 80%) · <span className="warn">⚠ perto do limite</span> (80–100%) · <span className="neg">▲ acima do orçado</span>
             </p>
@@ -235,7 +257,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
               {rows.map((r) => {
                 // Status = share of the budget used; each colour also has its own symbol.
                 const used = r.a / r.b
-                const st = used > 1 ? { cls: 'over', text: 'neg', mark: '▲' } : used >= 0.8 ? { cls: 'near', text: 'warn', mark: '⚠' } : { cls: 'ok', text: 'pos', mark: '✓' }
+                const st = isTithe(r.name) ? { cls: '', text: '', mark: '' } : used > 1 ? { cls: 'over', text: 'neg', mark: '▲' } : used >= 0.8 ? { cls: 'near', text: 'warn', mark: '⚠' } : { cls: 'ok', text: 'pos', mark: '✓' }
                 return (
                   <tr key={r.name}><td style={{ width: '32%' }}>{r.name}</td>
                     <td><div className="bar" title={`${Math.round(used * 100)}% do orçado`}><div className={st.cls} style={{ width: `${Math.min(100, used * 100)}%` }} /></div></td>
@@ -266,9 +288,9 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
           </ResponsiveContainer>
         </div>)
       case 'merchants': return (
-        <div className="card"><h3>Principais estabelecimentos — {monthLabel(month)}</h3>
+        <div className="card"><h3>Principais estabelecimentos — {period}</h3>
           <table><thead><tr><th>Estabelecimento</th><th className="num">#</th><th className="num">Total</th></tr></thead><tbody>
-            {topMerchants(txs, new Set([month])).map((m) => <tr key={m.merchant}><td>{m.merchant}</td><td className="num">{m.count}</td><td className="num">{fmt(m.total)}</td></tr>)}
+            {topMerchants(txs, selSet).map((m) => <tr key={m.merchant}><td>{m.merchant}</td><td className="num">{m.count}</td><td className="num">{fmt(m.total)}</td></tr>)}
           </tbody></table>
         </div>)
     }
@@ -277,9 +299,30 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   return (
     <>
       <div className="row">
-        <select value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Mês">
-          {[...months].reverse().map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
-        </select>
+        <details className="monthpick">
+          <summary aria-label="Meses">📅 {period}</summary>
+          <div>
+            <div className="row">
+              <button onClick={() => pickLast(1)}>Último mês</button>
+              <button onClick={() => pickLast(3)}>3 meses</button>
+              <button onClick={() => pickLast(6)}>6 meses</button>
+              <button onClick={() => pickLast(12)}>12 meses</button>
+              <button onClick={() => setPicked(new Set(months.filter((m) => m.slice(0, 4) === lastReal.slice(0, 4) && m <= lastReal)))}>Ano {lastReal.slice(0, 4)}</button>
+            </div>
+            {[...new Set(months.map((m) => m.slice(0, 4)))].reverse().map((y) => (
+              <div key={y} style={{ marginBottom: 6 }}>
+                <strong>{y}</strong>
+                <div className="row" style={{ marginBottom: 0 }}>
+                  {months.filter((m) => m.startsWith(y)).map((m) => (
+                    <label key={m} className="inline" style={{ fontSize: 13 }}>
+                      <input type="checkbox" checked={picked.has(m)} onChange={() => toggleMonth(m)} />{monthLabel(m).split(' ')[0]}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
         {[...new Set(data.accounts.map((a) => countryOf(a.bank)))].map((c) => (
           <button key={c} onClick={() => setHidden(new Set(data.accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
         ))}

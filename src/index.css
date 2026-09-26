@@ -38,6 +38,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
 .bar > div { height: 100%; background: var(--accent); }
 .bar > div.over { background: var(--neg); }
+.monthpick { position: relative; }
+.monthpick > summary { list-style: none; cursor: pointer; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--card); }
+.monthpick > summary::-webkit-details-marker { display: none; }
+.monthpick > div { position: absolute; z-index: 10; margin-top: 4px; min-width: 280px; max-height: 360px; overflow: auto; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.18); }
 .bar > div.ok { background: var(--pos); } .bar > div.near { background: var(--warn); }
 .center { min-height: 80vh; display: grid; place-items: center; }
 .auth { width: min(380px, 100%); display: grid; gap: 10px; }

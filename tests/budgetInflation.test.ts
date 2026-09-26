@@ -43,3 +43,10 @@ describe('trend helpers', () => {
     expect(cumulative([1, 2, 3])).toEqual([1, 3, 6])
   })
 })
+
+describe('tithe categories', () => {
+  it('are recognised with or without the accent', async () => {
+    const { isTithe } = await import('../src/domain/categorize')
+    expect(['Dizimo', 'Doações e dízimo', 'Mercado', 'Outros'].map(isTithe)).toEqual([true, true, false, false])
+  })
+})

@@ -14,6 +14,12 @@ export interface CategorizableTx {
 export const CARD_PAYMENT = 'PAGAMENTO FATURA'
 export const TRANSFER = 'Transfer'
 /** Alphabetical order for category lists, ignoring case and accents ("Educação" next to "Educacao"). */
+/**
+ * Tithe/donation categories ("Dizimo", "Doações e dízimo"). The app never comments on them:
+ * no savings suggestions, alerts, out-of-pattern flags, reviews or budget status.
+ */
+export const isTithe = (categoryName: string) => /d[ií]zimo/i.test(categoryName)
+
 export const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })
 
 const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()

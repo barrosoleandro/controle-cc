@@ -6,7 +6,7 @@ import { money } from '../lib/format'
 import { today, useFmt, useSubscriptions } from '../lib/hooks'
 import { buildPeriod, monthBalances, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
 import type { CategoryKind } from '../domain/types'
-import { byName } from '../domain/categorize'
+import { byName, isTithe } from '../domain/categorize'
 import { countryOf, flowsByCountry, type Country } from '../domain/countries'
 import { purchaseDate } from '../domain/simplify'
 
@@ -229,7 +229,11 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
   const lastMonth = end || allMonths.at(-1) || ''
   const months = useMemo(() => monthWindow(lastMonth, n), [lastMonth, n])
   const subOf = useMemo(() => new Map(subs.map((s) => [s.merchant, { reason: subscriptionReview(s, today()), active: s.status !== 'possibly_cancelled' }])), [subs])
-  const all = useMemo(() => buildPeriod(etx.filter((t) => shown(t.account_id)), months), [etx, shown, months])
+  const all = useMemo(() => {
+    const quiet = <R extends PeriodRow>(r: R): R => ({ ...r, outlier: r.outlier.map(() => false), isNew: r.isNew.map(() => false), flagged: false })
+    return buildPeriod(etx.filter((t) => shown(t.account_id)), months)
+      .map((g) => (isTithe(g.key) ? { ...quiet(g), merchants: g.merchants.map(quiet) } : g))
+  }, [etx, shown, months])
   // Cards are left out of the total: their running sum is not a balance, and the bill is paid from an account shown here.
   const saldos = useMemo(() => monthBalances(
     data.accounts.filter((a) => shown(a.id) && a.type !== 'card'), data.transactions, months,
