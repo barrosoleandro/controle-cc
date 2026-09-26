@@ -19,7 +19,11 @@ const MONTHS: Record<string, number> = { '1 mês': 1, '6 meses': 6, '12 meses': 
 export function Transactions({ ctx }: { ctx: Ctx }) {
   const [view, setView] = useState<(typeof VIEWS)[number]>('6 meses')
   const [merchant, setMerchant] = useState('') // set from a month view: the list shows only this merchant
-  const [hidden, setHidden] = useState<Set<string>>(() => new Set())
+  // Opens on the main account (BCP checking, the joint account); the others are one click away.
+  const [hidden, setHidden] = useState<Set<string>>(() => {
+    const main = ctx.data.accounts.filter((a) => a.bank === 'BCP' && a.type === 'checking')
+    return new Set(main.length ? ctx.data.accounts.filter((a) => !main.includes(a)).map((a) => a.id) : [])
+  })
   const shown = useCallback((id: string) => !hidden.has(id), [hidden])
   return <>
     <div className="row">{VIEWS.map((v) => (
