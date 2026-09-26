@@ -7,10 +7,12 @@ import { byCategory, lastCompleteMonths, monthly } from '../domain/analytics'
 import { deleteScenario, saveScenario } from '../lib/data'
 import { money } from '../lib/format'
 import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
+import { countryOf } from '../domain/countries'
 
-const HOUSING = ['Aluguel']
-const SCHOOL = ['Educação', 'Preply', 'Sodexo', 'Aquasport']
+const HOUSING = ['Moradia', 'Aluguel']
+const SCHOOL = ['Educação', 'Frances']
 const BRAZIL = ['Imóvel Brasil', 'Cartão Itaú']
+const REIMBURSED = ['Business Trips'] // paid back by the employer: not part of the cost of living
 
 /** Índice de custo de vida dos gastos variáveis frente à sua base atual na região de Paris — premissas editáveis. */
 const PRESETS: Record<Country, { label: string; col: number; currency: 'EUR' | 'BRL' }> = {
@@ -25,17 +27,27 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
   const { data, fx } = ctx
   const eur = money('EUR')
   // Baseline = last 6 complete months, always in EUR regardless of the display toggle.
-  const base = useMemo(() => {
-    const months = lastCompleteMonths(new Date(), 6)
+  // Living costs come from the French accounts (BCP, CCF): the life being simulated is the
+  // one in France. Costs in Brazil are measured on all accounts and kept as their own line.
+  const baseFor = useMemo(() => (n: number) => {
+    const months = lastCompleteMonths(new Date(), n)
     const set = new Set(months)
     const eurTx = ctx.etx.map((t) => ({ ...t, value: fx.convert(t.amount, t.currency, 'EUR', t.booking_date) }))
-    const cats = new Map(byCategory(eurTx, set).map((c) => [c.name, c.value / 6]))
-    const sum = (names: string[]) => names.reduce((s, n) => s + (cats.get(n) ?? 0), 0)
-    const total = [...cats.values()].reduce((s, v) => s + v, 0)
-    const salary = eurTx.filter((t) => t.categoryName === 'Salario' && set.has(t.month)).reduce((s, t) => s + t.value, 0) / 6
+    const france = new Set(data.accounts.filter((a) => countryOf(a.bank) === 'França').map((a) => a.id))
+    const frTx = france.size ? eurTx.filter((t) => france.has(t.account_id)) : eurTx
+    const perMonth = (txs: typeof eurTx) => new Map(byCategory(txs, set).map((c) => [c.name, c.value / n]))
+    const fr = perMonth(frTx)
+    const all = perMonth(eurTx)
+    const sum = (cats: Map<string, number>, names: string[]) => names.reduce((s, n) => s + (cats.get(n) ?? 0), 0)
+    const totalFr = [...fr.values()].reduce((s, v) => s + v, 0)
+    const rent = sum(fr, HOUSING), school = sum(fr, SCHOOL)
+    const variable = totalFr - rent - school - sum(fr, BRAZIL) - sum(fr, REIMBURSED)
+    const salary = eurTx.filter((t) => t.categoryName === 'Salario' && set.has(t.month)).reduce((s, t) => s + t.value, 0) / n
     const m = monthly(eurTx).filter((x) => set.has(x.month))
-    return { rent: sum(HOUSING), school: sum(SCHOOL), brazil: sum(BRAZIL), variable: total - sum(HOUSING) - sum(SCHOOL) - sum(BRAZIL), total, salary, months, income: m.reduce((s, x) => s + x.income, 0) / 6 }
-  }, [ctx.etx, fx])
+    return { rent, school, brazil: sum(all, BRAZIL), variable, reimbursed: sum(fr, REIMBURSED), total: totalFr, salary, months, income: m.reduce((s, x) => s + x.income, 0) / n }
+  }, [ctx.etx, fx, data.accounts])
+  const base = useMemo(() => baseFor(6), [baseFor])
+  const recent = useMemo(() => baseFor(3), [baseFor])
 
   const make = (country: Country): Scenario => ({
     name: PRESETS[country].label, country, household: { married: true, children: 2 },
@@ -54,6 +66,19 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
   const set = <K extends keyof Scenario>(k: K, v: Scenario[K]) => setS({ ...s, [k]: v })
   const num = (k: keyof Scenario) => ({ type: 'number', value: s[k] as number, onChange: (e: React.ChangeEvent<HTMLInputElement>) => set(k, Number(e.target.value) as never) })
 
+  /** Refreshes the scenario's cost lines from the last 3 complete months (France-based, as above). */
+  function updateBase() {
+    const brazilName = 'Custos Brasil (imóvel, cartão)'
+    const others = s.extraLines.filter((l) => l.name !== brazilName)
+    setS({
+      ...s,
+      rentMonth: s.country === 'FR' ? Math.round(recent.rent) : s.rentMonth,
+      schoolYear: s.country === 'FR' ? Math.round(recent.school * 12) : s.schoolYear,
+      baselineVariableMonth: Math.round(recent.variable),
+      extraLines: s.country !== 'BR' && recent.brazil > 0 ? [...others, { name: brazilName, monthly: Math.round(recent.brazil) }] : others,
+    })
+  }
+
   const compare = [...saved.filter((x) => x.id !== editingId), { id: 'current', s }].map((x) => ({ ...x, r: runScenario(x.s) }))
   const chart = Array.from({ length: Math.max(...compare.map((c) => c.s.years)) }, (_, i) => {
     const row: Record<string, number> = { year: i + 1 }
@@ -63,14 +88,23 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
 
   return <div className="grid">
     <div className="card" style={{ gridColumn: '1/-1' }}>
-      <h3>Sua base real (últimos 6 meses, EUR/mês)</h3>
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <h3 style={{ margin: 0 }}>Sua base real (últimos 6 meses, EUR/mês)</h3>
+        <button className="primary" onClick={updateBase}
+          title={`Moradia ${eur(recent.rent)} · escola ${eur(recent.school)} · outros ${eur(recent.variable)} · Brasil ${eur(recent.brazil)} por mês (${recent.months[0]} a ${recent.months.at(-1)})`}>
+          Atualizar base (últimos 3 meses)</button>
+      </div>
+      <p className="muted" style={{ fontSize: 12 }}>
+        {base.months[0]} a {base.months.at(-1)}. Moradia, escola e outros gastos vêm das contas da França (BCP e CCF); os custos no Brasil,
+        de todas as contas. Business Trips ({eur(base.reimbursed)}/mês) ficam de fora porque são reembolsadas.
+      </p>
       <div className="kpis">
         <div className="kpi"><div className="l">Salário líquido recebido</div><div className="v">{eur(base.salary)}</div></div>
         <div className="kpi"><div className="l">Todas as receitas</div><div className="v">{eur(base.income)}</div></div>
-        <div className="kpi"><div className="l">Aluguel</div><div className="v">{eur(base.rent)}</div></div>
+        <div className="kpi"><div className="l">Moradia</div><div className="v">{eur(base.rent)}</div></div>
         <div className="kpi"><div className="l">Escola e filhos</div><div className="v">{eur(base.school)}</div></div>
         <div className="kpi"><div className="l">Custos no Brasil</div><div className="v">{eur(base.brazil)}</div></div>
-        <div className="kpi"><div className="l">Outros gastos</div><div className="v">{eur(base.variable)}</div></div>
+        <div className="kpi"><div className="l">Outros gastos (França)</div><div className="v">{eur(base.variable)}</div></div>
       </div>
       <p className="muted">Use o “salário líquido recebido” para calibrar: o modelo da França com o seu bruto real deve chegar perto desse valor.</p>
     </div>
@@ -96,7 +130,9 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
         <label>Outras receitas líquidas / mês<input {...num('otherIncomeMonth')} /></label>
         <label>Aluguel / mês<input {...num('rentMonth')} step={50} /></label>
         <label>Escola / ano (todos os filhos)<input {...num('schoolYear')} step={500} /></label>
-        <label>Base de outros gastos (EUR/mês)<input {...num('baselineVariableMonth')} step={50} /></label>
+        <label>Base de outros gastos (EUR/mês)<input {...num('baselineVariableMonth')} step={50} />
+          <button type="button" style={{ fontSize: 12 }} onClick={() => set('baselineVariableMonth', Math.round(base.variable))}>
+            Usar média 6 meses França ({eur(base.variable)})</button></label>
         <label>Índice de custo de vida<input {...num('costOfLivingIndex')} step={0.05} /></label>
         <label>Rendimento da poupança % / ano<input {...num('savingsReturnPct')} step={0.5} /></label>
         <label>Inflação % / ano<input {...num('inflationPct')} step={0.5} /></label>

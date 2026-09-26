@@ -3,7 +3,7 @@ import type { Account, AccountHint, BankMapEntry, Category, Currency, ParseResul
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/defaults'
 import { categorize, merchantKey, ruleMatches, TRANSFER } from '../domain/categorize'
 import { matchCardPayments, type StoredCardStatement } from '../domain/cards'
-import { withFingerprints } from '../domain/fingerprint'
+import { dedupeKey, markDuplicates, withFingerprints } from '../domain/fingerprint'
 import { withAiNote } from '../domain/claudeExchange'
 import type { ContractItem } from '../domain/payroll'
 
@@ -120,32 +120,76 @@ export async function sha256(bytes: Uint8Array) {
   return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+export interface ImportRecord {
+  id: string
+  file_name: string
+  file_sha256: string
+  source: string
+  rows_total: number
+  rows_inserted: number
+  created_at: string
+}
+
+export async function listImports(): Promise<ImportRecord[]> {
+  return (await selectAll<ImportRecord>('imports', 'created_at')).reverse()
+}
+
+/**
+ * Undoes file imports: deletes the rows each file created, the card bills read from it and
+ * its import record, so the file can be imported again. Rows another file already had are
+ * not touched (they belong to that other import). Bank balances read from the file stay:
+ * they are the bank's own figures and a new import overwrites them.
+ */
+export async function undoImports(recs: ImportRecord[]): Promise<number> {
+  let deleted = 0
+  for (let i = 0; i < recs.length; i += 50) {
+    const ids = recs.slice(i, i + 50).map((r) => r.id)
+    const rows = must(await supabase.from('transactions').delete().in('import_id', ids).select('id')) as { id: string }[]
+    deleted += rows.length
+    const names = recs.slice(i, i + 50).map((r) => r.file_name)
+    await supabase.from('card_statements').delete().in('file_name', names) // table from migration 004; optional
+    must(await supabase.from('imports').delete().in('id', ids))
+  }
+  return deleted
+}
+
 /** SHA-256 of every file already imported, so the same file is never imported twice. */
 export async function importedHashes(): Promise<Set<string>> {
   const rows = await selectAll<{ file_sha256: string }>('imports', 'created_at')
   return new Set(rows.map((r) => r.file_sha256))
 }
 
-export function planImport(fileName: string, hash: string, result: ParseResult, data: AppData): ImportPlan {
-  const refs = new Set(data.accounts.map((a) => a.external_ref))
+/**
+ * Rows of a parsed file that are not stored yet. A row counts as already stored when the
+ * same account has a row with the same date, amount and vendor, whatever file it came
+ * from (see markDuplicates), or the same fingerprint.
+ */
+function newRowsOf(result: ParseResult, data: AppData) {
+  const refOf = new Map(data.accounts.map((a) => [a.id, a.external_ref]))
+  const existing = data.transactions.map((t) => dedupeKey(refOf.get(t.account_id) ?? '', t.booking_date, Number(t.amount), t.description))
   const known = new Set(data.transactions.map((t) => t.fingerprint))
   const fp = withFingerprints(result.transactions, (r) => r)
+  const dup = markDuplicates(fp.map((t) => dedupeKey(t.accountRef, t.bookingDate, t.amount, t.description)), existing)
+  return fp.filter((t, i) => !dup[i] && !known.has(t.fingerprint))
+}
+
+export function planImport(fileName: string, hash: string, result: ParseResult, data: AppData): ImportPlan {
+  const refs = new Set(data.accounts.map((a) => a.external_ref))
   const unknownRefs = [...new Set([...result.transactions, ...result.checkpoints].map((t) => t.accountRef))].filter((r) => r && !refs.has(r))
-  const newRows = fp.filter((t) => !known.has(t.fingerprint)).length
-  return { fileName, sha256: hash, result, unknownRefs, newRows, dupRows: fp.length - newRows }
+  const newRows = newRowsOf(result, data).length
+  return { fileName, sha256: hash, result, unknownRefs, newRows, dupRows: result.transactions.length - newRows }
 }
 
 /** Writes the parsed file: new transactions (categorized), bank balances, import log. */
 export async function executeImport(plan: ImportPlan, data: AppData): Promise<number> {
   const accByRef = new Map(data.accounts.map((a) => [a.external_ref, a]))
   const catId = new Map(data.categories.map((c) => [c.name, c.id]))
-  const known = new Set(data.transactions.map((t) => t.fingerprint))
   const imp = must(await supabase.from('imports').insert({
     file_name: plan.fileName, file_sha256: plan.sha256, source: plan.result.source,
     rows_total: plan.result.transactions.length, rows_inserted: 0,
   }).select().single()) as { id: string }
-  const rows = withFingerprints(plan.result.transactions, (r) => r)
-    .filter((t) => !known.has(t.fingerprint) && accByRef.has(t.accountRef))
+  const rows = newRowsOf(plan.result, data)
+    .filter((t) => accByRef.has(t.accountRef))
     .map((t) => {
       const acc = accByRef.get(t.accountRef)!
       return {

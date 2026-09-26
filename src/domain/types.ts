@@ -107,4 +107,5 @@ export interface Transaction {
   source: string
   fingerprint: string
   statement_due?: string | null
+  import_id?: string | null // file import that created the row (for undoing an import)
 }

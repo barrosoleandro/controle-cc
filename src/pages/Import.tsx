@@ -6,6 +6,7 @@ import { parseStatement } from '../parsers'
 import { LearnedRules } from '../components/LearnedRules'
 import { AiSuggestions } from '../components/AiSuggestions'
 import { ImportCategories } from '../components/ImportCategories'
+import { ImportHistory } from '../components/ImportHistory'
 
 const SUPPORTED = /\.(csv|pdf|xlsx)$/i
 
@@ -169,6 +170,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         {done && <p className="pos">{done}</p>}
       </div>
       <AiSuggestions ctx={ctx} />
+      <ImportHistory ctx={ctx} />
       <LearnedRules ctx={ctx} />
     </div>
   )
