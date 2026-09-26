@@ -5,6 +5,7 @@ import { money } from '../lib/format'
 import { today, useFmt, useSubscriptions } from '../lib/hooks'
 import { buildPeriod, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
 import type { CategoryKind } from '../domain/types'
+import { byName } from '../domain/categorize'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 const NEW = '__new' // select option that opens the new-category form
@@ -39,7 +40,7 @@ function Lista({ ctx }: { ctx: Ctx }) {
   const [tipo, setTipo] = useState<CategoryKind>('expense')
   const [busy, setBusy] = useState(false)
   const months = useMemo(() => [...new Set(etx.map((t) => t.month))].sort().reverse(), [etx])
-  const sortedCats = [...data.categories].sort((a, b) => a.name.localeCompare(b.name))
+  const sortedCats = [...data.categories].sort(byName)
 
   const rows = useMemo(() => {
     const qq = q.trim().toUpperCase()

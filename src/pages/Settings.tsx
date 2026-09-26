@@ -6,6 +6,8 @@ import { balanceSeries } from '../domain/analytics'
 import { money } from '../lib/format'
 import { MAPPING_OPEN_QUESTIONS } from '../domain/defaults'
 import type { CategoryKind } from '../domain/types'
+import { byName } from '../domain/categorize'
+import { CategorySelect } from '../components/CategorySelect'
 
 const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações'] as const
 
@@ -51,7 +53,7 @@ function Accounts({ ctx }: { ctx: Ctx }) {
 function Budgets({ ctx }: { ctx: Ctx }) {
   const { data } = ctx
   const b = new Map(data.budgets.filter((x) => x.month === null).map((x) => [x.category_id, x.amount]))
-  const cats = data.categories.filter((c) => c.kind === 'expense')
+  const cats = data.categories.filter((c) => c.kind === 'expense').sort(byName)
   const total = cats.reduce((s, c) => s + (b.get(c.id) ?? 0), 0)
   return <div className="card"><h3>Orçamento mensal (EUR) — total {money('EUR')(total)}</h3>
     <table><tbody>{cats.map((c) => (
@@ -68,7 +70,7 @@ function Categories({ ctx }: { ctx: Ctx }) {
     <div className="row"><input placeholder="Nova categoria" value={name} onChange={(e) => setName(e.target.value)} />
       <select value={kind} onChange={(e) => setKind(e.target.value as CategoryKind)}><option value="expense">despesa</option><option value="income">receita</option><option value="transfer">transferência</option></select>
       <button disabled={!name.trim()} onClick={async () => { await addCategory(name.trim(), kind, '#888888', data.categories.length); setName(''); ctx.reload() }}>Adicionar</button></div>
-    <table><tbody>{data.categories.map((c) => (
+    <table><tbody>{[...data.categories].sort(byName).map((c) => (
       <tr key={c.id}><td><input defaultValue={c.name} onBlur={(e) => e.target.value.trim() && e.target.value !== c.name && updateCategory(c.id, { name: e.target.value.trim() }).then(ctx.reload)} /></td>
         <td><select value={c.kind} onChange={(e) => updateCategory(c.id, { kind: e.target.value as CategoryKind }).then(ctx.reload)}><option value="expense">despesa</option><option value="income">receita</option><option value="transfer">transferência</option></select></td></tr>
     ))}</tbody></table></div>
@@ -78,18 +80,18 @@ function Rules({ ctx }: { ctx: Ctx }) {
   const { data } = ctx
   const [pattern, setPattern] = useState('')
   const [cat, setCat] = useState('')
-  const cats = [...data.categories].sort((a, b) => a.name.localeCompare(b.name))
   return <div className="grid">
     <div className="card" style={{ gridColumn: '1/-1' }}><h3>Regras por estabelecimento</h3>
       <p className="muted">Conferidas de cima para baixo (menor número de prioridade primeiro); a primeira que casar vence. O texto casa no início de uma palavra, ignorando acento e caixa. As regras rodam antes do mapa de categorias do banco.</p>
       <div className="row"><input placeholder="Texto da descrição, ex.: TEKEL" value={pattern} onChange={(e) => setPattern(e.target.value)} />
-        <select value={cat} onChange={(e) => setCat(e.target.value)}><option value="">Categoria…</option>{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        <CategorySelect ctx={ctx} value={cat} onChange={setCat} empty="Categoria…" label="Categoria da nova regra" />
         <button disabled={pattern.trim().length < 2 || !cat} onClick={async () => { await addRule(pattern.trim(), cat, null, Math.min(1000, ...data.rules.map((r) => r.priority)) - 1); setPattern(''); ctx.reload() }}>Adicionar (prioridade máxima)</button></div>
       <div className="scroll"><table><thead><tr><th className="num">Prio</th><th>Texto</th><th>Sinal</th><th>Categoria</th><th /></tr></thead><tbody>
         {data.rules.map((r) => (
           <tr key={r.id}><td className="num"><input type="number" style={{ width: 70 }} defaultValue={r.priority} onBlur={(e) => Number(e.target.value) !== r.priority && updateRule(r.id, { priority: Number(e.target.value) }).then(ctx.reload)} /></td>
             <td>{r.pattern}</td><td>{r.sign === 'debit' ? 'saída' : r.sign === 'credit' ? 'entrada' : 'qualquer'}</td>
-            <td><select value={r.category_id} onChange={(e) => updateRule(r.id, { category_id: e.target.value }).then(ctx.reload)}>{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></td>
+            <td><CategorySelect ctx={ctx} value={r.category_id} label={`Categoria da regra ${r.pattern}`}
+              onChange={(id) => updateRule(r.id, { category_id: id }).then(ctx.reload)} /></td>
             <td><button onClick={() => deleteRule(r.id).then(ctx.reload)} aria-label="Excluir regra">✕</button></td></tr>
         ))}</tbody></table></div>
       <p className="muted">Depois de mexer nas regras, use Lançamentos → Reaplicar regras (as escolhas manuais são preservadas).</p>
@@ -100,7 +102,6 @@ function Rules({ ctx }: { ctx: Ctx }) {
 
 function BankMapping({ ctx }: { ctx: Ctx }) {
   const { data } = ctx
-  const cats = [...data.categories].sort((a, b) => a.name.localeCompare(b.name))
   const seen = new Set(data.transactions.map((t) => `${t.bank_category}|${t.bank_subcategory}`))
   return <div className="card"><h3>Categoria do banco → sua categoria</h3>
     <p className="muted">Usado quando nenhuma regra de estabelecimento casa. “*” = qualquer subcategoria. Em negrito = presente nos seus dados.</p>
@@ -108,7 +109,8 @@ function BankMapping({ ctx }: { ctx: Ctx }) {
       {data.bankMap.map((m) => (
         <tr key={m.id} style={{ fontWeight: seen.has(`${m.bank_category}|${m.bank_subcategory}`) ? 600 : 400 }}>
           <td>{m.bank_category}</td><td>{m.bank_subcategory}</td>
-          <td><select value={m.category_id} onChange={(e) => updateBankMap(m.id, e.target.value).then(ctx.reload)}>{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></td></tr>
+          <td><CategorySelect ctx={ctx} value={m.category_id} label={`Categoria para ${m.bank_category}`}
+            onChange={(id) => updateBankMap(m.id, id).then(ctx.reload)} /></td></tr>
       ))}</tbody></table></div></div>
 }
 
