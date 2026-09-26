@@ -38,6 +38,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
 .bar > div { height: 100%; background: var(--accent); }
 .bar > div.over { background: var(--neg); }
+.bar > div.ok { background: var(--pos); } .bar > div.near { background: var(--warn); }
 .center { min-height: 80vh; display: grid; place-items: center; }
 .auth { width: min(380px, 100%); display: grid; gap: 10px; }
 .alert { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); margin-bottom: 6px; display: flex; gap: 8px; justify-content: space-between; }

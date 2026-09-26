@@ -228,12 +228,20 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
         const rows = [...budgets].filter(([, b]) => b > 0).map(([name, b]) => ({ name, b, a: actual.get(name) ?? 0 })).sort((x, y) => y.a / y.b - x.a / x.b)
         return (
           <div className="card"><h3>Orçado x realizado — {monthLabel(month)}</h3>
+            <p className="muted" style={{ fontSize: 12 }}>
+              <span className="pos">✓ dentro</span> (até 80%) · <span className="warn">⚠ perto do limite</span> (80–100%) · <span className="neg">▲ acima do orçado</span>
+            </p>
             <table><tbody>
-              {rows.map((r) => (
-                <tr key={r.name}><td style={{ width: '32%' }}>{r.name}</td>
-                  <td><div className="bar"><div className={r.a > r.b ? 'over' : ''} style={{ width: `${Math.min(100, (r.a / r.b) * 100)}%` }} /></div></td>
-                  <td className={`num ${r.a > r.b ? 'neg' : ''}`}>{fmt(r.a)} / {fmt(r.b)}{r.a > r.b ? ' ▲' : ''}</td></tr>
-              ))}
+              {rows.map((r) => {
+                // Status = share of the budget used; each colour also has its own symbol.
+                const used = r.a / r.b
+                const st = used > 1 ? { cls: 'over', text: 'neg', mark: '▲' } : used >= 0.8 ? { cls: 'near', text: 'warn', mark: '⚠' } : { cls: 'ok', text: 'pos', mark: '✓' }
+                return (
+                  <tr key={r.name}><td style={{ width: '32%' }}>{r.name}</td>
+                    <td><div className="bar" title={`${Math.round(used * 100)}% do orçado`}><div className={st.cls} style={{ width: `${Math.min(100, used * 100)}%` }} /></div></td>
+                    <td className={`num ${st.text}`}>{st.mark} {fmt(r.a)} / {fmt(r.b)} <span className="muted">({Math.round(used * 100)}%)</span></td></tr>
+                )
+              })}
             </tbody></table>
           </div>)
       }
