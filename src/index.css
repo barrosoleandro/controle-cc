@@ -1,28 +1,36 @@
-/* ---------- Design tokens ---------- */
+/* ---------- Design tokens: one neutral palette, one blue accent ----------
+ * Grays for surfaces and text, blue only for the active page, the main action, links and
+ * focus. Green / red / amber are reserved for meaning (income, spending, warnings) and the
+ * chart series keep their validated colours further down. */
 :root {
-  --bg: #f4f6fb; --card: #ffffff; --card-2: #f8f9fc; --text: #111827; --muted: #667085; --line: #e4e7ee;
-  --accent: #4f46e5; --accent-2: #4338ca; --accent-soft: #eef0ff; --on-accent: #ffffff;
-  --pos: #1a8f5a; --neg: #c93838; --warn: #b7791f;
-  --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .06);
-  --shadow-lg: 0 12px 32px rgba(16, 24, 40, .14);
-  --radius: 14px; --radius-sm: 10px;
+  --bg: #f6f7f9; --card: #ffffff; --card-2: #f3f4f6; --text: #111827; --muted: #6b7280; --line: #e5e7eb;
+  --accent: #1d4ed8; --accent-2: #1e40af; --accent-soft: #eff4ff; --on-accent: #ffffff; --accent-ink: #1d4ed8;
+  --pos: #15803d; --neg: #b91c1c; --warn: #b45309;
+  --menu-bg: #ffffff; --menu-fg: #4b5563; --menu-fg-hover: #111827; --menu-hover: #f3f4f6;
+  --menu-active-bg: #eff4ff; --menu-active-fg: #1d4ed8; --menu-line: #e5e7eb; --menu-title: #111827;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06); --shadow-lg: 0 12px 32px rgba(16, 24, 40, .16);
+  --radius: 12px; --radius-sm: 8px;
   --side-w: 232px; --top-h: 58px; --bottom-h: 64px;
   color-scheme: light dark;
   font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme=light]) {
-    --bg: #0d1117; --card: #161b24; --card-2: #1b2130; --text: #e6e9f0; --muted: #98a2b3; --line: #262d3a;
-    --accent: #8b8cf8; --accent-2: #a5a6fb; --accent-soft: #23264a; --on-accent: #0d1117;
-    --pos: #4cc38a; --neg: #ff7373; --warn: #e0b04f;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-lg: 0 16px 40px rgba(0, 0, 0, .55);
+    --bg: #0b0f17; --card: #121826; --card-2: #182033; --text: #e5e7eb; --muted: #9ca3af; --line: #243044;
+    --accent: #60a5fa; --accent-2: #93c5fd; --accent-soft: #172554; --on-accent: #0b0f17; --accent-ink: #93c5fd;
+    --pos: #4ade80; --neg: #f87171; --warn: #fbbf24;
+    --menu-bg: #0f1522; --menu-fg: #9ca3af; --menu-fg-hover: #f3f4f6; --menu-hover: #182033;
+    --menu-active-bg: #172554; --menu-active-fg: #bfdbfe; --menu-line: #1f2a3d; --menu-title: #f3f4f6;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-lg: 0 16px 40px rgba(0, 0, 0, .6);
   }
 }
 :root[data-theme=dark] {
-    --bg: #0d1117; --card: #161b24; --card-2: #1b2130; --text: #e6e9f0; --muted: #98a2b3; --line: #262d3a;
-    --accent: #8b8cf8; --accent-2: #a5a6fb; --accent-soft: #23264a; --on-accent: #0d1117;
-    --pos: #4cc38a; --neg: #ff7373; --warn: #e0b04f;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-lg: 0 16px 40px rgba(0, 0, 0, .55);
+  --bg: #0b0f17; --card: #121826; --card-2: #182033; --text: #e5e7eb; --muted: #9ca3af; --line: #243044;
+  --accent: #60a5fa; --accent-2: #93c5fd; --accent-soft: #172554; --on-accent: #0b0f17; --accent-ink: #93c5fd;
+  --pos: #4ade80; --neg: #f87171; --warn: #fbbf24;
+  --menu-bg: #0f1522; --menu-fg: #9ca3af; --menu-fg-hover: #f3f4f6; --menu-hover: #182033;
+  --menu-active-bg: #172554; --menu-active-fg: #bfdbfe; --menu-line: #1f2a3d; --menu-title: #f3f4f6;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4); --shadow-lg: 0 16px 40px rgba(0, 0, 0, .6);
 }
 
 /* ---------- Base ---------- */
@@ -37,7 +45,7 @@ a { color: var(--accent-ink); }
 header.top {
   position: sticky; top: 0; z-index: 20; height: var(--top-h); display: flex; align-items: center; gap: 12px;
   padding: 0 16px 0 calc(var(--side-w) + 16px);
-  background: color-mix(in srgb, var(--card) 88%, transparent); backdrop-filter: saturate(1.6) blur(10px);
+  background: var(--card);
   border-bottom: 1px solid var(--line);
 }
 header.top .brand {
@@ -45,7 +53,7 @@ header.top .brand {
   padding: 0 18px; background: var(--menu-bg); color: var(--menu-title); border-right: 1px solid var(--menu-line); border-bottom: 1px solid var(--menu-line);
 }
 header.top h1 { font-size: 16px; margin: 0; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--brand-bg, var(--accent)); color: var(--brand-fg, var(--on-accent)); flex: none; }
+.brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; background: var(--accent); color: var(--on-accent); flex: none; }
 .page-title { font-size: 18px; font-weight: 700; letter-spacing: -.01em; margin-right: auto; }
 .top-actions { display: flex; align-items: center; gap: 6px; }
 .seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--line); }
@@ -64,8 +72,7 @@ nav.side button {
   background: transparent; color: var(--menu-fg); font-weight: 500; text-align: left;
 }
 nav.side button:hover { background: var(--menu-hover); color: var(--menu-fg-hover); }
-nav.side button.active { background: var(--menu-active-bg); color: var(--menu-active-fg); font-weight: 650; box-shadow: inset 3px 0 0 var(--menu-active-bar, transparent); }
-nav.side svg, nav.bottom svg, .sheet svg { color: var(--ic, currentColor); }
+nav.side button.active { background: var(--menu-active-bg); color: var(--menu-active-fg); font-weight: 650; box-shadow: inset 3px 0 0 var(--accent); }
 
 nav.bottom { display: none; }
 .sheet-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(10, 14, 22, .45); display: flex; align-items: flex-end; }
@@ -109,7 +116,7 @@ main { padding: 20px 24px 40px; margin-left: var(--side-w); max-width: calc(1280
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; min-width: 0; box-shadow: var(--shadow); overflow-x: auto; }
 .card h3 { margin: 0 0 12px; font-size: 15px; font-weight: 650; }
 .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); }
-.kpi { background: var(--card-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; }
+.kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; }
 .kpi .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; margin-top: 2px; }
 .kpi .l { color: var(--muted); font-size: 12px; font-weight: 500; }
 .pos { color: var(--pos); } .neg { color: var(--neg); } .muted { color: var(--muted); } .warn { color: var(--warn); }
@@ -120,7 +127,7 @@ button { cursor: pointer; font-weight: 500; transition: background .12s, border-
 button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
 button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
 button.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
-button.active { background: var(--toggle-bg, var(--accent-soft)); border-color: transparent; color: var(--toggle-fg, var(--accent-ink)); font-weight: 600; }
+button.active { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); color: var(--accent-ink); font-weight: 600; }
 button:disabled { opacity: .5; cursor: default; }
 button.link { background: none; border: none; padding: 0; min-height: 0; text-align: left; font-weight: 600; color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; }
 input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -174,42 +181,9 @@ th.sortable { cursor: pointer; user-select: none; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme=light]) { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --grid: #2b313a; } }
 :root[data-theme=dark] { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --grid: #2b313a; }
 
-/* ---------- Accent presets (Ajustes → Aparência); yellow is the default ---------- */
-:root[data-accent=petroleo] { --accent: #0f6e8c; --accent-2: #0b5670; --accent-soft: #e5f2f7; --on-accent: #ffffff; }
-@media (prefers-color-scheme: dark) { :root[data-accent=petroleo]:not([data-theme=light]) { --accent: #4cc9e6; --accent-2: #7dd9ee; --accent-soft: #11303a; --on-accent: #0d1117; } }
-:root[data-accent=petroleo][data-theme=dark] { --accent: #4cc9e6; --accent-2: #7dd9ee; --accent-soft: #11303a; --on-accent: #0d1117; }
-:root[data-accent=indigo] { --accent: #4f46e5; --accent-2: #4338ca; --accent-soft: #eef0ff; --on-accent: #ffffff; }
-@media (prefers-color-scheme: dark) { :root[data-accent=indigo]:not([data-theme=light]) { --accent: #8b8cf8; --accent-2: #a5a6fb; --accent-soft: #23264a; --on-accent: #0d1117; } }
-:root[data-accent=indigo][data-theme=dark] { --accent: #8b8cf8; --accent-2: #a5a6fb; --accent-soft: #23264a; --on-accent: #0d1117; }
-:root[data-accent=esmeralda] { --accent: #0f7a5a; --accent-2: #0b5f46; --accent-soft: #e4f4ec; --on-accent: #ffffff; }
-@media (prefers-color-scheme: dark) { :root[data-accent=esmeralda]:not([data-theme=light]) { --accent: #3ecf9a; --accent-2: #6fdcb3; --accent-soft: #10302a; --on-accent: #0d1117; } }
-:root[data-accent=esmeralda][data-theme=dark] { --accent: #3ecf9a; --accent-2: #6fdcb3; --accent-soft: #10302a; --on-accent: #0d1117; }
-:root[data-accent=vinho] { --accent: #9f1d4f; --accent-2: #7f153e; --accent-soft: #fbe9f0; --on-accent: #ffffff; }
-@media (prefers-color-scheme: dark) { :root[data-accent=vinho]:not([data-theme=light]) { --accent: #f472a8; --accent-2: #f79ac2; --accent-soft: #3a1426; --on-accent: #0d1117; } }
-:root[data-accent=vinho][data-theme=dark] { --accent: #f472a8; --accent-2: #f79ac2; --accent-soft: #3a1426; --on-accent: #0d1117; }
-:root[data-accent=grafite] { --accent: #374151; --accent-2: #1f2937; --accent-soft: #eceef2; --on-accent: #ffffff; }
-@media (prefers-color-scheme: dark) { :root[data-accent=grafite]:not([data-theme=light]) { --accent: #cbd5e1; --accent-2: #e2e8f0; --accent-soft: #252b36; --on-accent: #0d1117; } }
-:root[data-accent=grafite][data-theme=dark] { --accent: #cbd5e1; --accent-2: #e2e8f0; --accent-soft: #252b36; --on-accent: #0d1117; }
-
-/* ---------- Appearance picker ---------- */
-.swatches { display: flex; gap: 10px; flex-wrap: wrap; }
-.swatches button { display: grid; justify-items: center; gap: 6px; padding: 10px 12px; min-width: 88px; }
-.swatches .dot { width: 28px; height: 28px; border-radius: 999px; box-shadow: inset 0 0 0 2px rgba(255,255,255,.35); }
-.swatches button.active { outline: 2px solid var(--accent-ink); outline-offset: 1px; }
-
 /* Forced mode also switches native controls (scrollbars, date pickers). */
 :root[data-theme=light] { color-scheme: light; }
 :root[data-theme=dark] { color-scheme: dark; }
-
-:root {
-  --accent-ink: var(--accent);
-  --menu-bg: var(--card); --menu-fg: var(--muted); --menu-fg-hover: var(--text); --menu-hover: var(--card-2);
-  --menu-active-bg: var(--accent-soft); --menu-active-fg: var(--accent-ink); --menu-line: var(--line); --menu-title: var(--text);
-}
-/* Yellow (default): bright fill with dark text on it; text/icons in dark ochre on light surfaces. */
-:root[data-accent=amarelo], :root:not([data-accent]) { --accent: #f5c400; --accent-2: #e0b000; --accent-soft: #f1f2f4; --on-accent: #111111; --accent-ink: #2b2f36; }
-@media (prefers-color-scheme: dark) { :root[data-accent=amarelo]:not([data-theme=light]), :root:not([data-accent]):not([data-theme=light]) { --accent: #facc15; --accent-2: #fde047; --accent-soft: #2a2e35; --on-accent: #111111; --accent-ink: #e6e9f0; } }
-:root[data-accent=amarelo][data-theme=dark], :root:not([data-accent])[data-theme=dark] { --accent: #facc15; --accent-2: #fde047; --accent-soft: #2a2e35; --on-accent: #111111; --accent-ink: #e6e9f0; }
 
 /* ---------- Cartões: three equal columns ---------- */
 .cards3 { grid-column: 1 / -1; display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }
