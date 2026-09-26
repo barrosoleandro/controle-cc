@@ -1,8 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Ctx } from '../App'
 import { addCategory, addRule, changeRuleCategory, deleteRule, deriveOpening, mergeCategories, refreshCategories, saveFx, setBudget, updateAccount, updateBankMap, updateCategory, updateRule } from '../lib/data'
 import { fetchEurBrl } from '../domain/fx'
-import { balanceSeries } from '../domain/analytics'
+import { balanceSeries, enrich } from '../domain/analytics'
+import { averageSpendByCategory } from '../domain/budget'
+import { monthWindow } from '../domain/period'
+import { today } from '../lib/hooks'
 import { money } from '../lib/format'
 import { MAPPING_OPEN_QUESTIONS } from '../domain/defaults'
 import type { CategoryKind } from '../domain/types'
@@ -51,16 +54,80 @@ function Accounts({ ctx }: { ctx: Ctx }) {
   })}</div>
 }
 
+/**
+ * Monthly budget per expense category (EUR). Each category shows its average spending over
+ * the last 12 complete months; when no expense category has a budget yet, the averages are
+ * loaded as the starting budgets, and the buttons refill empty ones or all of them later.
+ */
 function Budgets({ ctx }: { ctx: Ctx }) {
-  const { data } = ctx
+  const { data, fx } = ctx
   const b = new Map(data.budgets.filter((x) => x.month === null).map((x) => [x.category_id, x.amount]))
   const cats = data.categories.filter((c) => c.kind === 'expense').sort(byName)
   const total = cats.reduce((s, c) => s + (b.get(c.id) ?? 0), 0)
-  return <div className="card"><h3>Orçamento mensal (EUR) — total {money('EUR')(total)}</h3>
-    <table><tbody>{cats.map((c) => (
-      <tr key={c.id}><td>{c.name}</td><td className="num"><input type="number" step="1" min="0" defaultValue={b.get(c.id) ?? ''}
-        onBlur={(e) => e.target.value !== '' && Number(e.target.value) !== b.get(c.id) && setBudget(c.id, Number(e.target.value)).then(ctx.reload)} /></td></tr>
-    ))}</tbody></table></div>
+  const eur = money('EUR')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  // Last 12 complete months, all accounts, converted to EUR like the budgets.
+  const months = useMemo(() => monthWindow(today().slice(0, 7), 13).slice(0, 12), [])
+  const avg = useMemo(
+    () => averageSpendByCategory(enrich(data.transactions, data.categories, data.accounts, fx, 'EUR'), months),
+    [data.transactions, data.categories, data.accounts, fx, months],
+  )
+  const totalAvg = cats.reduce((s, c) => s + (avg.get(c.id) ?? 0), 0)
+  // Last quarter: the 3 most recent complete months, for budgets that follow recent habits.
+  const quarter = useMemo(() => months.slice(-3), [months])
+  const avg3 = useMemo(
+    () => averageSpendByCategory(enrich(data.transactions, data.categories, data.accounts, fx, 'EUR'), quarter),
+    [data.transactions, data.categories, data.accounts, fx, quarter],
+  )
+  const totalAvg3 = cats.reduce((s, c) => s + (avg3.get(c.id) ?? 0), 0)
+
+  /** Writes the chosen average into the budgets: only empty ones, or all of them. */
+  async function fill(all: boolean, source: 'year' | 'quarter' = 'year') {
+    const values = source === 'quarter' ? avg3 : avg
+    const range = source === 'quarter' ? quarter : months
+    // Updating from the quarter also sets categories with no spending in it back to zero.
+    const todo = source === 'quarter' ? cats.filter((c) => (values.get(c.id) ?? 0) !== (b.get(c.id) ?? 0))
+      : cats.filter((c) => values.get(c.id) && (all || !b.get(c.id)))
+    if (!todo.length) { setMsg('Nada para atualizar.'); return }
+    setBusy(true); setMsg(null)
+    try {
+      for (const c of todo) await setBudget(c.id, values.get(c.id) ?? 0)
+      setMsg(`${todo.length} orçamento(s) atualizado(s) com a média de ${range[0]} a ${range.at(-1)}.`)
+      await ctx.reload()
+    } catch (e) { setMsg((e as Error).message) } finally { setBusy(false) }
+  }
+
+  // First visit with no budgets for the current categories: start from the averages.
+  const started = useRef(false)
+  useEffect(() => {
+    if (started.current || busy || !avg.size || cats.some((c) => b.get(c.id))) return
+    started.current = true
+    fill(false)
+  }) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return <div className="card"><h3>Orçamento mensal (EUR) — total {eur(total)}</h3>
+    <p className="muted">A média considera {months[0]} a {months.at(-1)}, todas as contas convertidas para euro, meses sem gasto contando como zero
+      (uma conta anual fica dividida pelos 12 meses), arredondada para cima de 10 em 10. Total das médias: {eur(totalAvg)} em 12 meses,
+      {' '}{eur(totalAvg3)} no último trimestre ({quarter[0]} a {quarter.at(-1)}).</p>
+    <div className="row">
+      <button onClick={() => fill(false)} disabled={busy}>Preencher vazios com a média</button>
+      <button onClick={() => { if (confirm('Substituir todos os orçamentos pela média dos últimos 12 meses?')) fill(true) }} disabled={busy}>Substituir todos pela média de 12 meses</button>
+      <button className="primary" onClick={() => { if (confirm(`Atualizar todos os orçamentos pela média de ${quarter[0]} a ${quarter.at(-1)}?`)) fill(true, 'quarter') }} disabled={busy}>Atualizar pelo último trimestre</button>
+      {msg && <span className="muted">{msg}</span>}
+    </div>
+    <table><thead><tr><th>Categoria</th><th className="num">Média 12m</th><th className="num">Média trimestre</th><th className="num">Orçamento</th></tr></thead>
+      <tbody>{cats.map((c) => {
+        const a = avg.get(c.id) ?? 0
+        const v = b.get(c.id)
+        const a3 = avg3.get(c.id) ?? 0
+        return <tr key={c.id}><td>{c.name}</td><td className="num muted">{a ? eur(a) : '—'}</td>
+          <td className={`num ${a3 > a * 1.2 && a3 - a >= 20 ? 'neg' : 'muted'}`} title={a3 > a * 1.2 && a3 - a >= 20 ? 'Gasto recente acima da média do ano' : undefined}>{a3 ? eur(a3) : '—'}</td>
+          <td className="num"><input key={`${c.id}:${v ?? ''}`} type="number" step="1" min="0" defaultValue={v ?? ''} placeholder={a ? String(a) : ''} disabled={busy}
+            className={v && a && v < a ? 'warn' : ''} title={v && a && v < a ? 'Abaixo da média gasta' : undefined}
+            onBlur={(e) => e.target.value !== '' && Number(e.target.value) !== v && setBudget(c.id, Number(e.target.value)).then(ctx.reload)} /></td></tr>
+      })}</tbody></table></div>
 }
 
 function Categories({ ctx }: { ctx: Ctx }) {

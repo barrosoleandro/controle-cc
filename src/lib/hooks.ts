@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { Ctx } from '../App'
 import { balanceSeries, lastCompleteMonths } from '../domain/analytics'
 import { detectSubscriptions } from '../domain/subscriptions'
+import { isTithe } from '../domain/categorize'
 import { money } from './format'
 
 export const today = () => new Date().toISOString().slice(0, 10)
@@ -21,7 +22,7 @@ export function useBalances(ctx: Ctx) {
 
 export function useSubscriptions(ctx: Ctx) {
   return useMemo(() => detectSubscriptions(
-    ctx.etx.map((t) => ({ booking_date: t.booking_date, amount: t.value, merchant: t.merchant, kind: t.kind })), today(),
+    ctx.etx.filter((t) => !isTithe(t.categoryName)).map((t) => ({ booking_date: t.booking_date, amount: t.value, merchant: t.merchant, kind: t.kind })), today(),
   ), [ctx.etx])
 }
 

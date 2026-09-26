@@ -6,19 +6,24 @@ import { money } from '../lib/format'
 import { today, useFmt, useSubscriptions } from '../lib/hooks'
 import { buildPeriod, monthBalances, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
 import type { CategoryKind } from '../domain/types'
-import { byName } from '../domain/categorize'
+import { byName, isTithe } from '../domain/categorize'
+import { countryOf, flowsByCountry, type Country } from '../domain/countries'
 import { purchaseDate } from '../domain/simplify'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 const NEW = '__new' // select option that opens the new-category form
 
-const VIEWS = ['1 mês', '6 meses', '12 meses', 'Lista'] as const
-const MONTHS: Record<string, number> = { '1 mês': 1, '6 meses': 6, '12 meses': 12 }
+const VIEWS = ['1 mês', '6 meses', '12 meses', '24 meses', 'Por país', 'Lista'] as const
+const MONTHS: Record<string, number> = { '1 mês': 1, '6 meses': 6, '12 meses': 12, '24 meses': 24 }
 
 export function Transactions({ ctx }: { ctx: Ctx }) {
   const [view, setView] = useState<(typeof VIEWS)[number]>('6 meses')
   const [merchant, setMerchant] = useState('') // set from a month view: the list shows only this merchant
-  const [hidden, setHidden] = useState<Set<string>>(() => new Set())
+  // Opens on the main account (BCP checking, the joint account); the others are one click away.
+  const [hidden, setHidden] = useState<Set<string>>(() => {
+    const main = ctx.data.accounts.filter((a) => a.bank === 'BCP' && a.type === 'checking')
+    return new Set(main.length ? ctx.data.accounts.filter((a) => !main.includes(a)).map((a) => a.id) : [])
+  })
   const shown = useCallback((id: string) => !hidden.has(id), [hidden])
   return <>
     <div className="row">{VIEWS.map((v) => (
@@ -26,6 +31,11 @@ export function Transactions({ ctx }: { ctx: Ctx }) {
     ))}</div>
     <div className="row">
       <span className="muted">Contas:</span>
+      {/* Shortcuts: tick only the accounts of one country, or all of them. */}
+      {[...new Set(ctx.data.accounts.map((a) => countryOf(a.bank)))].map((c) => (
+        <button key={c} onClick={() => setHidden(new Set(ctx.data.accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
+      ))}
+      <button onClick={() => setHidden(new Set())}>Todas</button>
       {ctx.data.accounts.map((a) => (
         <label key={a.id} className="inline"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
           const next = new Set(prev); if (next.has(a.id)) next.delete(a.id); else next.add(a.id); return next
@@ -34,7 +44,9 @@ export function Transactions({ ctx }: { ctx: Ctx }) {
     </div>
     {view === 'Lista'
       ? <Lista ctx={ctx} shown={shown} merchant={merchant} onClearMerchant={() => setMerchant('')} />
-      : <Periodo ctx={ctx} shown={shown} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
+      : view === 'Por país'
+        ? <PorPais ctx={ctx} shown={shown} />
+        : <Periodo ctx={ctx} shown={shown} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
   </>
 }
 
@@ -221,7 +233,11 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
   const lastMonth = end || allMonths.at(-1) || ''
   const months = useMemo(() => monthWindow(lastMonth, n), [lastMonth, n])
   const subOf = useMemo(() => new Map(subs.map((s) => [s.merchant, { reason: subscriptionReview(s, today()), active: s.status !== 'possibly_cancelled' }])), [subs])
-  const all = useMemo(() => buildPeriod(etx.filter((t) => shown(t.account_id)), months), [etx, shown, months])
+  const all = useMemo(() => {
+    const quiet = <R extends PeriodRow>(r: R): R => ({ ...r, outlier: r.outlier.map(() => false), isNew: r.isNew.map(() => false), flagged: false })
+    return buildPeriod(etx.filter((t) => shown(t.account_id)), months)
+      .map((g) => (isTithe(g.key) ? { ...quiet(g), merchants: g.merchants.map(quiet) } : g))
+  }, [etx, shown, months])
   // Cards are left out of the total: their running sum is not a balance, and the bill is paid from an account shown here.
   const saldos = useMemo(() => monthBalances(
     data.accounts.filter((a) => shown(a.id) && a.type !== 'card'), data.transactions, months,
@@ -367,4 +383,66 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
       </table></div>
     </div>
   )
+}
+
+/**
+ * Money received and spent over the last 24 months, per country of the accounts
+ * (Itaú = Brasil, BCP and CCF = França, Millennium = Portugal), for the ticked accounts.
+ * Transfers between the user's own accounts and card bill payments are left out.
+ */
+function PorPais({ ctx, shown }: { ctx: Ctx; shown: (accountId: string) => boolean }) {
+  const fmt = useFmt(ctx)
+  const { data, etx } = ctx
+  const months = useMemo(() => monthWindow(today().slice(0, 7), 24), [])
+  const countryOfAccount = useMemo(
+    () => new Map(data.accounts.filter((a) => shown(a.id)).map((a) => [a.id, countryOf(a.bank)] as [string, Country])),
+    [data.accounts, shown],
+  )
+  const f = useMemo(() => flowsByCountry(etx, countryOfAccount, months), [etx, countryOfAccount, months])
+  const sum = (pick: (c: Country) => number) => f.countries.reduce((s, c) => s + pick(c), 0)
+  const all = { income: sum((c) => f.totals(c).income), expense: sum((c) => f.totals(c).expense) }
+  const sticky = { position: 'sticky' as const, left: 0, background: 'var(--card)' }
+
+  if (!f.countries.length) return <div className="card"><p className="muted">Nenhum recebimento ou gasto nas contas marcadas nos últimos 24 meses.</p></div>
+
+  return <>
+    <div className="card">
+      <h3>Recebimentos e gastos por país · {months[0]} a {months.at(-1)}</h3>
+      <p className="muted">Contas marcadas acima, em {ctx.currency}. Itaú = Brasil (inclui o cartão), BCP e CCF = França, Millennium = Portugal.
+        Transferências entre as suas contas e pagamentos de fatura ficam de fora, para nada contar duas vezes.</p>
+      <div className="scroll"><table>
+        <thead><tr><th>País</th><th className="num">Recebimentos</th><th className="num">Gastos</th><th className="num">Resultado</th><th className="num">Gasto médio/mês</th></tr></thead>
+        <tbody>{f.countries.map((c) => {
+          const t = f.totals(c)
+          return <tr key={c}><td>{c}</td><td className="num pos">{fmt(t.income)}</td><td className="num neg">{fmt(t.expense)}</td>
+            <td className={`num ${t.income - t.expense < 0 ? 'neg' : 'pos'}`}>{fmt(t.income - t.expense)}</td><td className="num">{fmt(t.expense / months.length)}</td></tr>
+        })}</tbody>
+        <tfoot><tr><th>Total</th><th className="num pos">{fmt(all.income)}</th><th className="num neg">{fmt(all.expense)}</th>
+          <th className={`num ${all.income - all.expense < 0 ? 'neg' : 'pos'}`}>{fmt(all.income - all.expense)}</th><th className="num">{fmt(all.expense / months.length)}</th></tr></tfoot>
+      </table></div>
+    </div>
+    <div className="card">
+      <h3>Mês a mês</h3>
+      <div className="scroll"><table>
+        <thead>
+          <tr><th style={sticky} rowSpan={2}>Mês</th>
+            {f.countries.map((c) => <th key={c} colSpan={2} style={{ textAlign: 'center' }}>{c}</th>)}
+            <th colSpan={3} style={{ textAlign: 'center' }}>Total</th></tr>
+          <tr>{f.countries.map((c) => <Fragment key={c}><th className="num">Receb.</th><th className="num">Gastos</th></Fragment>)}
+            <th className="num">Receb.</th><th className="num">Gastos</th><th className="num">Resultado</th></tr>
+        </thead>
+        <tbody>{[...months].reverse().map((m) => {
+          const inc = sum((c) => f.cell(m, c).income)
+          const exp = sum((c) => f.cell(m, c).expense)
+          return <tr key={m}><td style={{ ...sticky, whiteSpace: 'nowrap' }}>{m}</td>
+            {f.countries.map((c) => <Fragment key={c}>
+              <td className="num pos">{f.cell(m, c).income ? fmt(f.cell(m, c).income) : <span className="muted">·</span>}</td>
+              <td className="num neg">{f.cell(m, c).expense ? fmt(f.cell(m, c).expense) : <span className="muted">·</span>}</td>
+            </Fragment>)}
+            <td className="num pos">{fmt(inc)}</td><td className="num neg">{fmt(exp)}</td>
+            <td className={`num ${inc - exp < 0 ? 'neg' : 'pos'}`}><strong>{fmt(inc - exp)}</strong></td></tr>
+        })}</tbody>
+      </table></div>
+    </div>
+  </>
 }
