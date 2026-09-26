@@ -20,11 +20,15 @@ export function Transactions({ ctx }: { ctx: Ctx }) {
   const [view, setView] = useState<(typeof VIEWS)[number]>('6 meses')
   const [merchant, setMerchant] = useState('') // set from a month view: the list shows only this merchant
   // Opens on the main account (BCP checking, the joint account); the others are one click away.
+  // Card accounts are left out here: their detail lives on the Cartões page, and the
+  // checking account already shows each bill payment.
+  const accounts = useMemo(() => ctx.data.accounts.filter((a) => a.type !== 'card'), [ctx.data.accounts])
+  const listed = useMemo(() => new Set(accounts.map((a) => a.id)), [accounts])
   const [hidden, setHidden] = useState<Set<string>>(() => {
-    const main = ctx.data.accounts.filter((a) => a.bank === 'BCP' && a.type === 'checking')
-    return new Set(main.length ? ctx.data.accounts.filter((a) => !main.includes(a)).map((a) => a.id) : [])
+    const main = accounts.filter((a) => a.bank === 'BCP' && a.type === 'checking')
+    return new Set(main.length ? accounts.filter((a) => !main.includes(a)).map((a) => a.id) : [])
   })
-  const shown = useCallback((id: string) => !hidden.has(id), [hidden])
+  const shown = useCallback((id: string) => listed.has(id) && !hidden.has(id), [hidden, listed])
   return <>
     <div className="row">{VIEWS.map((v) => (
       <button key={v} className={v === view ? 'active' : ''} onClick={() => { setView(v); setMerchant('') }}>{v}</button>
@@ -32,11 +36,11 @@ export function Transactions({ ctx }: { ctx: Ctx }) {
     <div className="row">
       <span className="muted">Contas:</span>
       {/* Shortcuts: tick only the accounts of one country, or all of them. */}
-      {[...new Set(ctx.data.accounts.map((a) => countryOf(a.bank)))].map((c) => (
-        <button key={c} onClick={() => setHidden(new Set(ctx.data.accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
+      {[...new Set(accounts.map((a) => countryOf(a.bank)))].map((c) => (
+        <button key={c} onClick={() => setHidden(new Set(accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
       ))}
       <button onClick={() => setHidden(new Set())}>Todas</button>
-      {ctx.data.accounts.map((a) => (
+      {accounts.map((a) => (
         <label key={a.id} className="inline"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
           const next = new Set(prev); if (next.has(a.id)) next.delete(a.id); else next.add(a.id); return next
         })} />{a.name}</label>
