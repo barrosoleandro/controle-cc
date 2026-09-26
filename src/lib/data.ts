@@ -111,6 +111,7 @@ export interface DupRow {
   id: string // unique in the selection: file name + fingerprint
   tx: ParsedTransaction & { fingerprint: string }
   matches: string // what it matches, for the user to decide
+  inBase: boolean // true: already stored; false: repeats another file of this selection
 }
 
 export interface ImportPlan {
@@ -201,7 +202,7 @@ export function planImport(fileName: string, hash: string, result: ParseResult, 
   const { fresh, dups } = newRowsOf(result, data, pending)
   return {
     fileName, sha256: hash, result, unknownRefs, newRows: fresh.length, dupRows: dups.length,
-    duplicates: dups.map((d) => ({ id: `${fileName}#${d.tx.fingerprint}`, tx: d.tx, matches: d.matches })),
+    duplicates: dups.map((d) => ({ id: `${fileName}#${d.tx.fingerprint}`, tx: d.tx, matches: d.matches, inBase: d.matches.startsWith('já na base') })),
   }
 }
 
