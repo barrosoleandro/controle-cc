@@ -1,9 +1,10 @@
 /**
  * Appearance: accent colour and light/dark mode, kept per device (localStorage) and applied as
- * data attributes on <html>; the colours themselves live in index.css. White text on every
- * light-mode accent and dark text on every dark-mode accent meet 4.5:1.
+ * data attributes on <html>; the colours themselves live in index.css. Text on every accent
+ * fill (--on-accent) and accent-coloured text (--accent-ink) meet 4.5:1.
  */
 export const ACCENTS = [
+  { id: 'amarelo', label: 'Amarelo', light: '#f5c400', dark: '#facc15' },
   { id: 'petroleo', label: 'Petróleo', light: '#0f6e8c', dark: '#4cc9e6' },
   { id: 'indigo', label: 'Índigo', light: '#4f46e5', dark: '#8b8cf8' },
   { id: 'esmeralda', label: 'Esmeralda', light: '#0f7a5a', dark: '#3ecf9a' },
@@ -15,7 +16,7 @@ export type Mode = 'auto' | 'light' | 'dark'
 export interface Theme { accent: Accent; mode: Mode }
 
 const KEY = 'appearance'
-export const DEFAULT_THEME: Theme = { accent: 'petroleo', mode: 'auto' }
+export const DEFAULT_THEME: Theme = { accent: 'amarelo', mode: 'auto' }
 
 export function loadTheme(): Theme {
   try {
