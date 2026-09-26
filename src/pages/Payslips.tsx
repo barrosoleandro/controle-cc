@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Ctx } from '../App'
 import { saveSettings, sha256 } from '../lib/data'
 import { deletePayslip, listPayslips, savePayslip, type Payslip } from '../lib/payroll'
@@ -11,11 +11,22 @@ const eur = money('EUR', 2)
 const f = (n: number | null | undefined) => (n === null || n === undefined ? '' : eur(n))
 const STATUS = { ok: ['✔ OK', 'pos'], changed: ['≠ Mudou', 'neg'], missing: ['✖ Ausente', 'neg'] } as const
 
+type Outcome = 'importado' | 'substituído' | 'já existia' | 'não é holerite' | 'erro'
+interface FileResult { file: string; outcome: Outcome; detail: string }
+const OUTCOMES: Outcome[] = ['importado', 'substituído', 'já existia', 'não é holerite', 'erro']
+
 /** Monthly payslips (bulletins de paie): detail + check against the contract amounts. */
 export function Payslips({ ctx }: { ctx: Ctx }) {
   const [list, setList] = useState<Payslip[] | null>(null)
   const [sel, setSel] = useState('')
-  const [msgs, setMsgs] = useState<string[]>([])
+  const [results, setResults] = useState<FileResult[]>([])
+  const [progress, setProgress] = useState<string | null>(null)
+  const dirRef = useRef<HTMLInputElement>(null)
+  // webkitdirectory is not in React's prop types; set it on the element itself.
+  useEffect(() => {
+    dirRef.current?.setAttribute('webkitdirectory', '')
+    dirRef.current?.setAttribute('directory', '')
+  }, [])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const saved = ctx.data.settings.payroll_contract
@@ -26,6 +37,7 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
       const l = await listPayslips()
       setList(l)
       setSel((s) => (s && l.some((p) => p.id === s) ? s : l[0]?.id ?? ''))
+      return l
     } catch (e) {
       setError(/payslips/.test((e as Error).message)
         ? 'Tabela de holerites não encontrada: rode supabase/migrations/002_payslips.sql no SQL Editor do Supabase.'
@@ -34,29 +46,46 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
   }, [])
   useEffect(() => { load() }, [load])
 
+  /**
+   * Imports any number of payslips at once (files or a whole folder). Files that are not
+   * PDFs or not bulletins de paie are skipped, not reported as errors. One payslip per
+   * month: an identical file is skipped, a different file for the same month replaces it.
+   */
   async function onFiles(files: FileList | null) {
-    if (!files?.length) return
-    setBusy(true)
-    const out: string[] = []
+    const pdfs = [...(files ?? [])].filter((f) => /\.pdf$/i.test(f.name)).sort((x, y) => x.name.localeCompare(y.name))
+    if (!pdfs.length) { setResults([]); setProgress('Nenhum PDF na seleção.'); return }
+    setBusy(true); setResults([])
+    const out: FileResult[] = []
     const existing = new Map((list ?? []).map((p) => [p.period.slice(0, 7), p.file_sha256]))
+    let lastPeriod = ''
     const { loadPdf } = await import('../lib/pdf') // pdf.js is loaded only when importing
-    for (const file of [...files]) {
+    for (const [i, file] of pdfs.entries()) {
+      setProgress(`Lendo ${i + 1} de ${pdfs.length}: ${file.name}`)
       try {
         const bytes = new Uint8Array(await file.arrayBuffer())
         const hash = await sha256(bytes)
         const pages = await pdfToRows(bytes, loadPdf)
-        if (!looksLikePayslip(pages)) throw new Error('não parece um bulletin de paie')
+        if (!looksLikePayslip(pages)) { out.push({ file: file.name, outcome: 'não é holerite', detail: '' }); continue }
         const p = parsePayslipRows(pages)
         const prev = existing.get(p.period)
-        if (prev === hash) { out.push(`${file.name}: ${p.period} já importado — pulado`); continue }
+        if (prev === hash) { out.push({ file: file.name, outcome: 'já existia', detail: p.period }); continue }
         await savePayslip(p, hash)
         existing.set(p.period, hash)
-        out.push(`${file.name}: ${p.period} ${prev ? 'substituído (arquivo diferente para o mesmo mês)' : 'importado'}${p.warnings.length ? ` — conferir: ${p.warnings.join('; ')}` : ''}`)
-      } catch (e) { out.push(`${file.name}: ${(e as Error).message}`) }
+        if (p.period > lastPeriod) lastPeriod = p.period
+        out.push({
+          file: file.name, outcome: prev ? 'substituído' : 'importado',
+          detail: `${p.period}${p.warnings.length ? ` — conferir: ${p.warnings.join('; ')}` : ''}`,
+        })
+      } catch (e) { out.push({ file: file.name, outcome: 'erro', detail: (e as Error).message }) }
     }
-    setMsgs(out); setBusy(false)
-    await load()
+    setResults(out); setProgress(null); setBusy(false)
+    const fresh = await load()
+    // Show the newest month just imported.
+    const newest = lastPeriod && fresh?.find((x) => x.period.startsWith(lastPeriod))
+    if (newest) setSel(newest.id)
   }
+
+  const counts = OUTCOMES.map((o) => [o, results.filter((r) => r.outcome === o).length] as const).filter(([, n]) => n > 0)
 
   const cur = list?.find((p) => p.id === sel)
   const prev = list && cur ? list[list.indexOf(cur) + 1] : undefined
@@ -74,13 +103,25 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
           <select value={sel} onChange={(e) => setSel(e.target.value)} disabled={!list.length}>
             {list.map((p) => <option key={p.id} value={p.id}>{monthLabel(p.period.slice(0, 7))} {checks.get(p.id) ? '✔' : '⚠'}</option>)}
           </select>
-          <label className="inline"><span className="muted">Importar PDF</span>
+          <label className="inline"><span className="muted">Importar PDFs</span>
             <input type="file" multiple accept=".pdf" onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} /></label>
+          <label className="inline"><span className="muted">Pasta inteira</span>
+            <input ref={dirRef} type="file" multiple onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} /></label>
           {cur && <button onClick={async () => { if (confirm(`Excluir o holerite de ${cur.period.slice(0, 7)}?`)) { await deletePayslip(cur.id); await load() } }}>Excluir</button>}
         </div>
-        <p className="muted">Os PDFs são lidos no navegador e nunca enviados; só valores e rótulos são guardados. Um holerite por mês: reimportar o mesmo mês substitui o anterior.</p>
-        {busy && <p className="muted">Processando…</p>}
-        {msgs.map((m) => <p key={m} className={/imported|replaced|skipped/.test(m) && !/check:/.test(m) ? 'muted' : 'warn'}>{m}</p>)}
+        <p className="muted">Selecione vários PDFs de uma vez, ou a pasta inteira (subpastas incluídas; o que não for holerite é pulado).
+          Os PDFs são lidos no navegador e nunca enviados; só valores e rótulos são guardados. Um holerite por mês: reimportar o mesmo mês substitui o anterior.</p>
+        {progress && <p className="muted">{progress}</p>}
+        {counts.length > 0 && <>
+          <p><strong>{results.length} arquivo(s):</strong> {counts.map(([o, n]) => `${n} ${o}`).join(' · ')}</p>
+          <details open={results.some((r) => r.outcome === 'erro' || r.detail.includes('conferir'))}>
+            <summary className="muted">Detalhe por arquivo</summary>
+            {results.map((r) => (
+              <p key={r.file} style={{ fontSize: 13, margin: '2px 0' }} className={r.outcome === 'erro' || r.detail.includes('conferir') ? 'warn' : 'muted'}>
+                {r.file}: {r.outcome}{r.detail ? ` · ${r.detail}` : ''}</p>
+            ))}
+          </details>
+        </>}
         {!list.length && <p>Nenhum holerite ainda — importe seus bulletins de paie (PDF).</p>}
       </div>
 
