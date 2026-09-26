@@ -45,6 +45,7 @@ export function parseCcfPdf(pages: Row[][], lines: string[]): ParseResult {
   const checkpoints: Checkpoint[] = []
   const warnings: string[] = []
   let totals: [number, number] | null = null
+  let opened: string | null = null // "ANCIEN SOLDE AU …": the day the previous statement closed
 
   for (const rows of pages) {
     for (const row of rows) {
@@ -61,7 +62,11 @@ export function parseCcfPdf(pages: Row[][], lines: string[]): ParseResult {
       if (solde) {
         const month = MONTHS[fold(solde[3])]
         const sign = /D[ÉE]BITEUR/.test(text) ? -1 : 1
-        if (month) checkpoints.push({ accountRef, date: `${solde[4]}-${month}-${solde[2].padStart(2, '0')}`, balance: sign * eur(solde[5]) })
+        if (month) {
+          const date = `${solde[4]}-${month}-${solde[2].padStart(2, '0')}`
+          checkpoints.push({ accountRef, date, balance: sign * eur(solde[5]) })
+          if (solde[1] === 'ANCIEN') opened = date
+        }
         continue
       }
       const total = /^TOTAL DES OPÉRATIONS DU RELEVÉ ([\d\s  ]+,\d{2}) ([\d\s  ]+,\d{2})$/.exec(text)
@@ -82,9 +87,23 @@ export function parseCcfPdf(pages: Row[][], lines: string[]): ParseResult {
     }
   }
 
+  if (opened) shiftIntoPeriod(transactions, opened)
+
   const debits = round2(-transactions.filter((t) => t.amount < 0).reduce((s, t) => s + t.amount, 0))
   const credits = round2(transactions.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0))
   if (totals && (Math.abs(totals[0] - debits) > 0.05 || Math.abs(totals[1] - credits) > 0.05))
     warnings.push(`Débitos/créditos lidos (${debits.toFixed(2)} / ${credits.toFixed(2)}) diferem do total do relevé (${totals[0].toFixed(2)} / ${totals[1].toFixed(2)}).`)
   return { source: 'ccf_pdf', transactions, checkpoints, warnings, accounts }
+}
+
+/**
+ * A withdrawal made on the day a statement closes ("RET DAB 07/06" with value date 10/06)
+ * is printed on the next statement, and the bank counts it there. Rows dated on or before
+ * the previous closing day are moved to their value date (or the day after the closing),
+ * so the rebuilt balance matches every statement.
+ */
+export function shiftIntoPeriod<T extends { bookingDate: string; valueDate?: string | null }>(txs: T[], opened: string): T[] {
+  const next = new Date(Date.parse(opened) + 86400000).toISOString().slice(0, 10)
+  for (const t of txs) if (t.bookingDate <= opened) t.bookingDate = t.valueDate && t.valueDate > opened ? t.valueDate : next
+  return txs
 }
