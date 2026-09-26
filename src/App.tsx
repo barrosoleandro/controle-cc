@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AuthGate } from './components/Auth'
-import { configured, supabase } from './lib/supabase'
+import { configError, configured, supabase } from './lib/supabase'
 import { loadAll, saveFx, saveSettings, seedDefaults, type AppData } from './lib/data'
 import { FxTable, fetchEurBrl } from './domain/fx'
 import { enrich } from './domain/analytics'
@@ -17,7 +17,7 @@ type Tab = (typeof TABS)[number]
 const IDLE_MS = 15 * 60 * 1000
 
 export default function App() {
-  if (!configured) return <main><div className="card"><h3>Setup needed</h3><p>Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (see README).</p></div></main>
+  if (!configured) return <main><div className="card"><h3>Setup needed</h3><p className="err">{configError}</p><p>Fix it in Vercel → Project → Settings → Environment Variables, then Deployments → ⋯ → Redeploy.</p></div></main>
   return <AuthGate><Shell /></AuthGate>
 }
 
