@@ -4,6 +4,7 @@ import { addCategory, markAiNote, reapplyRules, setCategoryForTransactions, setM
 import { CategorySelect } from '../components/CategorySelect'
 import { monthLabel, money } from '../lib/format'
 import { today, useFmt, useSubscriptions } from '../lib/hooks'
+import { balanceSeries } from '../domain/analytics'
 import { buildPeriod, monthBalances, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
 import type { CategoryKind } from '../domain/types'
 import { byName, isTithe } from '../domain/categorize'
@@ -89,6 +90,16 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
       .sort((a, b) => (ordem === 'valor' ? a.value - b.value : b.booking_date.localeCompare(a.booking_date)))
   }, [etx, q, month, cat, shown, de, ate, merchant, ordem])
   const total = rows.reduce((s, t) => s + t.value, 0)
+  // The real balance of each ticked account (own currency): at the end of the filtered month, or today.
+  const balances = useMemo(() => {
+    const until = month ? `${month}-31` : '9999-12-31'
+    return data.accounts.filter((a) => shown(a.id)).map((a) => {
+      const s = balanceSeries(a, data.transactions)
+      let bal = Number(a.opening_balance)
+      for (const p of s) { if (p.date > until) break; bal = p.balance }
+      return { a, bal }
+    })
+  }, [data.accounts, data.transactions, shown, month])
 
   /** A category picked on one line applies to the merchant's whole history and its rule; see setMerchantCategory. */
   async function changeCategory(t: { id: string; merchant: string }, categoryId: string) {
@@ -163,7 +174,13 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
       </div>
       {merchant && <p className="row alert" style={{ justifyContent: 'space-between' }}>
         <span>Só <strong>{merchant}</strong></span><button onClick={onClearMerchant}>Ver todos</button></p>}
-      <p className="muted">{rows.length} lançamentos · saldo {fmt(total)}{msg ? ` · ${msg}` : ''}</p>
+      <p className="muted">
+        {rows.length} lançamentos · soma dos lançamentos listados {fmt(total)}{msg ? ` · ${msg}` : ''}
+      </p>
+      <p className="muted" style={{ fontSize: 13 }}>
+        Saldo {month ? `no fim de ${month}` : 'atual'}:{' '}
+        {balances.map(({ a, bal }, i) => <span key={a.id}>{i > 0 && ' · '}{a.name} <strong className={bal < 0 ? 'neg' : ''}>{money(a.currency, 2)(bal)}</strong></span>)}
+      </p>
       <p className="muted" style={{ fontSize: 12 }}>
         Trocar a categoria na linha muda todo o histórico daquele estabelecimento. Para mudar só algumas linhas, marque-as e use
         “Aplicar só nestas linhas”. Em qualquer lista de categorias, “+ Nova categoria…” cria uma nova.
