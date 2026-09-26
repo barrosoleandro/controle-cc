@@ -4,6 +4,9 @@ import './index.css'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { registerSW } from 'virtual:pwa-register'
+import { applyTheme, loadTheme } from './lib/theme'
+
+applyTheme(loadTheme())
 
 // The installed app serves its cached shell first, so a deploy used to show up only after
 // two reloads. Check for a new build on start, when the app comes back to the front and
