@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { setTrust, trustUntil, trustedDevice } from '../lib/trust'
 
 type Step = 'loading' | 'login' | 'code' | 'enroll' | 'verify' | 'ok'
 type Metodo = 'senha' | 'email'
@@ -24,10 +25,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [lembrar, setLembrar] = useState(true)
 
   async function evaluate() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return setStep('login')
+    // Os 30 dias acabaram: pede o login completo de novo.
+    if (trustUntil() && !trustedDevice()) { await supabase.auth.signOut(); return }
     const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
     if (aal?.currentLevel === 'aal2') return setStep('ok')
     const { data: factors } = await supabase.auth.mfa.listFactors()
@@ -43,7 +47,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     evaluate()
-    const { data } = supabase.auth.onAuthStateChange((e) => { if (e === 'SIGNED_OUT') setStep('login') })
+    const { data } = supabase.auth.onAuthStateChange((e) => { if (e === 'SIGNED_OUT') { setTrust(false); setStep('login') } })
     return () => data.subscription.unsubscribe()
   }, [])
 
@@ -80,6 +84,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code: code.trim() })
     setBusy(false); setCode('')
     if (error) return setError('Código inválido.')
+    setTrust(lembrar)
     setStep('ok')
   }
 
@@ -97,9 +102,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           </div>
           {metodo === 'senha' ? (
             <form onSubmit={entrarComSenha} className="auth">
-              <input type="email" autoComplete="username" placeholder="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} required />
-              <input type="password" autoComplete="current-password" placeholder="Senha" value={password} onChange={(e) => setPassword(e.target.value)} required />
-              <button className="primary" disabled={busy}>Entrar</button>
+              <input type="email" name="email" id="email" autoComplete="username" placeholder="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} required />
+              <input type="password" name="password" id="password" autoComplete="current-password" placeholder="Senha" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <button type="submit" className="primary" disabled={busy}>Entrar</button>
             </form>
           ) : (
             <form onSubmit={pedirCodigo} className="auth">
@@ -127,6 +132,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               <p className="muted" style={{ wordBreak: 'break-all', fontSize: 12 }}>Chave manual: {secret}</p>
             </>}
             <input inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" placeholder="Código de 6 dígitos" value={code} onChange={(e) => setCode(e.target.value)} required />
+            <label className="inline"><input type="checkbox" checked={lembrar} onChange={(e) => setLembrar(e.target.checked)} />
+              Lembrar neste dispositivo por 30 dias</label>
+            <p className="muted" style={{ fontSize: 12 }}>Só em aparelho seu: por 30 dias o app abre direto, sem senha, código nem bloqueio por inatividade.</p>
             <button className="primary" disabled={busy}>Verificar</button>
             <button type="button" onClick={() => supabase.auth.signOut()}>Cancelar</button>
           </form>

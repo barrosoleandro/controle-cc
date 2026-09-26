@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { APP_NAME, AuthGate, ReauthLock } from './components/Auth'
+import { trustedDevice } from './lib/trust'
 import { configError, configured, supabase } from './lib/supabase'
 import { loadAll, saveFx, saveSettings, seedDefaults, type AppData } from './lib/data'
 import { FxTable, fetchEurBrl } from './domain/fx'
@@ -63,8 +64,9 @@ function Shell() {
   useEffect(() => { reload() }, [reload])
   useEffect(() => { try { sessionStorage.setItem('tab', tab) } catch { /* ignore */ } }, [tab])
 
-  // Inatividade: primeiro trava a tela, depois encerra a sessão.
+  // Inatividade: primeiro trava a tela, depois encerra a sessão (exceto em dispositivo lembrado).
   useEffect(() => {
+    if (trustedDevice()) return
     if (locked) {
       // Já travado: o relógio do logout corre sozinho e digitar no cadeado não o reinicia.
       const bye = window.setTimeout(() => supabase.auth.signOut(), SIGNOUT_MS - LOCK_MS)
