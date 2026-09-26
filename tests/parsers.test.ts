@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parseBcpCsv } from '../src/parsers/bcpCsv'
 import { parseBcpPdf } from '../src/parsers/bcpPdf'
 import { parseItauPdf } from '../src/parsers/itauPdf'
-import { withFingerprints } from '../src/domain/fingerprint'
+import { dedupeKey, markDuplicates, withFingerprints } from '../src/domain/fingerprint'
 import { parseEuroNumber } from '../src/parsers/util'
 
 // Synthetic fixtures that mirror the real layouts (no personal data).
@@ -80,11 +80,23 @@ describe('Itaú PDF', () => {
 })
 
 describe('fingerprints', () => {
+  const tx = (description: string) => ({ accountRef: 'X', bookingDate: '2026-01-01', description, amount: -5, currency: 'EUR' as const })
   it('are identical across CSV and PDF wording, distinct for same-day duplicates', () => {
-    const a = withFingerprints([{ accountRef: 'X', bookingDate: '2026-01-01', description: 'CB SHOP FACT', amount: -5, currency: 'EUR' as const },
-      { accountRef: 'X', bookingDate: '2026-01-01', description: 'CB SHOP FACT', amount: -5, currency: 'EUR' as const }], (r) => r)
-    const b = withFingerprints([{ accountRef: 'X', bookingDate: '2026-01-01', description: 'SHOP', amount: -5, currency: 'EUR' as const }], (r) => r)
+    const a = withFingerprints([tx('CB SHOP FACT 010126'), tx('CB SHOP FACT 010126')], (r) => r)
+    const b = withFingerprints([tx('SHOP')], (r) => r)
     expect(a[0].fingerprint).toBe(b[0].fingerprint)
     expect(a[0].fingerprint).not.toBe(a[1].fingerprint)
+  })
+  it('tell apart two vendors with the same date and amount', () => {
+    const [a, b] = withFingerprints([tx('CB CARREFOUR FACT 010126'), tx('CB PICARD FACT 010126')], (r) => r)
+    expect(a.fingerprint).not.toBe(b.fingerprint)
+  })
+})
+
+describe('duplicate check across files (date + vendor + amount)', () => {
+  it('counts per key: one stored copy absorbs one incoming copy', () => {
+    const k = dedupeKey('X', '2026-01-01', -5, 'CB SHOP FACT 010126')
+    expect(dedupeKey('X', '2026-01-01', -5, 'Shop Paris')).toBe(k)
+    expect(markDuplicates([k, k, dedupeKey('X', '2026-01-01', -5, 'PICARD')], [k])).toEqual([true, false, false])
   })
 })
