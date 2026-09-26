@@ -277,6 +277,17 @@ export function deriveOpening(account: Account, txs: Transaction[], cps: Checkpo
   return { opening_balance: Math.round((cp.balance - sum) * 100) / 100, opening_date: d }
 }
 
+/**
+ * Deletes bank balances saved from statements for one account: the given dates, or all of
+ * them. With `resetOpening`, the account's opening balance goes back to zero as well.
+ */
+export async function clearCheckpoints(accountId: string, dates: string[] | 'all', resetOpening = false) {
+  const q = supabase.from('balance_checkpoints').delete().eq('account_id', accountId)
+  if (dates === 'all') must(await q)
+  else for (let i = 0; i < dates.length; i += 200) must(await supabase.from('balance_checkpoints').delete().eq('account_id', accountId).in('date', dates.slice(i, i + 200)))
+  if (resetOpening) must(await supabase.from('accounts').update({ opening_balance: 0, opening_date: null }).eq('id', accountId))
+}
+
 export async function updateAccount(id: string, patch: Partial<Account>) {
   must(await supabase.from('accounts').update(patch).eq('id', id))
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Ctx } from '../App'
-import { addCategory, addRule, changeRuleCategory, deleteRule, deriveOpening, mergeCategories, refreshCategories, saveFx, setBudget, updateAccount, updateBankMap, updateCategory, updateRule } from '../lib/data'
+import { addCategory, addRule, clearCheckpoints, changeRuleCategory, deleteRule, deriveOpening, mergeCategories, refreshCategories, saveFx, setBudget, updateAccount, updateBankMap, updateCategory, updateRule } from '../lib/data'
 import { fetchEurBrl } from '../domain/fx'
 import { balanceSeries, enrich } from '../domain/analytics'
 import { averageSpendByCategory } from '../domain/budget'
@@ -47,9 +47,28 @@ function Accounts({ ctx }: { ctx: Ctx }) {
         </div>
         <p>Saldo atual: <strong>{f(series.at(-1)?.balance ?? a.opening_balance)}</strong></p>
         <p className={ok === cps.length ? 'pos' : 'warn'}>Conciliação: {ok}/{cps.length} saldos do banco conferem.</p>
-        <details><summary>Detalhes</summary><table><thead><tr><th>Data</th><th className="num">Banco</th><th className="num">Recalculado</th></tr></thead><tbody>
-          {cps.slice(0, 40).map((c) => { const r = at(c.date); return <tr key={c.date}><td>{c.date}</td><td className="num">{f(c.balance)}</td><td className={`num ${Math.abs(r - c.balance) < 0.01 ? '' : 'neg'}`}>{f(r)}</td></tr> })}
-        </tbody></table></details>
+        {cps.length > 0 && (
+          <div className="row">
+            {ok < cps.length && <button onClick={async () => {
+              const bad = cps.filter((c) => Math.abs(at(c.date) - c.balance) >= 0.01).map((c) => c.date)
+              if (confirm(`Apagar ${bad.length} saldo(s) do banco que não conferem em ${a.name}?`)) { await clearCheckpoints(a.id, bad); ctx.reload() }
+            }}>Apagar os que não conferem ({cps.length - ok})</button>}
+            <button onClick={async () => {
+              if (confirm(`Limpar todos os ${cps.length} saldos do banco de ${a.name} e zerar o saldo inicial? Os lançamentos não são apagados; importe os extratos de novo ou use "Derivar dos extratos" para recalcular.`)) {
+                await clearCheckpoints(a.id, 'all', true); ctx.reload()
+              }
+            }}>Limpar todos os saldos</button>
+          </div>
+        )}
+        <details><summary>Detalhes ({cps.length} saldos do banco)</summary>
+          <div className="scroll" style={{ maxHeight: 360, overflowY: 'auto' }}><table><thead><tr><th>Data</th><th className="num">Banco</th><th className="num">Recalculado</th><th /></tr></thead><tbody>
+            {cps.map((c) => {
+              const r = at(c.date)
+              return <tr key={c.date}><td>{c.date}</td><td className="num">{f(c.balance)}</td><td className={`num ${Math.abs(r - c.balance) < 0.01 ? '' : 'neg'}`}>{f(r)}</td>
+                <td><button className="link" title="Apagar este saldo" aria-label={`Apagar o saldo de ${c.date}`}
+                  onClick={async () => { await clearCheckpoints(a.id, [c.date]); ctx.reload() }}>✕</button></td></tr>
+            })}
+          </tbody></table></div></details>
       </div>)
   })}</div>
 }
