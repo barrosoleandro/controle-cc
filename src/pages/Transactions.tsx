@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useCallback, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
 import { addCategory, markAiNote, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote } from '../lib/data'
 import { CategorySelect } from '../components/CategorySelect'
@@ -18,17 +18,27 @@ const MONTHS: Record<string, number> = { '1 mês': 1, '6 meses': 6, '12 meses': 
 export function Transactions({ ctx }: { ctx: Ctx }) {
   const [view, setView] = useState<(typeof VIEWS)[number]>('6 meses')
   const [merchant, setMerchant] = useState('') // set from a month view: the list shows only this merchant
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set())
+  const shown = useCallback((id: string) => !hidden.has(id), [hidden])
   return <>
     <div className="row">{VIEWS.map((v) => (
       <button key={v} className={v === view ? 'active' : ''} onClick={() => { setView(v); setMerchant('') }}>{v}</button>
     ))}</div>
+    <div className="row">
+      <span className="muted">Contas:</span>
+      {ctx.data.accounts.map((a) => (
+        <label key={a.id} className="inline"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
+          const next = new Set(prev); if (next.has(a.id)) next.delete(a.id); else next.add(a.id); return next
+        })} />{a.name}</label>
+      ))}
+    </div>
     {view === 'Lista'
-      ? <Lista ctx={ctx} merchant={merchant} onClearMerchant={() => setMerchant('')} />
-      : <Periodo ctx={ctx} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
+      ? <Lista ctx={ctx} shown={shown} merchant={merchant} onClearMerchant={() => setMerchant('')} />
+      : <Periodo ctx={ctx} shown={shown} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
   </>
 }
 
-function Lista({ ctx, merchant, onClearMerchant }: { ctx: Ctx; merchant: string; onClearMerchant: () => void }) {
+function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (accountId: string) => boolean; merchant: string; onClearMerchant: () => void }) {
   const fmt = useFmt(ctx)
   const { data, etx } = ctx
   const [q, setQ] = useState('')
@@ -37,7 +47,6 @@ function Lista({ ctx, merchant, onClearMerchant }: { ctx: Ctx; merchant: string;
   const [de, setDe] = useState('')
   const [ate, setAte] = useState('')
   const [cat, setCat] = useState('')
-  const [acc, setAcc] = useState('')
   const [limit, setLimit] = useState(200)
   const [ordem, setOrdem] = useState<'data' | 'valor'>('data')
   const [msg, setMsg] = useState<string | null>(null)
@@ -57,12 +66,12 @@ function Lista({ ctx, merchant, onClearMerchant }: { ctx: Ctx; merchant: string;
       const d = purchaseDate(t.description, t.booking_date)
       return (!de || d >= de) && (!ate || d <= ate)
     }
-    return etx.filter((t) => (!merchant || t.merchant === merchant) && (!month || t.month === month) && (!acc || t.account_id === acc) && inRange(t)
+    return etx.filter((t) => (!merchant || t.merchant === merchant) && (!month || t.month === month) && shown(t.account_id) && inRange(t)
       && (!cat || (cat === '__none' ? !t.category_id : t.category_id === cat))
       && (!qq || t.description.toUpperCase().includes(qq) || (t.notes ?? '').toUpperCase().includes(qq)))
       // "valor": biggest spending first (most negative), then the rest.
       .sort((a, b) => (ordem === 'valor' ? a.value - b.value : b.booking_date.localeCompare(a.booking_date)))
-  }, [etx, q, month, cat, acc, de, ate, merchant, ordem])
+  }, [etx, q, month, cat, shown, de, ate, merchant, ordem])
   const total = rows.reduce((s, t) => s + t.value, 0)
 
   /** A category picked on one line applies to the merchant's whole history and its rule; see setMerchantCategory. */
@@ -132,7 +141,6 @@ function Lista({ ctx, merchant, onClearMerchant }: { ctx: Ctx; merchant: string;
           <select value={ordem} onChange={(e) => setOrdem(e.target.value as 'data' | 'valor')}>
             <option value="data">data</option><option value="valor">valor (maiores gastos primeiro)</option>
           </select></label>
-        <select value={acc} onChange={(e) => setAcc(e.target.value)}><option value="">Todas as contas</option>{data.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
         <select value={cat} onChange={(e) => setCat(e.target.value)}><option value="">Todas as categorias</option><option value="__none">(sem categoria)</option>{sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         <button onClick={exportCsv}>Exportar CSV</button>
         <button onClick={async () => { const n = await reapplyRules(data); setMsg(`${n} lançamentos recategorizados.`); ctx.reload() }}>Reaplicar regras</button>
@@ -200,11 +208,10 @@ function Lista({ ctx, merchant, onClearMerchant }: { ctx: Ctx; merchant: string;
  * and recurring charges that deserve a look (price up, new, stopped, annual renewal
  * coming) are marked for review.
  */
-function Periodo({ ctx, n, onOpen }: { ctx: Ctx; n: number; onOpen: (merchant: string) => void }) {
+function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: string) => boolean; n: number; onOpen: (merchant: string) => void }) {
   const fmt = useFmt(ctx)
   const { data, etx } = ctx
   const subs = useSubscriptions(ctx)
-  const [acc, setAcc] = useState('')
   const [end, setEnd] = useState('') // último mês da janela; vazio = o mais recente com dados
   const [onlyAlerts, setOnlyAlerts] = useState(false)
   const [open, setOpen] = useState<Set<string>>(() => new Set())
@@ -214,12 +221,12 @@ function Periodo({ ctx, n, onOpen }: { ctx: Ctx; n: number; onOpen: (merchant: s
   const lastMonth = end || allMonths.at(-1) || ''
   const months = useMemo(() => monthWindow(lastMonth, n), [lastMonth, n])
   const subOf = useMemo(() => new Map(subs.map((s) => [s.merchant, { reason: subscriptionReview(s, today()), active: s.status !== 'possibly_cancelled' }])), [subs])
-  const all = useMemo(() => buildPeriod(etx.filter((t) => !acc || t.account_id === acc), months), [etx, acc, months])
+  const all = useMemo(() => buildPeriod(etx.filter((t) => shown(t.account_id)), months), [etx, shown, months])
   // Cards are left out of the total: their running sum is not a balance, and the bill is paid from an account shown here.
   const saldos = useMemo(() => monthBalances(
-    data.accounts.filter((a) => (acc ? a.id === acc : a.type !== 'card')), data.transactions, months,
+    data.accounts.filter((a) => shown(a.id) && a.type !== 'card'), data.transactions, months,
     (amount, from, date) => ctx.fx.convert(amount, from, ctx.currency, date),
-  ), [data.accounts, data.transactions, months, acc, ctx.fx, ctx.currency])
+  ), [data.accounts, data.transactions, months, shown, ctx.fx, ctx.currency])
 
   const needsLook = (m: PeriodRow) => m.flagged || Boolean(subOf.get(m.key)?.reason)
   const col = sortBy !== null && sortBy < months.length ? sortBy : null
@@ -269,10 +276,6 @@ function Periodo({ ctx, n, onOpen }: { ctx: Ctx; n: number; onOpen: (merchant: s
             {[...allMonths].reverse().map((m) => <option key={m}>{m}</option>)}
           </select>
         </label>
-        <select value={acc} onChange={(e) => setAcc(e.target.value)}>
-          <option value="">Todas as contas</option>
-          {data.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
         <label className="inline"><input type="checkbox" checked={onlyAlerts} onChange={(e) => setOnlyAlerts(e.target.checked)} /> só o que precisa de atenção</label>
         <button onClick={() => setOpen(open.size ? new Set() : new Set(groups.map((g) => g.key)))}>{open.size ? 'Recolher tudo' : 'Expandir tudo'}</button>
       </div>
@@ -300,7 +303,7 @@ function Periodo({ ctx, n, onOpen }: { ctx: Ctx; n: number; onOpen: (merchant: s
           <th className="num sortable" title="Ordenar pelo total" onClick={() => setSortBy(null)}>Total{col === null ? ' ▼' : ''}</th>
         </tr>
         <tr className="muted">
-          <th style={sticky}>Saldo inicial{acc ? '' : ' (contas)'}</th><th />
+          <th style={sticky}>Saldo inicial</th><th />
           {saldos.opening.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : ''}`}>{fmt(v)}</th>)}
           <th /><th />
         </tr></thead>
@@ -357,7 +360,7 @@ function Periodo({ ctx, n, onOpen }: { ctx: Ctx; n: number; onOpen: (merchant: s
           <th /><th className="num neg">{fmt(saldos.outflow.reduce((s, v) => s + v, 0))}</th>
         </tr>
         <tr>
-          <th style={sticky}>Saldo final{acc ? '' : ' (contas)'}</th><th />
+          <th style={sticky}>Saldo final</th><th />
           {saldos.closing.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : ''}`}>{fmt(v)}</th>)}
           <th /><th />
         </tr></tfoot>
