@@ -54,3 +54,55 @@ export function billPayment<T extends PayTx>(bill: StoredCardStatement, cardTxs:
     .filter((c) => c.gap <= 10)
     .sort((a, b) => a.gap - b.gap)[0]?.t
 }
+
+/** What the instalment estimate needs from a card transaction. */
+export interface InstalmentTx { description: string; amount: number; statement_due?: string | null; category_id?: string | null }
+
+export interface FutureParcel { purchase: string; k: number; n: number; amount: number; category_id: string | null }
+export interface FutureBill { due: string; total: number; parcels: FutureParcel[] }
+
+const PARCEL = /^(.*?)\s*\((\d+)\/(\d+)\)$/
+
+/** yyyy-mm-dd plus n months, clamped to the month's last day. */
+export function addMonthsIso(iso: string, n: number): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  const first = new Date(Date.UTC(y, m - 1 + n, 1))
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate()
+  return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), Math.min(d, last))).toISOString().slice(0, 10)
+}
+
+/**
+ * Estimate of the next `count` bills from the instalment purchases already billed: for each
+ * purchase ("LOJA (3/10)"), its latest parcela seen and that bill's due date; parcelas
+ * k+1…n are expected one per month after it, with the same amount. Bills are dated from
+ * the latest imported bill on. Purchases not yet billed are unknown and not counted.
+ */
+export function futureInstalments(txs: InstalmentTx[], count = 6): FutureBill[] {
+  const latest = new Map<string, { k: number; n: number; due: string; amount: number; purchase: string; category_id: string | null }>()
+  let lastDue = ''
+  for (const t of txs) {
+    if (!t.statement_due) continue
+    if (t.statement_due > lastDue) lastDue = t.statement_due
+    const p = PARCEL.exec(t.description.trim())
+    if (!p || Number(t.amount) >= 0) continue
+    const k = Number(p[2]), n = Number(p[3])
+    if (k >= n) continue
+    const key = `${p[1].toUpperCase()}|${n}|${Number(t.amount).toFixed(2)}`
+    const cur = latest.get(key)
+    if (!cur || k > cur.k) latest.set(key, { k, n, due: t.statement_due, amount: -Number(t.amount), purchase: p[1], category_id: t.category_id ?? null })
+  }
+  if (!lastDue) return []
+  const bills = Array.from({ length: count }, (_, i) => ({ due: addMonthsIso(lastDue, i + 1), total: 0, parcels: [] as FutureParcel[] }))
+  const monthOf = (iso: string) => iso.slice(0, 7)
+  for (const g of latest.values()) {
+    for (let j = g.k + 1; j <= g.n; j++) {
+      const due = monthOf(addMonthsIso(g.due, j - g.k))
+      const b = bills.find((x) => monthOf(x.due) === due)
+      if (!b) continue
+      b.parcels.push({ purchase: g.purchase, k: j, n: g.n, amount: g.amount, category_id: g.category_id })
+      b.total += g.amount
+    }
+  }
+  for (const b of bills) { b.total = Math.round(b.total * 100) / 100; b.parcels.sort((x, y) => y.amount - x.amount) }
+  return bills
+}
