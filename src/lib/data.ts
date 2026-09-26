@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 import type { Account, AccountHint, BankMapEntry, Category, Currency, ParseResult, ParsedTransaction, Rule, Transaction } from '../domain/types'
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/defaults'
 import { categorize, merchantKey, ruleMatches, TRANSFER } from '../domain/categorize'
-import { matchCardPayments, type StoredCardStatement } from '../domain/cards'
+import { matchBillDebits, matchCardPayments, type StoredCardStatement } from '../domain/cards'
 import { dedupeKey, markDuplicates, sameVendor, withFingerprints } from '../domain/fingerprint'
 import { withAiNote } from '../domain/claudeExchange'
 import type { ContractItem } from '../domain/payroll'
@@ -351,8 +351,11 @@ export async function ensureAccounts(plans: ImportPlan[], data: AppData): Promis
 export async function linkCardPayments(data: AppData): Promise<number> {
   const transfer = data.categories.find((c) => c.name === TRANSFER)
   if (!transfer) return 0
-  const ids = matchCardPayments(data.accounts, data.transactions)
-    .map((m) => data.transactions.find((t) => t.id === m.bankTx.id)!)
+  const viaPayment = matchCardPayments(data.accounts, data.transactions).map((m) => m.bankTx.id)
+  // Bills whose payment only shows on a bill that was not imported: match the debit to the bill total.
+  const viaBill = matchBillDebits(data.accounts, data.cardStatements, data.transactions, new Set(viaPayment)).map((m) => m.bankTx.id)
+  const ids = [...viaPayment, ...viaBill]
+    .map((id) => data.transactions.find((t) => t.id === id)!)
     .filter((t) => t.category_id !== transfer.id)
     .map((t) => t.id)
   if (ids.length) await setCategoryForTransactions(ids, transfer.id)
