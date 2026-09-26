@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import type { Ctx } from '../App'
 import type { Choice } from '../pages/Import'
-import { categorize, merchantKey } from '../domain/categorize'
+import { byName, categorize, merchantKey } from '../domain/categorize'
 import { addCategory, type ImportPlan } from '../lib/data'
 import { loadMerchantProfiles, type MerchantProfile } from '../lib/ai'
 import type { CategoryKind, Currency } from '../domain/types'
@@ -42,7 +42,7 @@ export function ImportCategories({ ctx, plans, choices, setChoices, busy }: Prop
   const [tipo, setTipo] = useState<CategoryKind>('expense')
   const [working, setWorking] = useState(false)
 
-  const cats = useMemo(() => [...data.categories].sort((a, b) => a.name.localeCompare(b.name)), [data.categories])
+  const cats = useMemo(() => [...data.categories].sort(byName), [data.categories])
 
   const pendentes = useMemo(() => {
     const bankByRef = new Map(data.accounts.map((a) => [a.external_ref, a.bank]))

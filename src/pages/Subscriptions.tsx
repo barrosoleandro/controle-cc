@@ -5,6 +5,7 @@ import { addCategory, addRule, setCategoryForTransactions } from '../lib/data'
 import { money } from '../lib/format'
 import { today, useFmt, useSubscriptions } from '../lib/hooks'
 import type { CategoryKind } from '../domain/types'
+import { byName } from '../domain/categorize'
 
 const CADENCIA: Record<Subscription['cadence'], string> = {
   weekly: 'semanal', monthly: 'mensal', quarterly: 'trimestral', yearly: 'anual',
@@ -71,7 +72,7 @@ function Detalhe({ ctx, sub }: { ctx: Ctx; sub: Subscription }) {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [ok, setOk] = useState(false)
-  const cats = [...data.categories].sort((a, b) => a.name.localeCompare(b.name))
+  const cats = [...data.categories].sort(byName)
   const podeLembrar = sub.merchant.length >= 2 && sub.merchant.length <= 100
 
   /** Cria a categoria e já a seleciona; a regra de import só é escrita no Aplicar. */

@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import type { Ctx } from '../App'
-import { addCategory, addRule, deleteRule, deriveOpening, saveFx, setBudget, updateAccount, updateBankMap, updateCategory, updateRule } from '../lib/data'
+import { addCategory, addRule, deleteRule, deriveOpening, mergeCategories, saveFx, setBudget, updateAccount, updateBankMap, updateCategory, updateRule } from '../lib/data'
 import { fetchEurBrl } from '../domain/fx'
 import { balanceSeries } from '../domain/analytics'
 import { money } from '../lib/format'
 import { MAPPING_OPEN_QUESTIONS } from '../domain/defaults'
 import type { CategoryKind } from '../domain/types'
+import { byName } from '../domain/categorize'
+import { CategorySelect } from '../components/CategorySelect'
+import { planMerges } from '../domain/simplify'
 
 const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações'] as const
 
@@ -51,7 +54,7 @@ function Accounts({ ctx }: { ctx: Ctx }) {
 function Budgets({ ctx }: { ctx: Ctx }) {
   const { data } = ctx
   const b = new Map(data.budgets.filter((x) => x.month === null).map((x) => [x.category_id, x.amount]))
-  const cats = data.categories.filter((c) => c.kind === 'expense')
+  const cats = data.categories.filter((c) => c.kind === 'expense').sort(byName)
   const total = cats.reduce((s, c) => s + (b.get(c.id) ?? 0), 0)
   return <div className="card"><h3>Orçamento mensal (EUR) — total {money('EUR')(total)}</h3>
     <table><tbody>{cats.map((c) => (
@@ -61,14 +64,106 @@ function Budgets({ ctx }: { ctx: Ctx }) {
 }
 
 function Categories({ ctx }: { ctx: Ctx }) {
+  return <div className="grid">
+    <Simplify ctx={ctx} />
+    <Merge ctx={ctx} />
+    <CategoryList ctx={ctx} />
+  </div>
+}
+
+/** One-click version of the suggested simplification, with a preview of what each merge moves. */
+function Simplify({ ctx }: { ctx: Ctx }) {
+  const { data } = ctx
+  const steps = planMerges(data.categories)
+  const [skip, setSkip] = useState<Set<string>>(() => new Set())
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const count = new Map<string, number>()
+  for (const t of data.transactions) if (t.category_id) count.set(t.category_id, (count.get(t.category_id) ?? 0) + 1)
+  const chosen = steps.filter((s) => !skip.has(s.target))
+
+  async function aplicar() {
+    if (!confirm(`Aplicar ${chosen.length} fusões? As categorias de origem serão apagadas depois de mover lançamentos, regras e orçamentos.`)) return
+    setBusy(true); setMsg(null)
+    try {
+      let moved = 0
+      for (const s of chosen) {
+        let targetId = s.keep?.id
+        if (!targetId) targetId = (await addCategory(s.target, s.kind, '#888888', data.categories.length)).id
+        else if (s.keep!.name !== s.target || s.keep!.kind !== s.kind) await updateCategory(targetId, { name: s.target, kind: s.kind })
+        moved += await mergeCategories(s.absorb.map((c) => c.id), targetId, data.budgets)
+      }
+      setMsg(`${chosen.length} categorias ajustadas · ${moved} lançamentos movidos.`)
+      await ctx.reload()
+    } catch (e) { setMsg((e as Error).message) } finally { setBusy(false) }
+  }
+
+  if (!steps.length) return <div className="card" style={{ gridColumn: '1/-1' }}><h3>Simplificar categorias</h3><p className="pos">Suas categorias já estão simplificadas.</p>{msg && <p className="muted">{msg}</p>}</div>
+  return <div className="card" style={{ gridColumn: '1/-1' }}><h3>Simplificar categorias</h3>
+    <p className="muted">Proposta: menos categorias, mais largas. O nome do estabelecimento continua aparecendo dentro de cada categoria (Lançamentos → 6 meses → ▸).
+      Transfer, Cartão Itaú, Imóvel Brasil, Business Trips, Reembolso, Rendimentos e Outras receitas ficam como estão. Desmarque o que não quiser.</p>
+    <div className="scroll"><table>
+      <thead><tr><th /><th>Fica</th><th>Absorve</th><th className="num">Lançamentos</th></tr></thead>
+      <tbody>{steps.map((s) => (
+        <tr key={s.target}>
+          <td><input type="checkbox" checked={!skip.has(s.target)} disabled={busy} aria-label={`Aplicar ${s.target}`}
+            onChange={() => setSkip((prev) => { const n = new Set(prev); if (n.has(s.target)) n.delete(s.target); else n.add(s.target); return n })} /></td>
+          <td><strong>{s.target}</strong>{s.keep && s.keep.name !== s.target && <span className="muted"> (renomeia “{s.keep.name}”)</span>}
+            {s.note && <div className="warn" style={{ fontSize: 12 }}>{s.note}</div>}</td>
+          <td>{s.absorb.map((c) => c.name).join(', ') || <span className="muted">—</span>}</td>
+          <td className="num">{[s.keep, ...s.absorb].reduce((n, c) => n + (c ? count.get(c.id) ?? 0 : 0), 0)}</td>
+        </tr>
+      ))}</tbody>
+    </table></div>
+    <div className="row" style={{ marginTop: 10 }}>
+      <button className="primary" onClick={aplicar} disabled={busy || !chosen.length}>Aplicar {chosen.length} fusões</button>
+      {msg && <span className="muted">{msg}</span>}
+    </div>
+  </div>
+}
+
+/** Merge any category into another by hand. */
+function Merge({ ctx }: { ctx: Ctx }) {
+  const { data } = ctx
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const nameOf = (id: string) => data.categories.find((c) => c.id === id)?.name ?? ''
+  const n = data.transactions.filter((t) => t.category_id === from).length
+
+  async function mesclar() {
+    if (!confirm(`Mover ${n} lançamentos, as regras e o orçamento de “${nameOf(from)}” para “${nameOf(to)}” e apagar “${nameOf(from)}”?`)) return
+    setBusy(true); setMsg(null)
+    try {
+      const moved = await mergeCategories([from], to, data.budgets)
+      setMsg(`“${nameOf(from)}” mesclada em “${nameOf(to)}” · ${moved} lançamentos movidos.`)
+      setFrom('')
+      await ctx.reload()
+    } catch (e) { setMsg((e as Error).message) } finally { setBusy(false) }
+  }
+
+  return <div className="card" style={{ gridColumn: '1/-1' }}><h3>Mesclar categorias</h3>
+    <p className="muted">Move lançamentos, regras, mapa do banco e orçamento da primeira para a segunda e apaga a primeira. As escolhas feitas à mão continuam travadas.</p>
+    <div className="row">
+      <CategorySelect ctx={ctx} value={from} onChange={setFrom} empty="Mesclar esta…" label="Categoria de origem" disabled={busy} />
+      <span>→</span>
+      <CategorySelect ctx={ctx} value={to} onChange={setTo} empty="…nesta" label="Categoria de destino" disabled={busy} />
+      <button className="primary" onClick={mesclar} disabled={busy || !from || !to || from === to}>Mesclar{from ? ` (${n} lançamentos)` : ''}</button>
+    </div>
+    {msg && <p className="muted">{msg}</p>}
+  </div>
+}
+
+function CategoryList({ ctx }: { ctx: Ctx }) {
   const { data } = ctx
   const [name, setName] = useState('')
   const [kind, setKind] = useState<CategoryKind>('expense')
-  return <div className="card"><h3>Categorias</h3>
+  return <div className="card" style={{ gridColumn: '1/-1' }}><h3>Categorias</h3>
     <div className="row"><input placeholder="Nova categoria" value={name} onChange={(e) => setName(e.target.value)} />
       <select value={kind} onChange={(e) => setKind(e.target.value as CategoryKind)}><option value="expense">despesa</option><option value="income">receita</option><option value="transfer">transferência</option></select>
       <button disabled={!name.trim()} onClick={async () => { await addCategory(name.trim(), kind, '#888888', data.categories.length); setName(''); ctx.reload() }}>Adicionar</button></div>
-    <table><tbody>{data.categories.map((c) => (
+    <table><tbody>{[...data.categories].sort(byName).map((c) => (
       <tr key={c.id}><td><input defaultValue={c.name} onBlur={(e) => e.target.value.trim() && e.target.value !== c.name && updateCategory(c.id, { name: e.target.value.trim() }).then(ctx.reload)} /></td>
         <td><select value={c.kind} onChange={(e) => updateCategory(c.id, { kind: e.target.value as CategoryKind }).then(ctx.reload)}><option value="expense">despesa</option><option value="income">receita</option><option value="transfer">transferência</option></select></td></tr>
     ))}</tbody></table></div>
@@ -78,18 +173,18 @@ function Rules({ ctx }: { ctx: Ctx }) {
   const { data } = ctx
   const [pattern, setPattern] = useState('')
   const [cat, setCat] = useState('')
-  const cats = [...data.categories].sort((a, b) => a.name.localeCompare(b.name))
   return <div className="grid">
     <div className="card" style={{ gridColumn: '1/-1' }}><h3>Regras por estabelecimento</h3>
       <p className="muted">Conferidas de cima para baixo (menor número de prioridade primeiro); a primeira que casar vence. O texto casa no início de uma palavra, ignorando acento e caixa. As regras rodam antes do mapa de categorias do banco.</p>
       <div className="row"><input placeholder="Texto da descrição, ex.: TEKEL" value={pattern} onChange={(e) => setPattern(e.target.value)} />
-        <select value={cat} onChange={(e) => setCat(e.target.value)}><option value="">Categoria…</option>{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        <CategorySelect ctx={ctx} value={cat} onChange={setCat} empty="Categoria…" label="Categoria da nova regra" />
         <button disabled={pattern.trim().length < 2 || !cat} onClick={async () => { await addRule(pattern.trim(), cat, null, Math.min(1000, ...data.rules.map((r) => r.priority)) - 1); setPattern(''); ctx.reload() }}>Adicionar (prioridade máxima)</button></div>
       <div className="scroll"><table><thead><tr><th className="num">Prio</th><th>Texto</th><th>Sinal</th><th>Categoria</th><th /></tr></thead><tbody>
         {data.rules.map((r) => (
           <tr key={r.id}><td className="num"><input type="number" style={{ width: 70 }} defaultValue={r.priority} onBlur={(e) => Number(e.target.value) !== r.priority && updateRule(r.id, { priority: Number(e.target.value) }).then(ctx.reload)} /></td>
             <td>{r.pattern}</td><td>{r.sign === 'debit' ? 'saída' : r.sign === 'credit' ? 'entrada' : 'qualquer'}</td>
-            <td><select value={r.category_id} onChange={(e) => updateRule(r.id, { category_id: e.target.value }).then(ctx.reload)}>{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></td>
+            <td><CategorySelect ctx={ctx} value={r.category_id} label={`Categoria da regra ${r.pattern}`}
+              onChange={(id) => updateRule(r.id, { category_id: id }).then(ctx.reload)} /></td>
             <td><button onClick={() => deleteRule(r.id).then(ctx.reload)} aria-label="Excluir regra">✕</button></td></tr>
         ))}</tbody></table></div>
       <p className="muted">Depois de mexer nas regras, use Lançamentos → Reaplicar regras (as escolhas manuais são preservadas).</p>
@@ -100,7 +195,6 @@ function Rules({ ctx }: { ctx: Ctx }) {
 
 function BankMapping({ ctx }: { ctx: Ctx }) {
   const { data } = ctx
-  const cats = [...data.categories].sort((a, b) => a.name.localeCompare(b.name))
   const seen = new Set(data.transactions.map((t) => `${t.bank_category}|${t.bank_subcategory}`))
   return <div className="card"><h3>Categoria do banco → sua categoria</h3>
     <p className="muted">Usado quando nenhuma regra de estabelecimento casa. “*” = qualquer subcategoria. Em negrito = presente nos seus dados.</p>
@@ -108,7 +202,8 @@ function BankMapping({ ctx }: { ctx: Ctx }) {
       {data.bankMap.map((m) => (
         <tr key={m.id} style={{ fontWeight: seen.has(`${m.bank_category}|${m.bank_subcategory}`) ? 600 : 400 }}>
           <td>{m.bank_category}</td><td>{m.bank_subcategory}</td>
-          <td><select value={m.category_id} onChange={(e) => updateBankMap(m.id, e.target.value).then(ctx.reload)}>{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></td></tr>
+          <td><CategorySelect ctx={ctx} value={m.category_id} label={`Categoria para ${m.bank_category}`}
+            onChange={(id) => updateBankMap(m.id, id).then(ctx.reload)} /></td></tr>
       ))}</tbody></table></div></div>
 }
 

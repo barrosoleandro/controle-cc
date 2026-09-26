@@ -13,6 +13,8 @@ export interface CategorizableTx {
  */
 export const CARD_PAYMENT = 'PAGAMENTO FATURA'
 export const TRANSFER = 'Transfer'
+/** Alphabetical order for category lists, ignoring case and accents ("Educação" next to "Educacao"). */
+export const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })
 
 const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
 

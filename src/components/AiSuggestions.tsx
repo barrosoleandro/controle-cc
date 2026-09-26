@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Ctx } from '../App'
 import { saveMerchantProfiles, vendorsToEnrich, type VendorSuggestion } from '../lib/ai'
 import { buildExchangeRequest, parseExchangeAnswer } from '../domain/claudeExchange'
+import { byName } from '../domain/categorize'
 import { addCategory, addRule, markAiNote, setCategoryForTransactions } from '../lib/data'
 import type { CategoryKind } from '../domain/types'
 import { money } from '../lib/format'
@@ -32,7 +33,7 @@ export function AiSuggestions({ ctx }: { ctx: Ctx }) {
 
   const pending = useMemo(() => vendorsToEnrich(data), [data])
   const catByName = useMemo(() => new Map(data.categories.map((c) => [c.name, c.id])), [data.categories])
-  const sortedCats = useMemo(() => [...data.categories].sort((a, b) => a.name.localeCompare(b.name)), [data.categories])
+  const sortedCats = useMemo(() => [...data.categories].sort(byName), [data.categories])
 
   function exportForClaude() {
     setError(null); setMsg(null)

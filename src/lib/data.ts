@@ -299,6 +299,28 @@ export async function addCategory(name: string, kind: Category['kind'], color: s
   return must(await supabase.from('categories').insert({ name, kind, color, sort }).select().single()) as Category
 }
 export async function updateCategory(id: string, patch: Partial<Category>) { must(await supabase.from('categories').update(patch).eq('id', id)) }
+
+/**
+ * Folds `fromIds` into `toId`: transactions (keeping hand-picked locks), rules, bank map,
+ * AI memory and budgets (added up) move first, and only then are the old categories
+ * deleted. Deleting first would drop their rules and leave their rows without a category.
+ * Returns how many transactions moved.
+ */
+export async function mergeCategories(fromIds: string[], toId: string, budgets: Budget[]): Promise<number> {
+  const from = fromIds.filter((id) => id !== toId)
+  if (!from.length) return 0
+  const moved = must(await supabase.from('transactions').update({ category_id: toId }).in('category_id', from).select('id')) as { id: string }[]
+  must(await supabase.from('category_rules').update({ category_id: toId }).in('category_id', from))
+  must(await supabase.from('bank_category_map').update({ category_id: toId }).in('category_id', from))
+  // AI memory is optional (migration 003); a missing table must not stop the merge.
+  await supabase.from('merchant_profiles').update({ suggested_category_id: toId }).in('suggested_category_id', from)
+  const sums = new Map<string | null, number>()
+  for (const b of budgets) if (b.category_id === toId || from.includes(b.category_id)) sums.set(b.month, (sums.get(b.month) ?? 0) + b.amount)
+  for (const [month, amount] of sums)
+    must(await supabase.from('budgets').upsert({ category_id: toId, month, amount }, { onConflict: 'user_id,category_id,month' }))
+  must(await supabase.from('categories').delete().in('id', from))
+  return moved.length
+}
 export async function setBudget(category_id: string, amount: number) {
   must(await supabase.from('budgets').upsert({ category_id, month: null, amount }, { onConflict: 'user_id,category_id,month' }))
 }
