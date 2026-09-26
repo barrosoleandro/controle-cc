@@ -261,6 +261,20 @@ export async function setCategoryForTransactions(ids: string[], category_id: str
 export async function setTransactionNote(id: string, notes: string) {
   must(await supabase.from('transactions').update({ notes }).eq('id', id))
 }
+/**
+ * A category picked for a merchant applies to its whole history, even rows chosen earlier by
+ * hand or by the AI, and becomes (or updates) the merchant's rule. Returns the rows changed.
+ */
+export async function setMerchantCategory(data: AppData, merchant: string, categoryId: string): Promise<number> {
+  const same = data.transactions.filter((x) => x.merchant === merchant)
+  await setCategoryForTransactions(same.map((x) => x.id), categoryId)
+  await markAiNote(same, false)
+  const rule = data.rules.find((r) => r.pattern.toUpperCase() === merchant.toUpperCase())
+  if (rule?.id) await updateRule(rule.id, { category_id: categoryId })
+  else await addRule(merchant, categoryId, null, Math.min(1000, ...data.rules.map((r) => r.priority)) - 1) // regras suas vencem as padrão
+  return same.length
+}
+
 /** Adds (on) or removes the "defined by AI" marker in the notes of these transactions. */
 export async function markAiNote(txs: Pick<Transaction, 'id' | 'notes'>[], on: boolean) {
   const byNotes = new Map<string, string[]>()
