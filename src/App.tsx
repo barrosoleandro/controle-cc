@@ -6,6 +6,7 @@ import { loadAll, saveFx, saveSettings, seedDefaults, type AppData } from './lib
 import { FxTable, fetchEurBrl } from './domain/fx'
 import { enrich } from './domain/analytics'
 import type { Currency } from './domain/types'
+import { Icon, type IconName } from './components/Icons'
 import { Dashboard } from './pages/Dashboard'
 import { Transactions } from './pages/Transactions'
 import { ImportPage } from './pages/Import'
@@ -17,6 +18,12 @@ import { Investments } from './pages/Investments'
 import { Cards } from './pages/Cards'
 
 const TABS = ['Painel', 'Lançamentos', 'Cartões', 'Recorrentes', 'Simulação', 'Investimentos', 'Holerites', 'Importar', 'Ajustes'] as const
+const ICON: Record<(typeof TABS)[number], IconName> = {
+  Painel: 'painel', Lançamentos: 'lancamentos', Cartões: 'cartoes', Recorrentes: 'recorrentes', Simulação: 'simulacao',
+  Investimentos: 'investimentos', Holerites: 'holerites', Importar: 'importar', Ajustes: 'ajustes',
+}
+// On a phone the bottom bar holds these four; the rest open from "Mais".
+const PRIMARY: (typeof TABS)[number][] = ['Painel', 'Lançamentos', 'Cartões', 'Importar']
 type Tab = (typeof TABS)[number]
 // Aos 15 minutos a tela trava mas a sessão fica de pé: voltar custa só o código do
 // autenticador. Aos 60 minutos parados, sai de verdade.
@@ -40,6 +47,8 @@ function Shell() {
   const [data, setData] = useState<AppData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>(() => (sessionStorage.getItem('tab') as Tab) || 'Painel')
+  const [moreOpen, setMoreOpen] = useState(false)
+  const go = (t: Tab) => { setTab(t); setMoreOpen(false); window.scrollTo({ top: 0 }) }
   const [currency, setCurrency] = useState<Currency>('EUR')
   const [locked, setLocked] = useState(false)
 
@@ -90,19 +99,47 @@ function Shell() {
     <>
       {locked && <ReauthLock onUnlock={() => setLocked(false)} />}
       <header className="top">
-        <h1>{APP_NAME}</h1>
-        <select aria-label="Moeda de exibição" value={currency} onChange={async (e) => {
-          const c = e.target.value as Currency; setCurrency(c); await saveSettings({ display_currency: c })
-        }}>
-          <option value="EUR">€ EUR</option>
-          <option value="BRL">R$ BRL</option>
-        </select>
-        <button onClick={() => setLocked(true)}>Bloquear</button>
-        <button onClick={() => supabase.auth.signOut()}>Sair</button>
+        <div className="brand"><span className="brand-mark"><Icon name="logo" size={20} /></span><h1>{APP_NAME}</h1></div>
+        <span className="page-title">{tab}</span>
+        <div className="top-actions">
+          <div className="seg" role="group" aria-label="Moeda de exibição">
+            {(['EUR', 'BRL'] as Currency[]).map((c) => (
+              <button key={c} className={currency === c ? 'on' : ''} aria-pressed={currency === c}
+                onClick={async () => { setCurrency(c); await saveSettings({ display_currency: c }) }}>{c === 'EUR' ? '€' : 'R$'}</button>
+            ))}
+          </div>
+          <button className="icon-btn" onClick={() => setLocked(true)} title="Bloquear" aria-label="Bloquear"><Icon name="bloquear" size={20} /></button>
+          <button className="icon-btn" onClick={() => supabase.auth.signOut()} title="Sair" aria-label="Sair"><Icon name="sair" size={20} /></button>
+        </div>
       </header>
-      <nav className="tabs">
-        {TABS.map((t) => <button key={t} className={t === tab ? 'active' : ''} onClick={() => setTab(t)}>{t}</button>)}
+      {/* Desktop: side menu with every page. */}
+      <nav className="side" aria-label="Menu">
+        {TABS.map((t) => (
+          <button key={t} className={t === tab ? 'active' : ''} aria-current={t === tab ? 'page' : undefined} onClick={() => go(t)}>
+            <Icon name={ICON[t]} /><span>{t}</span>
+          </button>
+        ))}
       </nav>
+      {/* Phone: bottom bar with the main pages and "Mais" for the rest. */}
+      <nav className="bottom" aria-label="Menu">
+        {PRIMARY.map((t) => (
+          <button key={t} className={t === tab && !moreOpen ? 'active' : ''} aria-current={t === tab ? 'page' : undefined} onClick={() => go(t)}>
+            <Icon name={ICON[t]} /><span>{t}</span>
+          </button>
+        ))}
+        <button className={moreOpen || !PRIMARY.includes(tab) ? 'active' : ''} aria-expanded={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>
+          <Icon name={moreOpen ? 'fechar' : 'mais'} /><span>Mais</span>
+        </button>
+      </nav>
+      {moreOpen && (
+        <div className="sheet-backdrop" onClick={() => setMoreOpen(false)}>
+          <div className="sheet" role="dialog" aria-label="Mais páginas" onClick={(e) => e.stopPropagation()}>
+            {TABS.filter((t) => !PRIMARY.includes(t)).map((t) => (
+              <button key={t} className={t === tab ? 'active' : ''} onClick={() => go(t)}><Icon name={ICON[t]} size={26} /><span>{t}</span></button>
+            ))}
+          </div>
+        </div>
+      )}
       <main>
         {tab === 'Painel' && <Dashboard ctx={ctx} />}
         {tab === 'Lançamentos' && <Transactions ctx={ctx} />}
