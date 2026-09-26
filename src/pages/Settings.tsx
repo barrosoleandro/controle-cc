@@ -12,20 +12,45 @@ import type { CategoryKind } from '../domain/types'
 import { byName } from '../domain/categorize'
 import { CategorySelect } from '../components/CategorySelect'
 import { planMerges } from '../domain/simplify'
+import { ACCENTS, loadTheme, saveTheme, type Mode, type Theme } from '../lib/theme'
 
-const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações'] as const
+const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações', 'Aparência'] as const
 
 export function SettingsPage({ ctx }: { ctx: Ctx }) {
   const [sec, setSec] = useState<(typeof SECTIONS)[number]>('Contas')
   return <>
     <div className="row">{SECTIONS.map((s) => <button key={s} className={s === sec ? 'active' : ''} onClick={() => setSec(s)}>{s}</button>)}</div>
     {sec === 'Contas' && <Accounts ctx={ctx} />}
+    {sec === 'Aparência' && <Appearance />}
     {sec === 'Orçamentos' && <Budgets ctx={ctx} />}
     {sec === 'Categorias' && <Categories ctx={ctx} />}
     {sec === 'Regras' && <Rules ctx={ctx} />}
     {sec === 'Mapa do banco' && <BankMapping ctx={ctx} />}
     {sec === 'Cotações' && <Fx ctx={ctx} />}
   </>
+}
+
+/** Accent colour and light/dark mode for this device. */
+function Appearance() {
+  const [t, setT] = useState<Theme>(loadTheme)
+  const set = (next: Theme) => { setT(next); saveTheme(next) }
+  return <div className="card">
+    <h3>Cor do aplicativo</h3>
+    <div className="swatches">
+      {ACCENTS.map((a) => (
+        <button key={a.id} className={t.accent === a.id ? 'active' : ''} aria-pressed={t.accent === a.id} onClick={() => set({ ...t, accent: a.id })}>
+          <span className="dot" style={{ background: `light-dark(${a.light}, ${a.dark})` }} />{a.label}
+        </button>
+      ))}
+    </div>
+    <h3 style={{ marginTop: 18 }}>Modo</h3>
+    <div className="seg" role="group" aria-label="Modo claro ou escuro">
+      {([['auto', 'Automático'], ['light', 'Claro'], ['dark', 'Escuro']] as [Mode, string][]).map(([m, l]) => (
+        <button key={m} className={t.mode === m ? 'on' : ''} aria-pressed={t.mode === m} onClick={() => set({ ...t, mode: m })}>{l}</button>
+      ))}
+    </div>
+    <p className="muted" style={{ fontSize: 13 }}>Automático segue o aparelho. A escolha fica guardada neste aparelho.</p>
+  </div>
 }
 
 function Accounts({ ctx }: { ctx: Ctx }) {
