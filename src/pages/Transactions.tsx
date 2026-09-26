@@ -1,18 +1,20 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
 import { addRule, markAiNote, reapplyRules, setCategoryForTransactions, setTransactionCategory, setTransactionNote, updateRule } from '../lib/data'
 import { money } from '../lib/format'
-import { useFmt, useSubscriptions } from '../lib/hooks'
+import { today, useFmt, useSubscriptions } from '../lib/hooks'
+import { buildPeriod, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
 
-const VIEWS = ['Lista', '6 meses'] as const
+const VIEWS = ['1 mês', '6 meses', '12 meses', 'Lista'] as const
+const MONTHS: Record<string, number> = { '1 mês': 1, '6 meses': 6, '12 meses': 12 }
 
 export function Transactions({ ctx }: { ctx: Ctx }) {
-  const [view, setView] = useState<(typeof VIEWS)[number]>('Lista')
+  const [view, setView] = useState<(typeof VIEWS)[number]>('6 meses')
   return <>
     <div className="row">{VIEWS.map((v) => (
       <button key={v} className={v === view ? 'active' : ''} onClick={() => setView(v)}>{v}</button>
     ))}</div>
-    {view === 'Lista' ? <Lista ctx={ctx} /> : <SeisMeses ctx={ctx} />}
+    {view === 'Lista' ? <Lista ctx={ctx} /> : <Periodo ctx={ctx} n={MONTHS[view]} />}
   </>
 }
 
@@ -98,82 +100,56 @@ function Lista({ ctx }: { ctx: Ctx }) {
   )
 }
 
-interface PivotRow {
-  key: string
-  recurring: boolean
-  perMonth: (number | null)[] // null = nothing that month, so a gap stays visible
-  total: number
-  months: number
-}
-
 /**
- * Six months side by side, one line per merchant (or category), so a recurring
- * charge reads across the row and a missing month shows up as a hole.
+ * Spending per category over 1, 6 or 12 months, each category expandable into its
+ * merchants. Months well above the usual are red, rows with such a month get a flag,
+ * and recurring charges that deserve a look (price up, new, stopped, annual renewal
+ * coming) are marked for review.
  */
-function SeisMeses({ ctx }: { ctx: Ctx }) {
+function Periodo({ ctx, n }: { ctx: Ctx; n: number }) {
   const fmt = useFmt(ctx)
   const { data, etx } = ctx
   const subs = useSubscriptions(ctx)
-  const [by, setBy] = useState<'merchant' | 'category'>('merchant')
   const [acc, setAcc] = useState('')
   const [end, setEnd] = useState('') // último mês da janela; vazio = o mais recente com dados
-  const [onlyRecurring, setOnlyRecurring] = useState(false)
+  const [onlyAlerts, setOnlyAlerts] = useState(false)
+  const [open, setOpen] = useState<Set<string>>(() => new Set())
 
   const allMonths = useMemo(() => [...new Set(etx.map((t) => t.month))].sort(), [etx])
   const lastMonth = end || allMonths.at(-1) || ''
-  // A janela é sempre de seis meses de calendário, mesmo que algum não tenha lançamento.
-  const window6 = useMemo(() => {
-    if (!lastMonth) return []
-    const [y, m] = lastMonth.split('-').map(Number)
-    return Array.from({ length: 6 }, (_, i) => {
-      const d = new Date(Date.UTC(y, m - 1 - (5 - i), 1))
-      return d.toISOString().slice(0, 7)
-    })
-  }, [lastMonth])
+  const months = useMemo(() => monthWindow(lastMonth, n), [lastMonth, n])
+  const subOf = useMemo(() => new Map(subs.map((s) => [s.merchant, { reason: subscriptionReview(s, today()), active: s.status !== 'possibly_cancelled' }])), [subs])
+  const all = useMemo(() => buildPeriod(etx.filter((t) => !acc || t.account_id === acc), months), [etx, acc, months])
 
-  const recurringKeys = useMemo(
-    () => new Set(subs.filter((s) => s.status !== 'possibly_cancelled').map((s) => s.merchant)),
-    [subs],
-  )
-
-  const rows = useMemo(() => {
-    const idx = new Map(window6.map((m, i) => [m, i]))
-    const acc2 = new Map<string, PivotRow>()
-    for (const t of etx) {
-      if (t.kind !== 'expense') continue
-      if (acc && t.account_id !== acc) continue
-      const i = idx.get(t.month)
-      if (i === undefined) continue
-      const key = by === 'merchant' ? (t.merchant || '(sem estabelecimento)') : t.categoryName
-      const row = acc2.get(key) ?? { key, recurring: by === 'merchant' && recurringKeys.has(key), perMonth: Array(6).fill(null) as (number | null)[], total: 0, months: 0 }
-      // Despesas entram como número positivo; um reembolso no mês reduz a célula.
-      row.perMonth[i] = (row.perMonth[i] ?? 0) - t.value
-      acc2.set(key, row)
-    }
-    const out = [...acc2.values()].map((r) => {
-      const months = r.perMonth.filter((v) => v !== null && Math.abs(v) > 0.005).length
-      return { ...r, months, total: r.perMonth.reduce<number>((s, v) => s + (v ?? 0), 0) }
-    }).filter((r) => Math.abs(r.total) > 0.005 && (!onlyRecurring || r.recurring))
-    // Recorrentes primeiro e alinhados no topo, depois o resto pelo total.
-    return out.sort((a, b) => Number(b.recurring) - Number(a.recurring) || b.total - a.total)
-  }, [etx, window6, by, acc, recurringKeys, onlyRecurring])
-
-  const columnTotals = window6.map((_, i) => rows.reduce((s, r) => s + (r.perMonth[i] ?? 0), 0))
+  const needsLook = (m: PeriodRow) => m.flagged || Boolean(subOf.get(m.key)?.reason)
+  const groups = onlyAlerts
+    ? all.map((g) => ({ ...g, merchants: g.merchants.filter(needsLook) })).filter((g) => g.flagged || g.merchants.length)
+    : all
+  const columnTotals = months.map((_, i) => groups.reduce((s, g) => s + (g.perMonth[i] ?? 0), 0))
   const grand = columnTotals.reduce((s, v) => s + v, 0)
-  const recurringCount = rows.filter((r) => r.recurring).length
+  const toReview = all.reduce((s, g) => s + g.merchants.filter((m) => subOf.get(m.key)?.reason).length, 0)
+  const flagged = all.filter((g) => g.flagged).length
 
-  if (!window6.length) return <div className="card"><p className="muted">Sem lançamentos para comparar.</p></div>
+  const toggle = (k: string) => setOpen((prev) => { const next = new Set(prev); if (next.has(k)) next.delete(k); else next.add(k); return next })
+  const sticky = { position: 'sticky' as const, left: 0, background: 'var(--card)' }
+
+  const cells = (r: PeriodRow) => <>
+    {r.perMonth.map((v, i) => (
+      <td key={i} className={`num ${r.outlier[i] ? 'neg' : ''}`} style={r.outlier[i] ? { fontWeight: 700 } : undefined}
+        title={r.outlier[i] ? `Fora do padrão: média ${fmt(r.avg)}` : undefined}>
+        {v === null ? <span className="muted">·</span> : fmt(v)}
+      </td>
+    ))}
+    <td className="num muted">{fmt(r.avg)}</td>
+    <td className="num"><strong>{fmt(r.total)}</strong></td>
+  </>
+
+  if (!months.length) return <div className="card"><p className="muted">Sem lançamentos para comparar.</p></div>
 
   return (
     <div className="card">
       <div className="row">
-        <label className="inline">Agrupar por
-          <select value={by} onChange={(e) => setBy(e.target.value as 'merchant' | 'category')}>
-            <option value="merchant">Estabelecimento</option>
-            <option value="category">Categoria</option>
-          </select>
-        </label>
-        <label className="inline">Terminando em
+        <label className="inline">{n === 1 ? 'Mês' : 'Terminando em'}
           <select value={lastMonth} onChange={(e) => setEnd(e.target.value)}>
             {[...allMonths].reverse().map((m) => <option key={m}>{m}</option>)}
           </select>
@@ -182,39 +158,59 @@ function SeisMeses({ ctx }: { ctx: Ctx }) {
           <option value="">Todas as contas</option>
           {data.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
-        <label className="inline">
-          <input type="checkbox" checked={onlyRecurring} onChange={(e) => setOnlyRecurring(e.target.checked)} disabled={by === 'category'} /> só recorrentes
-        </label>
+        <label className="inline"><input type="checkbox" checked={onlyAlerts} onChange={(e) => setOnlyAlerts(e.target.checked)} /> só o que precisa de atenção</label>
+        <button onClick={() => setOpen(open.size ? new Set() : new Set(groups.map((g) => g.key)))}>{open.size ? 'Recolher tudo' : 'Expandir tudo'}</button>
       </div>
       <p className="muted">
-        Despesas de {window6[0]} a {window6[5]} · {rows.length} linhas
-        {by === 'merchant' && ` · ${recurringCount} recorrentes (↻) no topo`} · total {fmt(grand)}.
-        Célula vazia significa nenhum lançamento naquele mês.
+        Despesas {n === 1 ? `de ${months[0]}` : `de ${months[0]} a ${months.at(-1)}`} · total {fmt(grand)}
+        {flagged > 0 && <> · <span className="neg">⚑ {flagged} categoria(s) fora da média</span></>}
+        {toReview > 0 && <> · <span className="warn">↻ {toReview} assinatura(s) para revisar</span></>}
+      </p>
+      <p className="muted" style={{ fontSize: 12 }}>
+        <span className="neg"><strong>Vermelho</strong></span>: mês pelo menos 50% acima da média da linha{n === 1 ? ' (média dos 6 meses anteriores)' : ''}.
+        ⚑: linha com algum mês fora da média. ↻: assinatura; <span className="warn">revisar</span> quando o preço subiu, é nova, parou de cobrar ou a renovação anual está perto.
       </p>
       <div className="scroll"><table>
         <thead><tr>
-          <th style={{ position: 'sticky', left: 0, background: 'var(--card)' }}>{by === 'merchant' ? 'Estabelecimento' : 'Categoria'}</th>
-          {window6.map((m) => <th key={m} className="num">{m.slice(2)}</th>)}
-          <th className="num">Média</th><th className="num">Total</th>
+          <th style={sticky}>Categoria / estabelecimento</th>
+          {months.map((m) => <th key={m} className="num">{m.slice(2)}</th>)}
+          <th className="num">{n === 1 ? 'Média 6m' : 'Média'}</th><th className="num">Total</th>
         </tr></thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.key} className={r.recurring ? 'recorrente' : ''}>
-              <td style={{ position: 'sticky', left: 0, background: 'var(--card)', whiteSpace: 'nowrap' }}>
-                {r.recurring && <span title="cobrança recorrente">↻ </span>}{r.key}
-              </td>
-              {r.perMonth.map((v, i) => (
-                <td key={i} className="num">{v === null ? <span className="muted">·</span> : fmt(v)}</td>
-              ))}
-              <td className="num">{fmt(r.total / Math.max(1, r.months))}</td>
-              <td className="num"><strong>{fmt(r.total)}</strong></td>
-            </tr>
-          ))}
+          {groups.map((g) => {
+            const isOpen = open.has(g.key) || onlyAlerts
+            const reviews = g.merchants.filter((m) => subOf.get(m.key)?.reason).length
+            return (
+              <Fragment key={g.key}>
+                <tr>
+                  <td style={{ ...sticky, whiteSpace: 'nowrap' }}>
+                    <button className="link" onClick={() => toggle(g.key)} aria-expanded={isOpen}>{isOpen ? '▾' : '▸'} {g.key}</button>
+                    {g.flagged && <span className="neg" title="Algum mês fora da média"> ⚑</span>}
+                    {reviews > 0 && <span className="warn" title="Assinaturas para revisar"> ↻{reviews}</span>}
+                  </td>
+                  {cells(g)}
+                </tr>
+                {isOpen && g.merchants.map((m) => {
+                  const sub = subOf.get(m.key)
+                  return (
+                    <tr key={`${g.key}/${m.key}`} className={sub?.active ? 'recorrente' : ''}>
+                      <td style={{ ...sticky, whiteSpace: 'nowrap', paddingLeft: 24, fontSize: 13 }}>
+                        {sub && <span title="Cobrança recorrente">↻ </span>}{m.key}
+                        {m.flagged && <span className="neg" title="Algum mês fora da média"> ⚑</span>}
+                        {sub?.reason && <span className="warn" title={sub.reason}> revisar: {sub.reason}</span>}
+                      </td>
+                      {cells(m)}
+                    </tr>
+                  )
+                })}
+              </Fragment>
+            )
+          })}
         </tbody>
         <tfoot><tr>
-          <th style={{ position: 'sticky', left: 0, background: 'var(--card)' }}>Total do mês</th>
+          <th style={sticky}>Total do mês</th>
           {columnTotals.map((v, i) => <th key={i} className="num">{fmt(v)}</th>)}
-          <th className="num">{fmt(grand / 6)}</th><th className="num">{fmt(grand)}</th>
+          <th /><th className="num">{fmt(grand)}</th>
         </tr></tfoot>
       </table></div>
     </div>
