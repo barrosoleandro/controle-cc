@@ -48,9 +48,15 @@ export interface MerchantProfile {
 }
 
 export async function loadMerchantProfiles(): Promise<Map<string, MerchantProfile>> {
-  const { data, error } = await supabase.from('merchant_profiles').select('*')
-  if (error) throw new Error(faltaTabela(error.message))
-  return new Map((data as MerchantProfile[]).map((p) => [p.merchant, p]))
+  // The API returns at most 1000 rows per request: read in pages, in a total order.
+  const all: MerchantProfile[] = []
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from('merchant_profiles').select('*').order('merchant').order('id').range(from, from + 999)
+    if (error) throw new Error(faltaTabela(error.message))
+    all.push(...(data as MerchantProfile[]))
+    if (data.length < 1000) break
+  }
+  return new Map(all.map((p) => [p.merchant, p]))
 }
 
 /** Stores what the AI said, so the next import already knows this merchant. */
