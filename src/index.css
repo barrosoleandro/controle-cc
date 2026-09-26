@@ -43,6 +43,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 .monthpick > summary::-webkit-details-marker { display: none; }
 .monthpick > div { position: absolute; z-index: 10; margin-top: 4px; min-width: 280px; max-height: 360px; overflow: auto; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.18); }
 .bar > div.ok { background: var(--pos); } .bar > div.near { background: var(--warn); }
+/* Budget vs actual: budget orange, actual blue (series 2 and 1, validated pair); text shades meet 4.5:1. */
+:root { --budget: #eb6834; --budget-text: #b8481a; --actual: #2a78d6; --actual-text: #1f5fb8; }
+@media (prefers-color-scheme: dark) { :root { --budget: #d95926; --budget-text: #f08a5d; --actual: #3987e5; --actual-text: #7fb0f5; } }
+.pair { display: grid; gap: 3px; }
+.pair .bar { height: 6px; background: transparent; }
+.pair .bar > div { border-radius: 0 4px 4px 0; }
+.pair .b > div { background: var(--budget); } .pair .a > div { background: var(--actual); }
+.v-budget { color: var(--budget-text); font-weight: 600; } .v-actual { color: var(--actual-text); font-weight: 600; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .center { min-height: 80vh; display: grid; place-items: center; }
 .auth { width: min(380px, 100%); display: grid; gap: 10px; }
 .alert { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); margin-bottom: 6px; display: flex; gap: 8px; justify-content: space-between; }

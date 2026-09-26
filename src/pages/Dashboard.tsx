@@ -251,17 +251,24 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
         return (
           <div className="card"><h3>Orçado x realizado — {period}{selMonths.length > 1 ? ` (orçamento × ${selMonths.length} meses)` : ''}</h3>
             <p className="muted" style={{ fontSize: 12 }}>
-              <span className="pos">✓ dentro</span> (até 80%) · <span className="warn">⚠ perto do limite</span> (80–100%) · <span className="neg">▲ acima do orçado</span>
+              <span className="swatch" style={{ background: 'var(--budget)' }} />Orçado · <span className="swatch" style={{ background: 'var(--actual)' }} />Realizado
+              {' '}— <span className="pos">✓</span> até 80% · <span className="warn">⚠</span> 80–100% · <span className="neg">▲</span> acima do orçado
             </p>
             <table><tbody>
               {rows.map((r) => {
-                // Status = share of the budget used; each colour also has its own symbol.
+                // Two bars on the same scale (the larger of the two), budget and actual each in its colour.
                 const used = r.a / r.b
-                const st = isTithe(r.name) ? { cls: '', text: '', mark: '' } : used > 1 ? { cls: 'over', text: 'neg', mark: '▲' } : used >= 0.8 ? { cls: 'near', text: 'warn', mark: '⚠' } : { cls: 'ok', text: 'pos', mark: '✓' }
+                const top = Math.max(r.a, r.b) || 1
+                const st = isTithe(r.name) ? { text: '', mark: '' } : used > 1 ? { text: 'neg', mark: '▲' } : used >= 0.8 ? { text: 'warn', mark: '⚠' } : { text: 'pos', mark: '✓' }
                 return (
-                  <tr key={r.name}><td style={{ width: '32%' }}>{r.name}</td>
-                    <td><div className="bar" title={`${Math.round(used * 100)}% do orçado`}><div className={st.cls} style={{ width: `${Math.min(100, used * 100)}%` }} /></div></td>
-                    <td className={`num ${st.text}`}>{st.mark} {fmt(r.a)} / {fmt(r.b)} <span className="muted">({Math.round(used * 100)}%)</span></td></tr>
+                  <tr key={r.name}><td style={{ width: '30%' }}>{r.name}</td>
+                    <td><div className="pair" title={`${Math.round(used * 100)}% do orçado`}>
+                      <div className="bar b" aria-label={`Orçado ${fmt(r.b)}`}><div style={{ width: `${(r.b / top) * 100}%` }} /></div>
+                      <div className="bar a" aria-label={`Realizado ${fmt(r.a)}`}><div style={{ width: `${(r.a / top) * 100}%` }} /></div>
+                    </div></td>
+                    <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                      <span className={st.text}>{st.mark}</span> <span className="v-actual">{fmt(r.a)}</span>
+                      {' / '}<span className="v-budget">{fmt(r.b)}</span> <span className="muted">({Math.round(used * 100)}%)</span></td></tr>
                 )
               })}
             </tbody></table>

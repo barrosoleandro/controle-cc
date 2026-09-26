@@ -2,7 +2,7 @@ import { Fragment, useCallback, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
 import { addCategory, markAiNote, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote } from '../lib/data'
 import { CategorySelect } from '../components/CategorySelect'
-import { money } from '../lib/format'
+import { monthLabel, money } from '../lib/format'
 import { today, useFmt, useSubscriptions } from '../lib/hooks'
 import { buildPeriod, monthBalances, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
 import type { CategoryKind } from '../domain/types'
@@ -232,6 +232,19 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
   const allMonths = useMemo(() => [...new Set(etx.map((t) => t.month))].sort(), [etx])
   const lastMonth = end || allMonths.at(-1) || ''
   const months = useMemo(() => monthWindow(lastMonth, n), [lastMonth, n])
+  // Ticked accounts with no rows in the window (e.g. a card whose last bill is older):
+  // say so, with a shortcut to the window that ends at their last month.
+  const gaps = useMemo(() => {
+    const inWindow = new Set(months)
+    const last = new Map<string, string>()
+    const has = new Set<string>()
+    for (const t of etx) {
+      if (!shown(t.account_id)) continue
+      if (inWindow.has(t.month)) has.add(t.account_id)
+      if ((last.get(t.account_id) ?? '') < t.month) last.set(t.account_id, t.month)
+    }
+    return data.accounts.filter((a) => shown(a.id) && last.has(a.id) && !has.has(a.id)).map((a) => ({ name: a.name, last: last.get(a.id)! }))
+  }, [etx, months, shown, data.accounts])
   const subOf = useMemo(() => new Map(subs.map((s) => [s.merchant, { reason: subscriptionReview(s, today()), active: s.status !== 'possibly_cancelled' }])), [subs])
   const all = useMemo(() => {
     const quiet = <R extends PeriodRow>(r: R): R => ({ ...r, outlier: r.outlier.map(() => false), isNew: r.isNew.map(() => false), flagged: false })
@@ -295,6 +308,12 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
         <label className="inline"><input type="checkbox" checked={onlyAlerts} onChange={(e) => setOnlyAlerts(e.target.checked)} /> só o que precisa de atenção</label>
         <button onClick={() => setOpen(open.size ? new Set() : new Set(groups.map((g) => g.key)))}>{open.size ? 'Recolher tudo' : 'Expandir tudo'}</button>
       </div>
+      {gaps.map((g) => (
+        <div key={g.name} className="alert warn" style={{ marginBottom: 8 }}>
+          <span><strong>{g.name}</strong>: nenhum lançamento neste período — último em {monthLabel(g.last)}.</span>
+          <button onClick={() => setEnd(g.last)}>Ver até {monthLabel(g.last)}</button>
+        </div>
+      ))}
       <p className="muted">
         Despesas {n === 1 ? `de ${months[0]}` : `de ${months[0]} a ${months.at(-1)}`} · total {fmt(grand)}
         {flagged > 0 && <> · <span className="neg">⚑ {flagged} categoria(s) fora da média</span></>}
