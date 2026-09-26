@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { baselineMonths, buildPeriod, monthWindow, subscriptionReview, type PeriodTx } from '../src/domain/period'
+import { baselineMonths, buildPeriod, monthBalances, monthWindow, subscriptionReview, type PeriodTx } from '../src/domain/period'
+import type { Account, Transaction } from '../src/domain/types'
 import type { Subscription } from '../src/domain/subscriptions'
 
 const tx = (month: string, spent: number, merchant = 'CARREFOUR', categoryName = 'Mercado'): PeriodTx =>
@@ -48,6 +49,21 @@ describe('new in the month', () => {
     expect(young.merchants.find((m) => m.key === 'LIDL')!.isNew).toEqual([false]) // one month of history: too little
     const [three] = buildPeriod([tx('2026-05', 50), tx('2026-08', 30, 'LIDL')], ['2026-08'])
     expect(three.merchants.find((m) => m.key === 'LIDL')!.isNew).toEqual([true]) // May–July is enough
+  })
+})
+
+describe('month balances', () => {
+  it('gives the balance at the start and end of each month, summed across accounts in one currency', () => {
+    const eur = { id: 'a', currency: 'EUR', opening_balance: 1000 } as Account
+    const brl = { id: 'b', currency: 'BRL', opening_balance: 600 } as Account
+    const t = (account_id: string, booking_date: string, amount: number) => ({ account_id, booking_date, amount }) as Transaction
+    const txs = [t('a', '2026-05-10', -200), t('a', '2026-06-01', 500), t('a', '2026-06-30', -100), t('b', '2026-06-15', -60)]
+    const toEur = (n: number, from: string) => (from === 'BRL' ? n / 6 : n)
+    const r = monthBalances([eur, brl], txs, ['2026-05', '2026-06'], toEur)
+    expect(r.opening).toEqual([1100, 900]) // 1000 + 600/6; then 800 + 100
+    expect(r.closing).toEqual([900, 1290]) // 800 + 100; then 1200 + 540/6
+    expect(r.inflow).toEqual([0, 500])
+    expect(r.outflow).toEqual([200, 110]) // 100 + 60/6
   })
 })
 
