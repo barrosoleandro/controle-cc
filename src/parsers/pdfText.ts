@@ -42,8 +42,13 @@ export async function pdfToRows(data: Uint8Array, load: PdfLoader): Promise<Row[
 }
 
 export async function pdfToLines(data: Uint8Array, load: PdfLoader): Promise<string[]> {
+  return rowsToLines(await pdfToRows(data, load))
+}
+
+/** Flattens rows into strings; a gap wider than 6pt between items becomes three spaces. */
+export function rowsToLines(pages: Row[][]): string[] {
   const out: string[] = []
-  for (const page of await pdfToRows(data, load)) {
+  for (const page of pages) {
     for (const row of page) {
       let line = ''
       let lastEnd: number | null = null

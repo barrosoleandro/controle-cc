@@ -67,7 +67,7 @@ Local development: `npm install`, copy `.env.example` to `.env.local` and fill i
 
 ## Known limits (be aware)
 
-- **Itaú credit card**: only the bill total is visible (category "Cartão Itaú"). Import the card statement to see the real spending; a parser is not built yet.
+- **Itaú credit card**: import each bill (fatura) as PDF or as Excel (.xlsx) to see the real spending; without it only the bill payment is visible (category "Cartão Itaú"). Future instalments ("próximas faturas") are not imported until their own bill.
 - **Transfers to Wise/Revolut/Millennium** are treated as internal. Those accounts are not imported, so money that leaves through them is invisible.
 - **The tax model is simplified** (for comparing scenarios, not payroll-grade). Validate a real offer with a local simulator or an advisor.
 - The cost-of-living indexes are assumptions. Edit them in each scenario.
