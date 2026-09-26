@@ -8,7 +8,7 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {
-        name: 'Controle CC', short_name: 'Controle CC', start_url: '/', display: 'standalone',
+        name: 'Finanças Pessoais', short_name: 'Finanças', start_url: '/', display: 'standalone',
         background_color: '#111418', theme_color: '#2f6fde',
         icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }],
       },

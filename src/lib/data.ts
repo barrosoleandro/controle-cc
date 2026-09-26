@@ -3,9 +3,10 @@ import type { Account, BankMapEntry, Category, Currency, ParseResult, Rule, Tran
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/defaults'
 import { categorize, merchantKey } from '../domain/categorize'
 import { withFingerprints } from '../domain/fingerprint'
+import type { ContractItem } from '../domain/payroll'
 
 export interface DashboardPrefs { widgets: { id: string; visible: boolean }[] }
-export interface Settings { display_currency: Currency; dashboard: DashboardPrefs; dismissed_alerts: string[] }
+export interface Settings { display_currency: Currency; dashboard: DashboardPrefs; dismissed_alerts: string[]; payroll_contract?: ContractItem[] | null }
 export interface Checkpoint { account_id: string; date: string; balance: number; source: string }
 export interface Budget { category_id: string; month: string | null; amount: number }
 export interface StoredRule extends Rule { id: string; category_id: string }
@@ -105,6 +106,12 @@ export async function sha256(bytes: Uint8Array) {
   return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+/** SHA-256 of every file already imported, so the same file is never imported twice. */
+export async function importedHashes(): Promise<Set<string>> {
+  const rows = await selectAll<{ file_sha256: string }>('imports', 'created_at')
+  return new Set(rows.map((r) => r.file_sha256))
+}
+
 export function planImport(fileName: string, hash: string, result: ParseResult, data: AppData): ImportPlan {
   const refs = new Set(data.accounts.map((a) => a.external_ref))
   const known = new Set(data.transactions.map((t) => t.fingerprint))
@@ -169,6 +176,11 @@ export async function createAccount(a: Omit<Account, 'id' | 'opening_balance' | 
 export async function setTransactionCategory(id: string, category_id: string | null, locked = true) {
   must(await supabase.from('transactions').update({ category_id, category_locked: locked }).eq('id', id))
 }
+/** Categorizes a whole merchant at once; locked so re-applying rules keeps the choice. */
+export async function setCategoryForTransactions(ids: string[], category_id: string) {
+  for (let i = 0; i < ids.length; i += 500)
+    must(await supabase.from('transactions').update({ category_id, category_locked: true }).in('id', ids.slice(i, i + 500)))
+}
 export async function setTransactionNote(id: string, notes: string) {
   must(await supabase.from('transactions').update({ notes }).eq('id', id))
 }
@@ -194,8 +206,9 @@ export async function addRule(pattern: string, category_id: string, sign: 'debit
 export async function deleteRule(id: string) { must(await supabase.from('category_rules').delete().eq('id', id)) }
 export async function updateRule(id: string, patch: Record<string, unknown>) { must(await supabase.from('category_rules').update(patch).eq('id', id)) }
 export async function updateBankMap(id: string, category_id: string) { must(await supabase.from('bank_category_map').update({ category_id }).eq('id', id)) }
-export async function addCategory(name: string, kind: Category['kind'], color: string, sort: number) {
-  must(await supabase.from('categories').insert({ name, kind, color, sort }))
+/** Returns the created row so the caller can select the new category right away. */
+export async function addCategory(name: string, kind: Category['kind'], color: string, sort: number): Promise<Category> {
+  return must(await supabase.from('categories').insert({ name, kind, color, sort }).select().single()) as Category
 }
 export async function updateCategory(id: string, patch: Partial<Category>) { must(await supabase.from('categories').update(patch).eq('id', id)) }
 export async function setBudget(category_id: string, amount: number) {

@@ -26,29 +26,29 @@ export function savingsInsights({ txs, last3, current, budgets, subs, checkingBa
   for (const [cat, a] of avg) {
     const b = budgets.get(cat)
     if (b !== undefined && b > 0 && a > b * 1.1 && a - b > 30)
-      out.push({ key: `over:${cat}`, severity: 2, title: `${cat} is ${fmt(a - b)}/month over budget`,
-        detail: `3-month average ${fmt(a)} vs budget ${fmt(b)}. Either cut it back or raise the budget so the plan is honest.`, monthlySaving: a - b })
+      out.push({ key: `over:${cat}`, severity: 2, title: `${cat} está ${fmt(a - b)}/mês acima do orçamento`,
+        detail: `Média de 3 meses ${fmt(a)} contra orçamento de ${fmt(b)}. Ou corte o gasto, ou suba o orçamento para o plano ser honesto.`, monthlySaving: a - b })
   }
   // 2. Last month spike vs 3-month average.
   for (const [cat, v] of prev) {
     const a = avg.get(cat) ?? 0
     if (v > a * 1.3 && v - a > 80)
-      out.push({ key: `spike:${cat}:${prevMonth}`, severity: 1, title: `${cat} jumped in ${prevMonth}`,
-        detail: `${fmt(v)} vs ${fmt(a)} average. Check whether it was one-off.` })
+      out.push({ key: `spike:${cat}:${prevMonth}`, severity: 1, title: `${cat} saltou em ${prevMonth}`,
+        detail: `${fmt(v)} contra média de ${fmt(a)}. Verifique se foi caso isolado.` })
   }
   // 3. Subscriptions.
   const active = subs.filter((s) => s.status !== 'possibly_cancelled')
   const subTotal = active.reduce((s, x) => s + x.monthlyCost, 0)
   if (active.length)
-    out.push({ key: 'subs', severity: 2, title: `${active.length} recurring charges = ${fmt(subTotal)}/month (${fmt(subTotal * 12)}/year)`,
-      detail: `Review: ${active.slice(0, 6).map((s) => `${s.merchant} ${fmt(s.monthlyCost)}`).join(', ')}. Cancelling the two smallest you don't use weekly is the fastest win.`,
+    out.push({ key: 'subs', severity: 2, title: `${active.length} cobranças recorrentes = ${fmt(subTotal)}/mês (${fmt(subTotal * 12)}/ano)`,
+      detail: `Revise: ${active.slice(0, 6).map((s) => `${s.merchant} ${fmt(s.monthlyCost)}`).join(', ')}. Cancelar as duas menores que você não usa toda semana é o ganho mais rápido.`,
       monthlySaving: active.slice(-2).reduce((s, x) => s + x.monthlyCost, 0) })
   // 4. Eating out & delivery share.
   const food = (avg.get('Restaurante') ?? 0)
   const groceries = (avg.get('Mercado') ?? 0) + (avg.get('Picard') ?? 0) + (avg.get('Padaria') ?? 0)
   if (food > 400 && food > groceries * 0.5)
-    out.push({ key: 'food', severity: 2, title: `Eating out/delivery costs ${fmt(food)}/month`,
-      detail: `That's ${Math.round((food / Math.max(1, groceries)) * 100)}% of your groceries. Halving delivery (Uber Eats/iFood) is typically the easiest 25–40% cut.`, monthlySaving: food * 0.3 })
+    out.push({ key: 'food', severity: 2, title: `Restaurante e delivery custam ${fmt(food)}/mês`,
+      detail: `Isso é ${Math.round((food / Math.max(1, groceries)) * 100)}% do que você gasta em mercado. Cortar o delivery pela metade (Uber Eats/iFood) costuma ser o corte mais fácil, de 25 a 40%.`, monthlySaving: food * 0.3 })
   // 5. Small frequent purchases.
   const freq = new Map<string, { n: number; total: number }>()
   for (const t of txs) {
@@ -58,30 +58,30 @@ export function savingsInsights({ txs, last3, current, budgets, subs, checkingBa
     freq.set(t.merchant, f)
   }
   for (const [m, f] of freq) if (f.n >= 12)
-    out.push({ key: `small:${m}`, severity: 1, title: `${f.n} small purchases at ${m} in 3 months`,
-      detail: `${fmt(f.total)} in total (${fmt(f.total / 3)}/month). Small tickets add up.`, monthlySaving: f.total / 6 })
+    out.push({ key: `small:${m}`, severity: 1, title: `${f.n} compras pequenas em ${m} em 3 meses`,
+      detail: `${fmt(f.total)} no total (${fmt(f.total / 3)}/mês). Valor pequeno repetido vira dinheiro.`, monthlySaving: f.total / 6 })
   // 6. Bank fees / FX costs.
   const fees = avg.get('Conta') ?? 0
   if (fees > 15)
-    out.push({ key: 'fees', severity: 2, title: `Bank fees & FX costs ≈ ${fmt(fees)}/month`,
-      detail: `Includes card FX commissions and IOF câmbio. Pay abroad with a no-FX-fee card (e.g. Wise) and batch BRL transfers.`, monthlySaving: fees * 0.6 })
+    out.push({ key: 'fees', severity: 2, title: `Tarifas e custos de câmbio ≈ ${fmt(fees)}/mês`,
+      detail: `Inclui comissão de câmbio do cartão e IOF câmbio. Pague no exterior com cartão sem taxa de câmbio (Wise, por exemplo) e junte as transferências em reais.`, monthlySaving: fees * 0.6 })
   // 7. Idle cash on the checking account.
   if (monthExpense > 0 && checkingBalance > monthExpense * 1.5)
-    out.push({ key: 'idle', severity: 3, title: `${fmt(checkingBalance - monthExpense)} idle on checking accounts`,
-      detail: `Keep ~1 month of expenses (${fmt(monthExpense)}) on checking and sweep the rest to regulated savings (Livret A cap 22,950 €, LDDS 12,000 €) or your investment plan.` })
+    out.push({ key: 'idle', severity: 3, title: `${fmt(checkingBalance - monthExpense)} parados em conta corrente`,
+      detail: `Deixe cerca de 1 mês de despesa (${fmt(monthExpense)}) na conta corrente e mande o resto para a poupança regulada (Livret A, teto de 22.950 €; LDDS, 12.000 €) ou para os seus investimentos.` })
   // 8. Month-to-date pace.
   const mtd = byCategory(txs, new Set([current])).reduce((s, x) => s + x.value, 0)
   const day = new Date().getDate()
   if (monthExpense > 0 && day >= 7 && mtd / day * 30 > monthExpense * 1.2)
-    out.push({ key: `pace:${current}`, severity: 2, title: `Spending pace is ${Math.round((mtd / day * 30 / monthExpense - 1) * 100)}% above your average`,
-      detail: `${fmt(mtd)} spent so far this month.` })
+    out.push({ key: `pace:${current}`, severity: 2, title: `O ritmo de gasto está ${Math.round((mtd / day * 30 / monthExpense - 1) * 100)}% acima da sua média`,
+      detail: `${fmt(mtd)} gastos até agora neste mês.` })
   // 9. Data quality.
   const exp3 = txs.filter((t) => t.kind === 'expense' && last3.includes(t.month))
   const unc = exp3.filter((t) => t.categoryName === 'Outros').reduce((s, t) => s - t.value, 0)
   const tot = exp3.reduce((s, t) => s - t.value, 0)
   if (tot > 0 && unc / tot > 0.1)
-    out.push({ key: 'quality', severity: 1, title: `${Math.round((unc / tot) * 100)}% of spending is in "Outros"`,
-      detail: 'Categorize the biggest ones and create rules — the analysis is only as good as the categories.' })
+    out.push({ key: 'quality', severity: 1, title: `${Math.round((unc / tot) * 100)}% dos gastos estão em "Outros"`,
+      detail: 'Categorize os maiores e crie regras — a análise vale o que valem as categorias.' })
 
   return out.sort((a, b) => b.severity - a.severity || (b.monthlySaving ?? 0) - (a.monthlySaving ?? 0))
 }

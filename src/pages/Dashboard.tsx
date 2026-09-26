@@ -10,15 +10,15 @@ import { saveSettings } from '../lib/data'
 import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
 
 export const WIDGETS = [
-  { id: 'kpis', label: 'Balances & month totals' },
-  { id: 'alerts', label: 'Alerts' },
-  { id: 'insights', label: 'Savings suggestions' },
-  { id: 'monthly', label: 'Income vs expenses per month' },
-  { id: 'categories', label: 'Spending by category' },
-  { id: 'budget', label: 'Budget vs actual' },
-  { id: 'trend', label: 'Top categories trend' },
-  { id: 'balance', label: 'Balance evolution' },
-  { id: 'merchants', label: 'Top merchants' },
+  { id: 'kpis', label: 'Saldos e totais do mês' },
+  { id: 'alerts', label: 'Alertas' },
+  { id: 'insights', label: 'Sugestões de economia' },
+  { id: 'monthly', label: 'Receitas e despesas por mês' },
+  { id: 'categories', label: 'Gastos por categoria' },
+  { id: 'budget', label: 'Orçado x realizado' },
+  { id: 'trend', label: 'Evolução das principais categorias' },
+  { id: 'balance', label: 'Evolução do saldo' },
+  { id: 'merchants', label: 'Principais estabelecimentos' },
 ] as const
 
 export function Dashboard({ ctx }: { ctx: Ctx }) {
@@ -79,43 +79,43 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
               <div className="kpi" key={b.account.id}><div className="l">{b.account.name}</div><div className="v">{fmt(b.display)}</div></div>
             ))}
             <div className="kpi"><div className="l">Total</div><div className="v">{fmt(balances.filter((b) => accFilter.has(b.account.id)).reduce((s, b) => s + b.display, 0))}</div></div>
-            <div className="kpi"><div className="l">Income {monthLabel(month)}</div><div className="v pos">{fmt(cur?.income ?? 0)}</div></div>
-            <div className="kpi"><div className="l">Expenses {monthLabel(month)}</div><div className="v neg">{fmt(cur?.expense ?? 0)}</div></div>
-            <div className="kpi"><div className="l">Net {monthLabel(month)}</div><div className={`v ${(cur?.net ?? 0) >= 0 ? 'pos' : 'neg'}`}>{fmt(cur?.net ?? 0)}</div></div>
+            <div className="kpi"><div className="l">Receitas {monthLabel(month)}</div><div className="v pos">{fmt(cur?.income ?? 0)}</div></div>
+            <div className="kpi"><div className="l">Despesas {monthLabel(month)}</div><div className="v neg">{fmt(cur?.expense ?? 0)}</div></div>
+            <div className="kpi"><div className="l">Resultado {monthLabel(month)}</div><div className={`v ${(cur?.net ?? 0) >= 0 ? 'pos' : 'neg'}`}>{fmt(cur?.net ?? 0)}</div></div>
           </div>
         </div>)
       case 'alerts': return (
-        <div className="card"><h3>Alerts</h3>
-          {alerts.length === 0 && <p className="muted">No alerts.</p>}
+        <div className="card"><h3>Alertas</h3>
+          {alerts.length === 0 && <p className="muted">Nenhum alerta.</p>}
           {alerts.map((a) => (
             <div key={a.key} className={`alert ${a.level}`}><span>{a.level === 'warn' ? '⚠ ' : 'ℹ '}{a.text}</span>
-              <button onClick={async () => { await saveSettings({ dismissed_alerts: [...data.settings.dismissed_alerts, a.key] }); ctx.reload() }}>Dismiss</button></div>
+              <button onClick={async () => { await saveSettings({ dismissed_alerts: [...data.settings.dismissed_alerts, a.key] }); ctx.reload() }}>Dispensar</button></div>
           ))}
         </div>)
       case 'insights': return (
-        <div className="card"><h3>Savings suggestions</h3>
-          {insights.length === 0 && <p className="muted">Nothing to flag — import more data for better suggestions.</p>}
+        <div className="card"><h3>Sugestões de economia</h3>
+          {insights.length === 0 && <p className="muted">Nada a destacar — importe mais dados para sugestões melhores.</p>}
           {insights.slice(0, 8).map((i) => (
             <div key={i.key} style={{ marginBottom: 10 }}>
-              <strong>{i.title}</strong>{i.monthlySaving ? <span className="pos"> · save ~{fmt(i.monthlySaving)}/mo</span> : null}
+              <strong>{i.title}</strong>{i.monthlySaving ? <span className="pos"> · economiza ~{fmt(i.monthlySaving)}/mês</span> : null}
               <div className="muted" style={{ fontSize: 13 }}>{i.detail}</div>
             </div>
           ))}
         </div>)
       case 'monthly': return (
-        <div className="card"><h3>Income vs expenses</h3>
+        <div className="card"><h3>Receitas e despesas</h3>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={series.map((s) => ({ ...s, label: monthLabel(s.month) }))} barGap={2}>
               <CartesianGrid {...grid} /><XAxis dataKey="label" {...axis} /><YAxis {...axis} tickFormatter={compact} width={44} />
               <Tooltip {...tooltipStyle} formatter={(v) => fmt(Number(v))} cursor={{ fill: 'var(--line)', opacity: 0.4 }} />
               <Legend />
-              <Bar dataKey="income" name="Income" fill={SERIES[0]} radius={[4, 4, 0, 0]} />
-              <Bar dataKey="expense" name="Expenses" fill={SERIES[1]} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="income" name="Receitas" fill={SERIES[0]} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="expense" name="Despesas" fill={SERIES[1]} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>)
       case 'categories': return (
-        <div className="card"><h3>Spending by category — {monthLabel(month)}</h3>
+        <div className="card"><h3>Gastos por categoria — {monthLabel(month)}</h3>
           <table><tbody>
             {cats.map((c) => (
               <tr key={c.name}><td style={{ width: '38%' }}>{c.name}</td>
@@ -128,7 +128,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
         const actual = new Map(cats.map((c) => [c.name, c.value]))
         const rows = [...budgets].filter(([, b]) => b > 0).map(([name, b]) => ({ name, b, a: actual.get(name) ?? 0 })).sort((x, y) => y.a / y.b - x.a / x.b)
         return (
-          <div className="card"><h3>Budget vs actual — {monthLabel(month)}</h3>
+          <div className="card"><h3>Orçado x realizado — {monthLabel(month)}</h3>
             <table><tbody>
               {rows.map((r) => (
                 <tr key={r.name}><td style={{ width: '32%' }}>{r.name}</td>
@@ -139,7 +139,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
           </div>)
       }
       case 'trend': return (
-        <div className="card"><h3>Top 5 categories over time</h3>
+        <div className="card"><h3>5 maiores categorias ao longo do tempo</h3>
           <ResponsiveContainer width="100%" height={240}>
             <LineChart data={trend}>
               <CartesianGrid {...grid} /><XAxis dataKey="month" {...axis} /><YAxis {...axis} tickFormatter={compact} width={44} />
@@ -149,18 +149,18 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
           </ResponsiveContainer>
         </div>)
       case 'balance': return (
-        <div className="card"><h3>Total balance (selected accounts, month end)</h3>
+        <div className="card"><h3>Saldo total (contas marcadas, fim do mês)</h3>
           <ResponsiveContainer width="100%" height={240}>
             <LineChart data={totalBalance}>
               <CartesianGrid {...grid} /><XAxis dataKey="month" {...axis} /><YAxis {...axis} tickFormatter={compact} width={44} />
               <Tooltip {...tooltipStyle} formatter={(v) => fmt(Number(v))} />
-              <Line dataKey="balance" name="Balance" stroke={SERIES[0]} strokeWidth={2} dot={{ r: 3 }} />
+              <Line dataKey="balance" name="Saldo" stroke={SERIES[0]} strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>)
       case 'merchants': return (
-        <div className="card"><h3>Top merchants — {monthLabel(month)}</h3>
-          <table><thead><tr><th>Merchant</th><th className="num">#</th><th className="num">Total</th></tr></thead><tbody>
+        <div className="card"><h3>Principais estabelecimentos — {monthLabel(month)}</h3>
+          <table><thead><tr><th>Estabelecimento</th><th className="num">#</th><th className="num">Total</th></tr></thead><tbody>
             {topMerchants(txs, new Set([month])).map((m) => <tr key={m.merchant}><td>{m.merchant}</td><td className="num">{m.count}</td><td className="num">{fmt(m.total)}</td></tr>)}
           </tbody></table>
         </div>)
@@ -170,7 +170,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   return (
     <>
       <div className="row">
-        <select value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Month">
+        <select value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Mês">
           {[...months].reverse().map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
         </select>
         {data.accounts.map((a) => (
@@ -178,16 +178,16 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
             const s = new Set(accFilter); if (e.target.checked) s.add(a.id); else s.delete(a.id); setAccFilter(s)
           }} />{a.name}</label>
         ))}
-        <button onClick={() => setEditing(!editing)}>{editing ? 'Done' : 'Customize'}</button>
+        <button onClick={() => setEditing(!editing)}>{editing ? 'Pronto' : 'Personalizar'}</button>
       </div>
       {editing && (
-        <div className="card" style={{ marginBottom: 12 }}><h3>Dashboard widgets</h3>
+        <div className="card" style={{ marginBottom: 12 }}><h3>Blocos do painel</h3>
           {widgets.map((w, i) => (
             <div key={w.id} className="row" style={{ marginBottom: 4 }}>
               <label className="inline"><input type="checkbox" checked={w.visible} onChange={(e) => persist(widgets.map((x) => x.id === w.id ? { ...x, visible: e.target.checked } : x))} />
                 {WIDGETS.find((x) => x.id === w.id)?.label}</label>
-              <button disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
-              <button disabled={i === widgets.length - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
+              <button disabled={i === 0} onClick={() => move(i, -1)} aria-label="Mover para cima">↑</button>
+              <button disabled={i === widgets.length - 1} onClick={() => move(i, 1)} aria-label="Mover para baixo">↓</button>
             </div>
           ))}
         </div>
