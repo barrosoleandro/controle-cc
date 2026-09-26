@@ -260,6 +260,10 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
     data.accounts.filter((a) => shown(a.id) && a.type !== 'card'), data.transactions, months,
     (amount, from, date) => ctx.fx.convert(amount, from, ctx.currency, date),
   ), [data.accounts, data.transactions, months, shown, ctx.fx, ctx.currency])
+  // Closing balance of each ticked account in its own currency, under the converted total.
+  const perAccount = useMemo(() => data.accounts.filter((a) => shown(a.id) && a.type !== 'card').map((a) => ({
+    a, closing: monthBalances([a], data.transactions, months, (amount) => amount).closing,
+  })), [data.accounts, data.transactions, months, shown])
 
   const needsLook = (m: PeriodRow) => m.flagged || Boolean(subOf.get(m.key)?.reason)
   const col = sortBy !== null && sortBy < months.length ? sortBy : null
@@ -399,10 +403,20 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
           <th /><th className="num neg">{fmt(saldos.outflow.reduce((s, v) => s + v, 0))}</th>
         </tr>
         <tr>
-          <th style={sticky}>Saldo final</th><th />
+          <th style={sticky}>Saldo final{perAccount.length > 1 || perAccount.some((x) => x.a.currency !== ctx.currency) ? ` (em ${ctx.currency})` : ''}</th><th />
           {saldos.closing.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : ''}`}>{fmt(v)}</th>)}
           <th /><th />
-        </tr></tfoot>
+        </tr>
+        {(perAccount.length > 1 || perAccount.some((x) => x.a.currency !== ctx.currency)) && perAccount.map(({ a, closing }) => {
+          const f = money(a.currency, 2)
+          return (
+            <tr key={a.id} className="sub-row">
+              <td style={sticky} className="muted">↳ {a.name}</td><td />
+              {closing.map((v, i) => <td key={i} className={`num ${v < 0 ? 'neg' : 'muted'}`}>{f(v)}</td>)}
+              <td /><td />
+            </tr>
+          )
+        })}</tfoot>
       </table></div>
     </div>
   )

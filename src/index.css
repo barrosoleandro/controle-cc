@@ -226,3 +226,6 @@ h4.sub { margin: 16px 0 6px; font-size: 13px; color: var(--muted); font-weight: 
 .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--card-2); border: 1px solid var(--line); color: var(--muted); }
 .badge.b-open { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
 .badge.b-paid { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 45%, var(--line)); }
+
+/* Lançamentos: per-account closing balance under the converted total. */
+tr.sub-row > td { font-size: 13px; padding-top: 4px; padding-bottom: 4px; border-bottom: 0; }
