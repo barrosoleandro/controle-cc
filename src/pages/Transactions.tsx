@@ -30,6 +30,10 @@ export function Transactions({ ctx }: { ctx: Ctx }) {
     return new Set(main.length ? accounts.filter((a) => !main.includes(a)).map((a) => a.id) : [])
   })
   const shown = useCallback((id: string) => listed.has(id) && !hidden.has(id), [hidden, listed])
+  // A card's purchases count with the account that pays it: ticking Itaú Conta brings the Itaú
+  // card's spending into the expense lines and the list (never into balances).
+  const payerOf = useMemo(() => new Map(ctx.data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!])), [ctx.data.accounts])
+  const inScope = useCallback((id: string) => shown(id) || (payerOf.has(id) && shown(payerOf.get(id)!)), [shown, payerOf])
   return <>
     <div className="row">{VIEWS.map((v) => (
       <button key={v} className={v === view ? 'active' : ''} onClick={() => { setView(v); setMerchant('') }}>{v}</button>
@@ -48,10 +52,10 @@ export function Transactions({ ctx }: { ctx: Ctx }) {
       ))}
     </div>
     {view === 'Lista'
-      ? <Lista ctx={ctx} shown={shown} merchant={merchant} onClearMerchant={() => setMerchant('')} />
+      ? <Lista ctx={ctx} shown={inScope} merchant={merchant} onClearMerchant={() => setMerchant('')} />
       : view === 'Por país'
-        ? <PorPais ctx={ctx} shown={shown} />
-        : <Periodo ctx={ctx} shown={shown} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
+        ? <PorPais ctx={ctx} shown={inScope} />
+        : <Periodo ctx={ctx} shown={inScope} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
   </>
 }
 
@@ -93,7 +97,7 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
   // The real balance of each ticked account (own currency): at the end of the filtered month, or today.
   const balances = useMemo(() => {
     const until = month ? `${month}-31` : '9999-12-31'
-    return data.accounts.filter((a) => shown(a.id)).map((a) => {
+    return data.accounts.filter((a) => shown(a.id) && a.type !== 'card').map((a) => {
       const s = balanceSeries(a, data.transactions)
       let bal = Number(a.opening_balance)
       for (const p of s) { if (p.date > until) break; bal = p.balance }
@@ -264,7 +268,7 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
       if (inWindow.has(t.month)) has.add(t.account_id)
       if ((last.get(t.account_id) ?? '') < t.month) last.set(t.account_id, t.month)
     }
-    return data.accounts.filter((a) => shown(a.id) && last.has(a.id) && !has.has(a.id)).map((a) => ({ name: a.name, last: last.get(a.id)! }))
+    return data.accounts.filter((a) => shown(a.id) && a.type !== 'card' && last.has(a.id) && !has.has(a.id)).map((a) => ({ name: a.name, last: last.get(a.id)! }))
   }, [etx, months, shown, data.accounts])
   const subOf = useMemo(() => new Map(subs.map((s) => [s.merchant, { reason: subscriptionReview(s, today()), active: s.status !== 'possibly_cancelled' }])), [subs])
   const all = useMemo(() => {
@@ -418,7 +422,7 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
           })}
         </tbody>
         <tfoot><tr>
-          <th style={sticky}>Total das despesas<div className="rule">soma das categorias de despesa acima; estornos abatem; sem transferências</div></th><th />
+          <th style={sticky}>Total das despesas<div className="rule">soma das categorias de despesa acima, incluindo as compras do cartão pago por uma conta marcada; estornos abatem; sem transferências</div></th><th />
           {columnTotals.map((v, i) => <th key={i} className="num">{fmt(v)}</th>)}
           <th /><th className="num">{fmt(grand)}</th>
         </tr>
