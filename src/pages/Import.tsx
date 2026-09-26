@@ -120,7 +120,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         <h3>Importar arquivos do banco</h3>
         <p className="muted">
           Aceita o CSV do Banque BCP, o relevé mensal do BCP em PDF, o extrato de conta do Itaú em PDF,
-          a fatura do cartão Itaú em Excel (.xlsx) e o extrato combinado do Millennium bcp em PDF.
+          a fatura do cartão Itaú em PDF ou Excel (.xlsx) e o extrato combinado do Millennium bcp em PDF.
           Pode selecionar tudo de uma vez: linhas repetidas são descartadas sozinhas.
         </p>
         <div className="row">
