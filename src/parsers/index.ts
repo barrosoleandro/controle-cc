@@ -5,6 +5,8 @@ import { looksLikeItauPdf, parseItauPdf } from './itauPdf'
 import { looksLikeItauCardXlsx, parseItauCardXlsx, type Cell } from './itauCardXlsx'
 import { looksLikeMillenniumPdf, looksLikeMillenniumReceipt, parseMillenniumPdf } from './millenniumPdf'
 import { looksLikeItauCardPdf, parseItauCardPdf } from './itauCardPdf'
+import { looksLikeItauMonthlyPdf, parseItauMonthlyPdf } from './itauMonthlyPdf'
+import { looksLikeCcfPdf, parseCcfPdf } from './ccfPdf'
 import { pdfToRows, rowsToLines, type PdfLoader } from './pdfText'
 
 /** Reads the first sheet of an .xlsx; injected so tests and the browser can supply their own. */
@@ -27,7 +29,9 @@ export async function parseStatement(fileName: string, bytes: Uint8Array, loadPd
     if (looksLikeMillenniumPdf(lines)) return parseMillenniumPdf(lines)
     if (looksLikeMillenniumReceipt(lines)) return ignored('Comprovante Millennium: a operação já vem no extrato combinado — ignorado.')
     if (looksLikeItauCardPdf(lines)) return parseItauCardPdf(pages, lines)
-    throw new Error(`${fileName}: PDF não reconhecido (esperado extrato Itaú, fatura do cartão Itaú, relevé BCP ou extrato combinado Millennium)`)
+    if (looksLikeItauMonthlyPdf(lines)) return parseItauMonthlyPdf(pages, lines)
+    if (looksLikeCcfPdf(lines)) return parseCcfPdf(pages, lines)
+    throw new Error(`${fileName}: PDF não reconhecido (esperado extrato ou fatura Itaú, relevé BCP ou CCF, ou extrato combinado Millennium)`)
   }
   if (/\.xlsx$/i.test(fileName)) {
     const rows = await loadXlsx(bytes)

@@ -43,7 +43,7 @@ export interface CardStatement {
 }
 
 export interface ParseResult {
-  source: 'bcp_csv' | 'bcp_pdf' | 'itau_pdf' | 'itau_card_xlsx' | 'itau_card_pdf' | 'millennium_pdf' | 'ignored'
+  source: 'bcp_csv' | 'bcp_pdf' | 'itau_pdf' | 'itau_card_xlsx' | 'itau_card_pdf' | 'itau_monthly_pdf' | 'ccf_pdf' | 'millennium_pdf' | 'ignored'
   transactions: ParsedTransaction[]
   checkpoints: Checkpoint[]
   warnings: string[]

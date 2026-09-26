@@ -1,6 +1,6 @@
 # Finanças Pessoais
 
-Personal finance control: BCP (EUR) + Itaú (BRL), secure, works on mobile (installable PWA).
+Personal finance control: BCP and CCF (EUR) + Itaú (BRL), secure, works on mobile (installable PWA).
 The interface is in Portuguese; code and comments stay in English.
 
 **Stack:** React + TypeScript (Vite) · Supabase (Postgres, Auth, RLS) · hosted on Vercel.
@@ -9,7 +9,7 @@ The interface is in Portuguese; code and comments stay in English.
 
 | Area | Features |
 |---|---|
-| Import | Drop the BCP CSV, the BCP relevé PDFs and the Itaú extrato PDFs, all at once. Files are parsed **in the browser**: the originals never leave your device. Duplicates are skipped automatically, even when the same operation appears in the CSV and in a PDF. |
+| Import | Drop the BCP CSV, the BCP and CCF relevé PDFs, the Itaú extrato PDFs (app export or "Extrato Mensal") and the Itaú card bills, all at once. CCF letters without transactions are skipped. Files are parsed **in the browser**: the originals never leave your device. Duplicates are skipped automatically, even when the same operation appears in the CSV and in a PDF. |
 | Balance rebuild | Opening balance is derived from the bank's own balances. Every balance printed on a statement is stored and reconciled (Settings → Accounts). |
 | Categories | Your spreadsheet categories + merchant rules + bank-category mapping. Change a category once and the app offers to create a rule. |
 | Dashboard | KPIs, income vs expenses, spending by category, budget vs actual, top-5 trend, balance evolution, top merchants, alerts, savings suggestions. **Customizable:** show/hide and reorder widgets; filter by month and account; EUR/BRL toggle. |
@@ -67,6 +67,7 @@ Local development: `npm install`, copy `.env.example` to `.env.local` and fill i
 
 ## Known limits (be aware)
 
+- **Itaú "Extrato Mensal"**: the checking account and "Aplic Aut Mais" are read as one balance, as the bank's own totals do: the sweeps between them are left out, the yield counts as income.
 - **Itaú credit card**: import each bill (fatura) as PDF or as Excel (.xlsx) to see the real spending; without it only the bill payment is visible (category "Cartão Itaú"). Future instalments ("próximas faturas") are not imported until their own bill.
 - **Transfers to Wise/Revolut/Millennium** are treated as internal. Those accounts are not imported, so money that leaves through them is invisible.
 - **The tax model is simplified** (for comparing scenarios, not payroll-grade). Validate a real offer with a local simulator or an advisor.
