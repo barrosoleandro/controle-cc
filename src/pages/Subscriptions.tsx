@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { subscriptionAlerts, type Subscription } from '../domain/subscriptions'
+import { detectSubscriptions, subscriptionAlerts, type Subscription } from '../domain/subscriptions'
+import { countryOf } from '../domain/countries'
+import { isTithe } from '../domain/categorize'
 import { addCategory, addRule, setCategoryForTransactions } from '../lib/data'
 import { money } from '../lib/format'
-import { today, useFmt, useSubscriptions } from '../lib/hooks'
+import { today, useFmt } from '../lib/hooks'
 import type { CategoryKind } from '../domain/types'
 import { byName } from '../domain/categorize'
 
@@ -14,7 +16,21 @@ const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receit
 
 export function Subscriptions({ ctx }: { ctx: Ctx }) {
   const fmt = useFmt(ctx)
-  const subs = useSubscriptions(ctx)
+  const { data, etx } = ctx
+  // Account filter (cards included: many subscriptions are charged there). Unticked = hidden.
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set())
+  const shown = (id: string) => !hidden.has(id)
+  const rows = useMemo(() => etx.filter((t) => !hidden.has(t.account_id) && !isTithe(t.categoryName)), [etx, hidden])
+  const subs = useMemo(() => detectSubscriptions(
+    rows.map((t) => ({ booking_date: t.booking_date, amount: t.value, merchant: t.merchant, kind: t.kind })), today(),
+  ), [rows])
+  // Which account(s) each recurring charge comes from.
+  const accountsOf = useMemo(() => {
+    const name = new Map(data.accounts.map((a) => [a.id, a.name]))
+    const m = new Map<string, Set<string>>()
+    for (const t of rows) if (t.kind === 'expense' && t.value < 0) m.set(t.merchant, (m.get(t.merchant) ?? new Set()).add(name.get(t.account_id) ?? '?'))
+    return m
+  }, [rows, data.accounts])
   const alerts = subscriptionAlerts(subs, today(), fmt)
   const ativos = subs.filter((s) => s.status !== 'possibly_cancelled')
   const total = ativos.reduce((s, x) => s + x.monthlyCost, 0)
@@ -22,21 +38,34 @@ export function Subscriptions({ ctx }: { ctx: Ctx }) {
   return (
     <div className="grid">
       <div className="card" style={{ gridColumn: '1/-1' }}>
-        <h3>Cobranças recorrentes — {fmt(total)}/mês · {fmt(total * 12)}/ano</h3>
+        <h3>Cobranças recorrentes — {fmt(total)}/mês · {fmt(total * 12)}/ano{hidden.size ? ' (contas marcadas)' : ''}</h3>
+        <div className="row">
+          <span className="muted">Contas:</span>
+          {[...new Set(data.accounts.map((a) => countryOf(a.bank)))].map((c) => (
+            <button key={c} onClick={() => setHidden(new Set(data.accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
+          ))}
+          <button onClick={() => setHidden(new Set())}>Todas</button>
+          {data.accounts.map((a) => (
+            <label key={a.id} className="inline"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
+              const next = new Set(prev); if (next.has(a.id)) next.delete(a.id); else next.add(a.id); return next
+            })} />{a.name}</label>
+          ))}
+        </div>
         <p className="muted">Detectadas sozinhas: mesmo estabelecimento, intervalo regular e valor estável. Inclui aluguel, empréstimo e seguro, não só streaming. Abra uma linha para ver o histórico e definir a categoria que os próximos imports devem usar.</p>
         <div className="scroll"><table>
-          <thead><tr><th>Estabelecimento</th><th>Frequência</th><th className="num">Última</th><th className="num">Por mês</th><th className="hide-sm">Desde</th><th>Próxima</th><th>Situação</th></tr></thead>
+          <thead><tr><th>Estabelecimento</th><th className="hide-sm">Conta</th><th>Frequência</th><th className="num">Última</th><th className="num">Por mês</th><th className="hide-sm">Desde</th><th>Próxima</th><th>Situação</th></tr></thead>
           <tbody>{subs.map((s) => {
             const isOpen = aberto === s.merchant
             return [
               <tr key={s.merchant} className={s.status === 'possibly_cancelled' ? 'muted' : ''}>
                 <td><button className="link" aria-expanded={isOpen} onClick={() => setAberto(isOpen ? null : s.merchant)}>{isOpen ? '▾' : '▸'} {s.merchant}</button></td>
+                <td className="hide-sm muted" style={{ fontSize: 13 }}>{[...(accountsOf.get(s.merchant) ?? [])].join(', ')}</td>
                 <td>{CADENCIA[s.cadence]}</td>
                 <td className="num">{fmt(s.lastAmount)}{s.priceChangePct > 0.05 && <span className="neg"> ▲{(s.priceChangePct * 100).toFixed(0)}%</span>}</td>
                 <td className="num">{fmt(s.monthlyCost)}</td><td className="hide-sm">{s.firstDate}</td><td>{s.nextDate}</td>
                 <td>{s.status === 'new' ? 'nova' : s.status === 'possibly_cancelled' ? 'parou?' : 'ativa'}</td>
               </tr>,
-              isOpen && <tr key={s.merchant + ':detalhe'}><td colSpan={7}><Detalhe ctx={ctx} sub={s} /></td></tr>,
+              isOpen && <tr key={s.merchant + ':detalhe'}><td colSpan={8}><Detalhe ctx={ctx} sub={s} shown={shown} /></td></tr>,
             ]
           })}</tbody>
         </table></div>
@@ -49,12 +78,12 @@ export function Subscriptions({ ctx }: { ctx: Ctx }) {
 }
 
 /** Um recorrente por inteiro: as cobranças e a categoria que os próximos imports devem usar. */
-function Detalhe({ ctx, sub }: { ctx: Ctx; sub: Subscription }) {
+function Detalhe({ ctx, sub, shown }: { ctx: Ctx; sub: Subscription; shown: (accountId: string) => boolean }) {
   const { data, etx } = ctx
   const fmt = useFmt(ctx)
   const cobrancas = useMemo(
-    () => etx.filter((t) => t.merchant === sub.merchant).sort((a, b) => b.booking_date.localeCompare(a.booking_date)),
-    [etx, sub.merchant],
+    () => etx.filter((t) => t.merchant === sub.merchant && shown(t.account_id)).sort((a, b) => b.booking_date.localeCompare(a.booking_date)),
+    [etx, sub.merchant, shown],
   )
   // A categoria que a maioria das cobranças já usa — ponto de partida do seletor.
   const atual = useMemo(() => {
