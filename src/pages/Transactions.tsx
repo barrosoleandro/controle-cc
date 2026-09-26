@@ -4,7 +4,7 @@ import { addCategory, markAiNote, reapplyRules, setCategoryForTransactions, setM
 import { CategorySelect } from '../components/CategorySelect'
 import { money } from '../lib/format'
 import { today, useFmt, useSubscriptions } from '../lib/hooks'
-import { buildPeriod, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
+import { buildPeriod, monthBalances, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
 import type { CategoryKind } from '../domain/types'
 import { byName } from '../domain/categorize'
 import { purchaseDate } from '../domain/simplify'
@@ -215,6 +215,11 @@ function Periodo({ ctx, n, onOpen }: { ctx: Ctx; n: number; onOpen: (merchant: s
   const months = useMemo(() => monthWindow(lastMonth, n), [lastMonth, n])
   const subOf = useMemo(() => new Map(subs.map((s) => [s.merchant, { reason: subscriptionReview(s, today()), active: s.status !== 'possibly_cancelled' }])), [subs])
   const all = useMemo(() => buildPeriod(etx.filter((t) => !acc || t.account_id === acc), months), [etx, acc, months])
+  // Cards are left out of the total: their running sum is not a balance, and the bill is paid from an account shown here.
+  const saldos = useMemo(() => monthBalances(
+    data.accounts.filter((a) => (acc ? a.id === acc : a.type !== 'card')), data.transactions, months,
+    (amount, from, date) => ctx.fx.convert(amount, from, ctx.currency, date),
+  ), [data.accounts, data.transactions, months, acc, ctx.fx, ctx.currency])
 
   const needsLook = (m: PeriodRow) => m.flagged || Boolean(subOf.get(m.key)?.reason)
   const col = sortBy !== null && sortBy < months.length ? sortBy : null
@@ -293,6 +298,11 @@ function Periodo({ ctx, n, onOpen }: { ctx: Ctx; n: number; onOpen: (merchant: s
           ))}
           <th className="num">{n === 1 ? 'Média 6m' : 'Média'}</th>
           <th className="num sortable" title="Ordenar pelo total" onClick={() => setSortBy(null)}>Total{col === null ? ' ▼' : ''}</th>
+        </tr>
+        <tr className="muted">
+          <th style={sticky}>Saldo inicial{acc ? '' : ' (contas)'}</th><th />
+          {saldos.opening.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : ''}`}>{fmt(v)}</th>)}
+          <th /><th />
         </tr></thead>
         <tbody>
           {groups.map((g) => {
@@ -332,9 +342,24 @@ function Periodo({ ctx, n, onOpen }: { ctx: Ctx; n: number; onOpen: (merchant: s
           })}
         </tbody>
         <tfoot><tr>
-          <th style={sticky}>Total do mês</th><th />
+          <th style={sticky}>Total das despesas</th><th />
           {columnTotals.map((v, i) => <th key={i} className="num">{fmt(v)}</th>)}
           <th /><th className="num">{fmt(grand)}</th>
+        </tr>
+        <tr>
+          <th style={sticky}>Total de entradas</th><th />
+          {saldos.inflow.map((v, i) => <th key={i} className="num pos">{fmt(v)}</th>)}
+          <th /><th className="num pos">{fmt(saldos.inflow.reduce((s, v) => s + v, 0))}</th>
+        </tr>
+        <tr>
+          <th style={sticky}>Total de saídas</th><th />
+          {saldos.outflow.map((v, i) => <th key={i} className="num neg">{fmt(v)}</th>)}
+          <th /><th className="num neg">{fmt(saldos.outflow.reduce((s, v) => s + v, 0))}</th>
+        </tr>
+        <tr>
+          <th style={sticky}>Saldo final{acc ? '' : ' (contas)'}</th><th />
+          {saldos.closing.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : ''}`}>{fmt(v)}</th>)}
+          <th /><th />
         </tr></tfoot>
       </table></div>
     </div>

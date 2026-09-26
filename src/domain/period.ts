@@ -1,4 +1,6 @@
 import type { Subscription } from './subscriptions'
+import type { Account, Currency, Transaction } from './types'
+import { balanceSeries } from './analytics'
 
 /** What the period view needs from an enriched transaction (value is signed, display currency). */
 export interface PeriodTx { month: string; value: number; categoryName: string; merchant: string; kind: string }
@@ -72,6 +74,40 @@ export function buildPeriod(txs: PeriodTx[], window: string[], baseline = baseli
     ...finish(name, c.sums, window, baseline, since),
     merchants: [...c.merchants].map(([m, sums]) => finish(m, sums, window, baseline, since)).filter(inWindow).sort((a, b) => b.total - a.total),
   })).filter(inWindow).sort((a, b) => b.total - a.total)
+}
+
+const dayBefore = (month: string) => new Date(Date.parse(`${month}-01T00:00:00Z`) - 86400000).toISOString().slice(0, 10)
+const lastDay = (month: string) => { const [y, m] = month.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10) }
+
+/**
+ * Per month, for the given accounts summed in the display currency: the balance at the
+ * start (end of the previous day), money in, money out (positive) and the balance at the
+ * end. Before an account's first transaction its balance is the opening balance. Transfers
+ * between the accounts count on both sides, so start + in - out = end (up to exchange
+ * rates moving within the month for accounts in another currency).
+ */
+export function monthBalances(
+  accounts: Account[], txs: Transaction[], months: string[],
+  convert: (amount: number, from: Currency, date: string) => number,
+) {
+  const series = accounts.map((a) => ({ a, s: balanceSeries(a, txs) }))
+  const at = (date: string) => series.reduce((sum, { a, s }) => {
+    let bal = Number(a.opening_balance)
+    for (const p of s) { if (p.date > date) break; bal = p.balance }
+    return sum + convert(bal, a.currency, date)
+  }, 0)
+  const ids = new Set(accounts.map((a) => a.id))
+  const cur = new Map(accounts.map((a) => [a.id, a.currency]))
+  const idx = new Map(months.map((m, i) => [m, i]))
+  const inflow = months.map(() => 0), outflow = months.map(() => 0)
+  for (const t of txs) {
+    const i = idx.get(t.booking_date.slice(0, 7))
+    if (i === undefined || !ids.has(t.account_id)) continue
+    const v = convert(Number(t.amount), cur.get(t.account_id)!, t.booking_date)
+    if (v >= 0) inflow[i] += v
+    else outflow[i] -= v
+  }
+  return { opening: months.map((m) => at(dayBefore(m))), inflow, outflow, closing: months.map((m) => at(lastDay(m))) }
 }
 
 /** Why a recurring charge deserves a look, or null when it is running as usual. */
