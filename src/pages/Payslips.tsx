@@ -5,6 +5,11 @@ import { deletePayslip, listPayslips, savePayslip, type Payslip } from '../lib/p
 import { money, monthLabel } from '../lib/format'
 import { checkContract, DEFAULT_CONTRACT, type ContractItem } from '../domain/payroll'
 import { pdfToRows } from '../parsers/pdfText'
+import { CartesianGrid, Legend, Line, LineChart, ReferenceDot, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
+import { DEFAULT_INFLATION, ESTIMATED_FROM, payVsInflation, type InflationTable } from '../domain/inflation'
+import { monthWindow } from '../domain/period'
+import { today } from '../lib/hooks'
 import { looksLikePayslip, parsePayslipRows } from '../parsers/payslipPdf'
 
 const eur = money('EUR', 2)
@@ -125,6 +130,8 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
         {!list.length && <p>Nenhum holerite ainda — importe seus bulletins de paie (PDF).</p>}
       </div>
 
+      <PayEvolution ctx={ctx} list={list} />
+
       {cur && check && <>
         <div className="card">
           <h3>{monthLabel(cur.period.slice(0, 7))} · {cur.employer} · pago em {cur.transfer_date ?? cur.pay_date ?? ''}</h3>
@@ -213,6 +220,88 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
           </tbody>
         </table></div>
       </div>}
+    </div>
+  )
+}
+
+const PAY_COUNTRIES = Object.keys(DEFAULT_INFLATION) as (keyof typeof DEFAULT_INFLATION)[]
+const pct = (x: number) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}%`
+
+/**
+ * Last 24 months of pay: gross and net paid month by month, the peak, and the net needed
+ * to keep the purchasing power of the first months, using the inflation of the country
+ * the salary is paid in. Country and the inflation table are saved with the user's settings.
+ */
+function PayEvolution({ ctx, list }: { ctx: Ctx; list: Payslip[] }) {
+  const prefs = ctx.data.settings.dashboard?.payroll ?? {}
+  const [country, setCountry] = useState<keyof typeof DEFAULT_INFLATION>((prefs.country as keyof typeof DEFAULT_INFLATION) ?? 'França')
+  const [tables, setTables] = useState<Record<string, InflationTable>>(() => ({ ...DEFAULT_INFLATION, ...(prefs.inflation ?? {}) }))
+  const [editing, setEditing] = useState(false)
+  const table = tables[country] ?? DEFAULT_INFLATION[country]
+
+  const months = useMemo(() => new Set(monthWindow(today().slice(0, 7), 24)), [])
+  const points = useMemo(() => list.map((p) => ({ month: p.period.slice(0, 7), gross: p.gross, net: p.net_paid }))
+    .filter((p) => months.has(p.month)).sort((a, b) => a.month.localeCompare(b.month)), [list, months])
+  const r = useMemo(() => payVsInflation(points, table), [points, table])
+
+  async function save(next: { country?: string; inflation?: Record<string, InflationTable> }) {
+    const payroll = { country, inflation: tables, ...next }
+    await saveSettings({ dashboard: { ...ctx.data.settings.dashboard, payroll } })
+  }
+
+  if (!r) return <div className="card"><h3>Evolução do salário</h3><p className="muted">Importe pelo menos dois holerites dos últimos 24 meses para ver a evolução.</p></div>
+
+  const rows = r.rows.map((x) => ({ label: monthLabel(x.month), month: x.month, bruto: x.gross, liquido: x.net, corrigido: Math.round(x.corrected) }))
+  const peak = rows.find((x) => x.month === r.peak.month)!
+  const years = Object.keys(table).sort()
+
+  return (
+    <div className="card">
+      <h3>Evolução do salário — últimos 24 meses</h3>
+      <div className="row">
+        <label className="inline">Recebo em
+          <select value={country} onChange={(e) => { const c = e.target.value as keyof typeof DEFAULT_INFLATION; setCountry(c); save({ country: c }) }}>
+            {PAY_COUNTRIES.map((c) => <option key={c}>{c}</option>)}
+          </select></label>
+        <button onClick={() => setEditing(!editing)}>{editing ? 'Fechar inflação' : 'Ver/editar inflação'}</button>
+      </div>
+      {editing && (
+        <div className="row">
+          {years.map((y) => (
+            <label key={y} className="inline">{y}{Number(y) >= ESTIMATED_FROM ? '*' : ''}
+              <input type="number" step="0.1" style={{ width: 70 }} defaultValue={table[y]}
+                onBlur={(e) => {
+                  const v = Number(e.target.value)
+                  if (!Number.isFinite(v) || v === table[y]) return
+                  const next = { ...tables, [country]: { ...table, [y]: v } }
+                  setTables(next); save({ inflation: next })
+                }} />%</label>
+          ))}
+          <span className="muted" style={{ fontSize: 12 }}>Inflação anual de {country}. * estimativa: confira e ajuste quando sair o número oficial.</span>
+        </div>
+      )}
+      <div className="kpis">
+        <div className="kpi"><div className="l">Pico do líquido</div><div className="v">{f(r.peak.net)}</div><div className="l">{monthLabel(r.peak.month)}</div></div>
+        <div className="kpi"><div className="l">Líquido médio: 3 primeiros → 3 últimos</div><div className="v">{f(r.base)} → {f(r.recent)}</div><div className="l">{pct(r.nominalChange)} nominal</div></div>
+        <div className="kpi"><div className="l">Inflação no período ({country})</div><div className="v">{pct(r.inflation)}</div></div>
+        <div className="kpi"><div className="l">Ganho/perda real</div><div className={`v ${r.realChange < 0 ? 'neg' : 'pos'}`}>{pct(r.realChange)}</div>
+          <div className="l">{r.monthlyGap < 0 ? `perde ${f(-r.monthlyGap)}/mês de poder de compra` : `ganha ${f(r.monthlyGap)}/mês acima da inflação`}</div></div>
+      </div>
+      <ResponsiveContainer width="100%" height={260}>
+        <LineChart data={rows}>
+          <CartesianGrid {...grid} /><XAxis dataKey="label" {...axis} /><YAxis {...axis} tickFormatter={compact} width={48} />
+          <Tooltip {...tooltipStyle} formatter={(v) => f(Number(v))} /><Legend />
+          <Line dataKey="bruto" name="Bruto" stroke={SERIES[0]} strokeWidth={2} dot={{ r: 3 }} />
+          <Line dataKey="liquido" name="Líquido pago" stroke={SERIES[1]} strokeWidth={2} dot={{ r: 3 }} />
+          <Line dataKey="corrigido" name="Líquido inicial + inflação" stroke={SERIES[2]} strokeWidth={2} strokeDasharray="5 4" dot={false} />
+          <ReferenceDot x={peak.label} y={peak.liquido ?? 0} r={6} fill={SERIES[1]} stroke="var(--card)" strokeWidth={2}
+            label={{ value: 'pico', position: 'top', fill: 'var(--text)', fontSize: 12 }} />
+        </LineChart>
+      </ResponsiveContainer>
+      <p className="muted" style={{ fontSize: 12 }}>
+        A linha tracejada é o líquido médio dos 3 primeiros holerites corrigido pela inflação de {country}: o que seria preciso receber para manter o poder de compra.
+        Meses com bônus ou prêmio aparecem como picos; a comparação usa a média de 3 meses para não depender de um mês isolado.
+      </p>
     </div>
   )
 }

@@ -7,7 +7,11 @@ import { withFingerprints } from '../domain/fingerprint'
 import { withAiNote } from '../domain/claudeExchange'
 import type { ContractItem } from '../domain/payroll'
 
-export interface DashboardPrefs { widgets: { id: string; visible: boolean }[] }
+export interface DashboardPrefs {
+  widgets: { id: string; visible: boolean }[]
+  /** Payslips: country the salary is paid in, and the inflation table used per country. */
+  payroll?: { country?: string; inflation?: Record<string, Record<string, number>> }
+}
 export interface Settings { display_currency: Currency; dashboard: DashboardPrefs; dismissed_alerts: string[]; payroll_contract?: ContractItem[] | null }
 export interface Checkpoint { account_id: string; date: string; balance: number; source: string }
 export interface Budget { category_id: string; month: string | null; amount: number }
