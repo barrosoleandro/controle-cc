@@ -51,11 +51,11 @@ function Accounts({ ctx }: { ctx: Ctx }) {
           <div className="row">
             {ok < cps.length && <button onClick={async () => {
               const bad = cps.filter((c) => Math.abs(at(c.date) - c.balance) >= 0.01).map((c) => c.date)
-              if (confirm(`Apagar ${bad.length} saldo(s) do banco que não conferem em ${a.name}?`)) { await clearCheckpoints(a.id, bad); ctx.reload() }
+              if (confirm(`Apagar ${bad.length} saldo(s) do banco que não conferem em ${a.name} e recalcular o saldo inicial com os que sobram?`)) { await clearCheckpoints(a.id, bad); ctx.reload() }
             }}>Apagar os que não conferem ({cps.length - ok})</button>}
             <button onClick={async () => {
-              if (confirm(`Limpar todos os ${cps.length} saldos do banco de ${a.name} e zerar o saldo inicial? Os lançamentos não são apagados; importe os extratos de novo ou use "Derivar dos extratos" para recalcular.`)) {
-                await clearCheckpoints(a.id, 'all', true); ctx.reload()
+              if (confirm(`Limpar todos os ${cps.length} saldos do banco de ${a.name}? Os lançamentos e o saldo inicial ficam como estão; ao importar extratos de novo, o saldo inicial é recalculado.`)) {
+                await clearCheckpoints(a.id, 'all'); ctx.reload()
               }
             }}>Limpar todos os saldos</button>
           </div>
