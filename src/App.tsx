@@ -24,8 +24,6 @@ const ICON: Record<(typeof TABS)[number], IconName> = {
 }
 // On a phone the bottom bar holds these four; the rest open from "Mais".
 const PRIMARY: (typeof TABS)[number][] = ['Painel', 'Lançamentos', 'Cartões', 'Importar']
-// Each page's icon has its own colour (--ic-1…9, set per menu colour in palette.css).
-const ic = (t: (typeof TABS)[number]) => ({ '--ic': `var(--ic-${TABS.indexOf(t) + 1})` }) as React.CSSProperties
 type Tab = (typeof TABS)[number]
 // Aos 15 minutos a tela trava mas a sessão fica de pé: voltar custa só o código do
 // autenticador. Aos 60 minutos parados, sai de verdade.
@@ -117,7 +115,7 @@ function Shell() {
       {/* Desktop: side menu with every page. */}
       <nav className="side" aria-label="Menu">
         {TABS.map((t) => (
-          <button key={t} className={t === tab ? 'active' : ''} aria-current={t === tab ? 'page' : undefined} onClick={() => go(t)} style={ic(t)}>
+          <button key={t} className={t === tab ? 'active' : ''} aria-current={t === tab ? 'page' : undefined} onClick={() => go(t)}>
             <Icon name={ICON[t]} /><span>{t}</span>
           </button>
         ))}
@@ -125,7 +123,7 @@ function Shell() {
       {/* Phone: bottom bar with the main pages and "Mais" for the rest. */}
       <nav className="bottom" aria-label="Menu">
         {PRIMARY.map((t) => (
-          <button key={t} className={t === tab && !moreOpen ? 'active' : ''} aria-current={t === tab ? 'page' : undefined} onClick={() => go(t)} style={ic(t)}>
+          <button key={t} className={t === tab && !moreOpen ? 'active' : ''} aria-current={t === tab ? 'page' : undefined} onClick={() => go(t)}>
             <Icon name={ICON[t]} /><span>{t}</span>
           </button>
         ))}
@@ -137,7 +135,7 @@ function Shell() {
         <div className="sheet-backdrop" onClick={() => setMoreOpen(false)}>
           <div className="sheet" role="dialog" aria-label="Mais páginas" onClick={(e) => e.stopPropagation()}>
             {TABS.filter((t) => !PRIMARY.includes(t)).map((t) => (
-              <button key={t} className={t === tab ? 'active' : ''} onClick={() => go(t)} style={ic(t)}><Icon name={ICON[t]} size={26} /><span>{t}</span></button>
+              <button key={t} className={t === tab ? 'active' : ''} onClick={() => go(t)}><Icon name={ICON[t]} size={26} /><span>{t}</span></button>
             ))}
           </div>
         </div>
