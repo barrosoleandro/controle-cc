@@ -2,8 +2,11 @@ import { useMemo, useState } from 'react'
 import type { Ctx } from '../App'
 import { saveMerchantProfiles, vendorsToEnrich, type VendorSuggestion } from '../lib/ai'
 import { buildExchangeRequest, parseExchangeAnswer } from '../domain/claudeExchange'
-import { addRule, markAiNote, setCategoryForTransactions } from '../lib/data'
+import { addCategory, addRule, markAiNote, setCategoryForTransactions } from '../lib/data'
+import type { CategoryKind } from '../domain/types'
 import { money } from '../lib/format'
+
+const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 
 interface Row extends VendorSuggestion {
   categoryId: string // resolved from the suggested name; '' when the model was unsure
@@ -23,6 +26,9 @@ export function AiSuggestions({ ctx }: { ctx: Ctx }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
+  const [criandoPara, setCriandoPara] = useState<string | null>(null)
+  const [nome, setNome] = useState('')
+  const [tipo, setTipo] = useState<CategoryKind>('expense')
 
   const pending = useMemo(() => vendorsToEnrich(data), [data])
   const catByName = useMemo(() => new Map(data.categories.map((c) => [c.name, c.id])), [data.categories])
@@ -66,6 +72,20 @@ export function AiSuggestions({ ctx }: { ctx: Ctx }) {
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
 
+  /** Creates a category from a row (or reuses one with the same name) and selects it there. */
+  async function criarCategoria(merchant: string) {
+    const limpo = nome.trim()
+    if (!limpo || !rows) return
+    setBusy(true); setError(null)
+    try {
+      const repetida = data.categories.find((c) => c.name.toLowerCase() === limpo.toLowerCase())
+      const criada = repetida ?? (await addCategory(limpo, tipo, '#888888', data.categories.length))
+      setRows(rows.map((r) => (r.merchant === merchant ? { ...r, categoryId: criada.id, use: true } : r)))
+      setCriandoPara(null); setNome('')
+      await ctx.reload()
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
+
   async function apply() {
     if (!rows) return
     const chosen = rows.filter((r) => r.use && r.categoryId)
@@ -95,7 +115,7 @@ export function AiSuggestions({ ctx }: { ctx: Ctx }) {
   }
 
   return (
-    <div className="card">
+    <div className="card" style={{ gridColumn: '1/-1' }}>
       <h3>Identificar com IA</h3>
       <p className="muted">
         1. Baixe o arquivo com os estabelecimentos sem categoria. Ele leva só a chave do estabelecimento e trechos da
@@ -116,18 +136,35 @@ export function AiSuggestions({ ctx }: { ctx: Ctx }) {
 
       {rows && rows.length > 0 && <>
         <div className="scroll"><table style={{ marginTop: 10 }}>
-          <thead><tr><th>Usar</th><th>Estabelecimento</th><th>O que é</th><th>Categoria</th><th className="num">Conf.</th><th className="num hide-sm">Lanç.</th><th className="num hide-sm">Total</th></tr></thead>
+          <thead><tr><th>Usar</th><th>Estabelecimento</th><th>Categoria</th><th className="num">Conf.</th><th className="num hide-sm">Lanç.</th><th className="num hide-sm">Total</th></tr></thead>
           <tbody>{rows.map((r, i) => (
             <tr key={r.merchant}>
               <td><input type="checkbox" checked={r.use} disabled={busy || !r.categoryId} aria-label={`Usar ${r.merchant}`}
                 onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, use: e.target.checked } : x)))} /></td>
-              <td>{r.merchant}</td>
-              <td style={{ maxWidth: 320 }}>{r.description || <span className="muted">—</span>}</td>
-              <td><select value={r.categoryId} disabled={busy}
-                onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, categoryId: e.target.value, use: Boolean(e.target.value) } : x)))}>
-                <option value="">— não tenho certeza —</option>
-                {sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select></td>
+              <td><strong>{r.merchant}</strong><div className="muted" style={{ fontSize: 12 }}>{r.description}</div></td>
+              <td style={{ minWidth: 200 }}>
+                {criandoPara === r.merchant ? (
+                  <div className="row" style={{ marginBottom: 0 }}>
+                    <input placeholder="Nome da categoria" value={nome} onChange={(e) => setNome(e.target.value)} disabled={busy} autoFocus
+                      onKeyDown={(e) => { if (e.key === 'Enter') criarCategoria(r.merchant) }} />
+                    <select value={tipo} onChange={(e) => setTipo(e.target.value as CategoryKind)} disabled={busy}>
+                      {(Object.keys(TIPO) as CategoryKind[]).map((k) => <option key={k} value={k}>{TIPO[k]}</option>)}
+                    </select>
+                    <button className="primary" onClick={() => criarCategoria(r.merchant)} disabled={busy || !nome.trim()}>Criar</button>
+                    <button onClick={() => setCriandoPara(null)} disabled={busy}>Cancelar</button>
+                  </div>
+                ) : (
+                  <div className="row" style={{ marginBottom: 0, flexWrap: 'nowrap' }}>
+                    <select value={r.categoryId} disabled={busy} style={{ minWidth: 160 }} aria-label={`Categoria de ${r.merchant}`}
+                      onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, categoryId: e.target.value, use: Boolean(e.target.value) } : x)))}>
+                      <option value="">— não tenho certeza —</option>
+                      {sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <button onClick={() => { setCriandoPara(r.merchant); setNome(''); setTipo('expense') }} disabled={busy}
+                      title="Criar nova categoria" aria-label={`Nova categoria para ${r.merchant}`}>+</button>
+                  </div>
+                )}
+              </td>
               <td className={`num ${r.confidence < 0.6 ? 'warn' : ''}`}>{Math.round(r.confidence * 100)}%</td>
               <td className="num hide-sm">{r.charges}</td>
               <td className="num hide-sm">{money(r.currency as 'EUR' | 'BRL', 0)(r.total)}</td>
