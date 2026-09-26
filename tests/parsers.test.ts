@@ -106,3 +106,15 @@ describe('duplicate check across files (date + vendor + amount)', () => {
     expect(markDuplicates([it2('PICARD', -6)], [it2('PICARD', -5)])).toEqual([false])
   })
 })
+
+describe('CCF: operations on the closing day of the previous statement', () => {
+  it('move to their value date (or the day after the closing)', async () => {
+    const { shiftIntoPeriod } = await import('../src/parsers/ccfPdf')
+    const txs = shiftIntoPeriod([
+      { bookingDate: '2025-06-07', valueDate: '2025-06-10' },
+      { bookingDate: '2025-06-07', valueDate: '2025-06-07' },
+      { bookingDate: '2025-06-12', valueDate: '2025-06-12' },
+    ], '2025-06-07')
+    expect(txs.map((t) => t.bookingDate)).toEqual(['2025-06-10', '2025-06-08', '2025-06-12'])
+  })
+})
