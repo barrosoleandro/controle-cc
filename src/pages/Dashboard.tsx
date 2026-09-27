@@ -1,35 +1,27 @@
 import { useMemo, useState } from 'react'
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Ctx } from '../App'
-import { byCategory, monthly, topMerchants } from '../domain/analytics'
+import { byCategory, monthly } from '../domain/analytics'
 import { savingsInsights } from '../domain/insights'
 import { subscriptionAlerts } from '../domain/subscriptions'
 import { monthLabel } from '../lib/format'
 import { last3, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
 import { saveSettings } from '../lib/data'
 import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
-import { COUNTRIES, countryOf, flowsByCountry, type Country } from '../domain/countries'
+import { countryOf } from '../domain/countries'
 import { monthWindow } from '../domain/period'
-import { cumulative, linearTrend } from '../domain/trend'
 import { isTithe } from '../domain/categorize'
+import { Menu } from './analysis/shared'
 
-/** yyyy-mm plus n months. */
-const addMonths = (m: string, n: number) => { const [y, mm] = m.split('-').map(Number); return new Date(Date.UTC(y, mm - 1 + n, 1)).toISOString().slice(0, 7) }
-
+// A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
 export const WIDGETS = [
   { id: 'kpis', label: 'Saldos e totais do mês' },
-  { id: 'alerts', label: 'Alertas' },
-  { id: 'insights', label: 'Sugestões de economia' },
   { id: 'monthly', label: 'Receitas e despesas por mês' },
-  { id: 'country', label: 'Gastos por país' },
-  { id: 'savings', label: 'Taxa de poupança' },
-  { id: 'yoy', label: 'Gastos acumulados no ano x ano anterior' },
-  { id: 'forecast', label: 'Tendência de receitas e despesas' },
   { id: 'categories', label: 'Gastos por categoria' },
   { id: 'budget', label: 'Orçado x realizado' },
-  { id: 'trend', label: 'Evolução das principais categorias' },
   { id: 'balance', label: 'Evolução do saldo' },
-  { id: 'merchants', label: 'Principais estabelecimentos' },
+  { id: 'alerts', label: 'Alertas' },
+  { id: 'insights', label: 'Sugestões de economia' },
 ] as const
 
 export function Dashboard({ ctx }: { ctx: Ctx }) {
@@ -83,13 +75,6 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   const persist = async (w: typeof widgets) => { setWidgets(w); await saveSettings({ dashboard: { ...data.settings.dashboard, widgets: w } }) }
   const move = (i: number, d: number) => { const w = [...widgets]; const [x] = w.splice(i, 1); w.splice(i + d, 0, x); persist(w) }
 
-  const top5 = useMemo(() => byCategory(txs, new Set(series.map((s) => s.month))).slice(0, 5).map((c) => c.name), [txs, series])
-  const trend = useMemo(() => series.map((m) => {
-    const row: Record<string, number | string> = { month: monthLabel(m.month) }
-    const bc = new Map(byCategory(txs, new Set([m.month])).map((c) => [c.name, c.value]))
-    top5.forEach((n) => { row[n] = Math.round(bc.get(n) ?? 0) })
-    return row
-  }), [series, txs, top5])
   const totalBalance = useMemo(() => {
     const days = new Map<string, number>()
     for (const b of balances) if (shown(b.account.id)) {
@@ -102,38 +87,6 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     }
     return [...days].map(([m, v]) => ({ month: monthLabel(m), balance: Math.round(v) }))
   }, [balances, months, hidden, fx, currency]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Last 12 months ending at the selected month, for the country and year charts.
-  const window12 = useMemo(() => monthWindow(month, 12), [month])
-  const countryOfAccount = useMemo(() => new Map(data.accounts.filter((a) => !hidden.has(a.id)).map((a) => [a.id, countryOf(a.bank)] as [string, Country])), [data.accounts, hidden])
-  const byCountry = useMemo(() => flowsByCountry(txs, countryOfAccount, window12), [txs, countryOfAccount, window12])
-  const countryRows = window12.map((m) => ({ label: monthLabel(m), ...Object.fromEntries(byCountry.countries.map((c) => [c, Math.round(byCountry.cell(m, c).expense)])) }))
-  const savingsRows = series.map((s) => ({ label: monthLabel(s.month), rate: s.income > 0 ? Math.round((s.net / s.income) * 100) : null }))
-  const yoyRows = useMemo(() => {
-    const year = Number(month.slice(0, 4))
-    const spent = new Map(monthly(txs).map((m) => [m.month, m.expense]))
-    const mms = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'))
-    const cur = cumulative(mms.map((mm) => spent.get(`${year}-${mm}`) ?? 0))
-    const prev = cumulative(mms.map((mm) => spent.get(`${year - 1}-${mm}`) ?? 0))
-    return mms.map((mm, i) => ({
-      label: monthLabel(`${year}-${mm}`).split(' ')[0],
-      atual: `${year}-${mm}` <= month ? Math.round(cur[i]) : null,
-      anterior: Math.round(prev[i]),
-    }))
-  }, [txs, month])
-  // Trend: 12 months of income and spending with a fitted line, carried 3 months ahead.
-  const trendRows = useMemo(() => {
-    const flows = new Map(monthly(txs).map((m) => [m.month, m]))
-    const hist = window12.map((m) => ({ m, income: flows.get(m)?.income ?? null, expense: flows.get(m)?.expense ?? null }))
-    const ti = linearTrend(hist.map((h) => h.income))
-    const te = linearTrend(hist.map((h) => h.expense))
-    const ahead = [1, 2, 3].map((n) => addMonths(month, n))
-    const at = (t: ReturnType<typeof linearTrend>, x: number) => (t ? Math.max(0, Math.round(t.intercept + t.slope * x)) : null)
-    return [...hist, ...ahead.map((m) => ({ m, income: null, expense: null }))].map((h, x) => ({
-      label: monthLabel(h.m), receitas: h.income === null ? null : Math.round(h.income), despesas: h.expense === null ? null : Math.round(h.expense),
-      tendReceitas: at(ti, x), tendDespesas: at(te, x),
-    }))
-  }, [txs, window12, month])
 
   const widget = (id: string) => {
     switch (id) {
@@ -179,61 +132,6 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
             </BarChart>
           </ResponsiveContainer>
         </div>)
-      case 'country': return (
-        <div className="card"><h3>Gastos por país — 12 meses até {monthLabel(month)}</h3>
-          {byCountry.countries.length === 0 ? <p className="muted">Sem gastos nas contas marcadas.</p> : (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={countryRows}>
-                <CartesianGrid {...grid} /><XAxis dataKey="label" {...axis} /><YAxis {...axis} tickFormatter={compact} width={44} />
-                <Tooltip {...tooltipStyle} formatter={(v) => fmt(Number(v))} cursor={{ fill: 'var(--line)', opacity: 0.4 }} />
-                {byCountry.countries.length > 1 && <Legend />}
-                {/* Colour follows the country (fixed order), not its position in the filter. */}
-                {byCountry.countries.map((c, i) => (
-                  <Bar key={c} dataKey={c} name={c} stackId="p" fill={SERIES[COUNTRIES.indexOf(c)]} stroke="var(--card)" strokeWidth={1}
-                    radius={i === byCountry.countries.length - 1 ? [4, 4, 0, 0] : undefined} />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-          <p className="muted" style={{ fontSize: 12 }}>Itaú = Brasil, BCP e CCF = França, Millennium = Portugal. Transferências entre contas ficam de fora.</p>
-        </div>)
-      case 'savings': return (
-        <div className="card"><h3>Taxa de poupança — quanto das receitas sobrou</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={savingsRows}>
-              <CartesianGrid {...grid} /><XAxis dataKey="label" {...axis} /><YAxis {...axis} unit="%" width={44} />
-              <Tooltip {...tooltipStyle} formatter={(v) => `${v}%`} cursor={{ fill: 'var(--line)', opacity: 0.4 }} />
-              <ReferenceLine y={0} stroke="var(--muted)" />
-              <Bar dataKey="rate" name="Poupança" fill={SERIES[0]} radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-          <p className="muted" style={{ fontSize: 12 }}>Resultado do mês ÷ receitas. Abaixo de zero: gastou mais do que recebeu.</p>
-        </div>)
-      case 'yoy': return (
-        <div className="card"><h3>Gastos acumulados no ano: {month.slice(0, 4)} x {Number(month.slice(0, 4)) - 1}</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={yoyRows}>
-              <CartesianGrid {...grid} /><XAxis dataKey="label" {...axis} /><YAxis {...axis} tickFormatter={compact} width={44} />
-              <Tooltip {...tooltipStyle} formatter={(v) => fmt(Number(v))} /><Legend />
-              <Line dataKey="atual" name={month.slice(0, 4)} stroke={SERIES[0]} strokeWidth={2} dot={{ r: 3 }} connectNulls={false} />
-              <Line dataKey="anterior" name={String(Number(month.slice(0, 4)) - 1)} stroke={SERIES[1]} strokeWidth={2} strokeDasharray="4 3" dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>)
-      case 'forecast': return (
-        <div className="card"><h3>Tendência de receitas e despesas (+3 meses)</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={trendRows}>
-              <CartesianGrid {...grid} /><XAxis dataKey="label" {...axis} /><YAxis {...axis} tickFormatter={compact} width={44} />
-              <Tooltip {...tooltipStyle} formatter={(v) => fmt(Number(v))} /><Legend />
-              <Line dataKey="receitas" name="Receitas" stroke={SERIES[0]} strokeWidth={2} dot={{ r: 3 }} />
-              <Line dataKey="despesas" name="Despesas" stroke={SERIES[1]} strokeWidth={2} dot={{ r: 3 }} />
-              <Line dataKey="tendReceitas" name="Tendência receitas" stroke={SERIES[0]} strokeWidth={2} strokeDasharray="5 4" dot={false} />
-              <Line dataKey="tendDespesas" name="Tendência despesas" stroke={SERIES[1]} strokeWidth={2} strokeDasharray="5 4" dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-          <p className="muted" style={{ fontSize: 12 }}>Linha tracejada: reta que melhor se ajusta aos últimos 12 meses, prolongada 3 meses. É tendência, não previsão.</p>
-        </div>)
       case 'categories': return (
         <div className="card"><h3>Gastos por categoria — {period}</h3>
           <table><tbody>
@@ -274,16 +172,6 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
             </tbody></table>
           </div>)
       }
-      case 'trend': return (
-        <div className="card"><h3>5 maiores categorias ao longo do tempo</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={trend}>
-              <CartesianGrid {...grid} /><XAxis dataKey="month" {...axis} /><YAxis {...axis} tickFormatter={compact} width={44} />
-              <Tooltip {...tooltipStyle} formatter={(v) => fmt(Number(v))} /><Legend />
-              {top5.map((n, i) => <Line key={n} dataKey={n} stroke={SERIES[i]} strokeWidth={2} dot={{ r: 3 }} />)}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>)
       case 'balance': return (
         <div className="card"><h3>Saldo total (contas marcadas, fim do mês)</h3>
           <ResponsiveContainer width="100%" height={240}>
@@ -293,12 +181,6 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
               <Line dataKey="balance" name="Saldo" stroke={SERIES[0]} strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
-        </div>)
-      case 'merchants': return (
-        <div className="card"><h3>Principais estabelecimentos — {period}</h3>
-          <table><thead><tr><th>Estabelecimento</th><th className="num">#</th><th className="num">Total</th></tr></thead><tbody>
-            {topMerchants(txs, selSet).map((m) => <tr key={m.merchant}><td>{m.merchant}</td><td className="num">{m.count}</td><td className="num">{fmt(m.total)}</td></tr>)}
-          </tbody></table>
         </div>)
     }
   }
@@ -330,15 +212,19 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
             ))}
           </div>
         </details>
-        {[...new Set(data.accounts.map((a) => countryOf(a.bank)))].map((c) => (
-          <button key={c} onClick={() => setHidden(new Set(data.accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
-        ))}
-        <button onClick={() => setHidden(new Set())}>Todas</button>
-        {data.accounts.map((a) => (
-          <label key={a.id} className="inline"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
-            const s = new Set(prev); if (s.has(a.id)) s.delete(a.id); else s.add(a.id); return s
-          })} />{a.name}</label>
-        ))}
+        <Menu label={`Contas: ${hidden.size ? `${data.accounts.length - hidden.size} de ${data.accounts.length}` : 'todas'}`} active={hidden.size > 0}>
+          <div className="row" style={{ marginBottom: 8 }}>
+            {[...new Set(data.accounts.map((a) => countryOf(a.bank)))].map((c) => (
+              <button key={c} onClick={() => setHidden(new Set(data.accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
+            ))}
+            <button onClick={() => setHidden(new Set())}>Todas</button>
+          </div>
+          {data.accounts.map((a) => (
+            <label key={a.id} className="inline opt"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
+              const s = new Set(prev); if (s.has(a.id)) s.delete(a.id); else s.add(a.id); return s
+            })} />{a.name}</label>
+          ))}
+        </Menu>
         <button onClick={() => setEditing(!editing)}>{editing ? 'Pronto' : 'Personalizar'}</button>
       </div>
       {editing && (
@@ -354,6 +240,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
         </div>
       )}
       <div className="grid">{widgets.filter((w) => w.visible).map((w) => <div key={w.id} style={{ display: 'contents' }}>{widget(w.id)}</div>)}</div>
+      <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>Tendências, comparações, estabelecimentos e datas: aba <strong>Análises</strong>.</p>
     </>
   )
 }
