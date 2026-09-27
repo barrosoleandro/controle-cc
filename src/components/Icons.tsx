@@ -1,6 +1,7 @@
 /** Line icons (24×24, 2px stroke, currentColor), drawn inline so the PWA needs no icon font. */
 const PATHS: Record<string, string> = {
   painel: 'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z',
+  analises: 'M3 3v18h18M8 17v-4M13 17V9M18 17V6',
   lancamentos: 'M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01',
   cartoes: 'M2 6.5A1.5 1.5 0 0 1 3.5 5h17A1.5 1.5 0 0 1 22 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-17A1.5 1.5 0 0 1 2 17.5zM2 10h20M6 15h4',
   recorrentes: 'M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3',

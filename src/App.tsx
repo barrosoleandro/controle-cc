@@ -8,6 +8,7 @@ import { enrich } from './domain/analytics'
 import type { Currency } from './domain/types'
 import { Icon, type IconName } from './components/Icons'
 import { Dashboard } from './pages/Dashboard'
+import { Analysis } from './pages/Analysis'
 import { Transactions } from './pages/Transactions'
 import { ImportPage } from './pages/Import'
 import { Subscriptions } from './pages/Subscriptions'
@@ -17,9 +18,9 @@ import { Payslips } from './pages/Payslips'
 import { Investments } from './pages/Investments'
 import { Cards } from './pages/Cards'
 
-const TABS = ['Painel', 'Lançamentos', 'Cartões', 'Recorrentes', 'Simulação', 'Investimentos', 'Holerites', 'Importar', 'Ajustes'] as const
+const TABS = ['Painel', 'Análises', 'Lançamentos', 'Cartões', 'Recorrentes', 'Simulação', 'Investimentos', 'Holerites', 'Importar', 'Ajustes'] as const
 const ICON: Record<(typeof TABS)[number], IconName> = {
-  Painel: 'painel', Lançamentos: 'lancamentos', Cartões: 'cartoes', Recorrentes: 'recorrentes', Simulação: 'simulacao',
+  Painel: 'painel', Análises: 'analises', Lançamentos: 'lancamentos', Cartões: 'cartoes', Recorrentes: 'recorrentes', Simulação: 'simulacao',
   Investimentos: 'investimentos', Holerites: 'holerites', Importar: 'importar', Ajustes: 'ajustes',
 }
 // On a phone the bottom bar holds these four; the rest open from "Mais".
@@ -142,6 +143,7 @@ function Shell() {
       )}
       <main>
         {tab === 'Painel' && <Dashboard ctx={ctx} />}
+        {tab === 'Análises' && <Analysis ctx={ctx} />}
         {tab === 'Lançamentos' && <Transactions ctx={ctx} />}
         {tab === 'Cartões' && <Cards ctx={ctx} />}
         {tab === 'Recorrentes' && <Subscriptions ctx={ctx} />}
