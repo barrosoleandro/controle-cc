@@ -3,7 +3,7 @@ import type { Ctx } from '../App'
 import { addCategory, addRule, clearCheckpoints, changeRuleCategory, deleteRule, deriveOpening, mergeCategories, refreshCategories, saveFx, setBudget, updateAccount, updateBankMap, updateCategory, updateRule } from '../lib/data'
 import { fetchEurBrl } from '../domain/fx'
 import { balanceSeries, enrich } from '../domain/analytics'
-import { averageIncome, averageSpendByCategory, salaryAt } from '../domain/budget'
+import { averageIncome, averageSpendByCategory, findSalaryCategory, salaryAt } from '../domain/budget'
 import { monthWindow } from '../domain/period'
 import { today } from '../lib/hooks'
 import { money, monthLabel } from '../lib/format'
@@ -177,7 +177,7 @@ function Salary({ ctx, budgetTotal, quarter }: { ctx: Ctx; budgetTotal: number; 
   const { data, fx } = ctx
   const eur = money('EUR')
   const signed = (n: number) => `${n > 0 ? '+' : ''}${eur(n)}`
-  const cat = data.categories.find((c) => c.kind === 'income' && c.name === 'Salario')
+  const cat = findSalaryCategory(data.categories)
   const cur = today().slice(0, 7)
   const prev = monthWindow(cur, 2)[0]
   const rows = cat ? data.budgets.filter((b) => b.category_id === cat.id) : []

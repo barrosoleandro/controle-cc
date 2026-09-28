@@ -11,6 +11,7 @@ import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
 import { countryOf } from '../domain/countries'
 import { monthWindow } from '../domain/period'
 import { isTithe } from '../domain/categorize'
+import { findSalaryCategory, salaryAt } from '../domain/budget'
 import { Menu } from './analysis/shared'
 
 // A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
@@ -65,6 +66,20 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     const catName = new Map(data.categories.filter((c) => c.kind === 'expense').map((c) => [c.id, c.name]))
     return new Map(data.budgets.filter((b) => b.month === null && catName.has(b.category_id)).map((b) => [catName.get(b.category_id) ?? '', b.amount * (currency === 'BRL' ? fx.latest() : 1)]))
   }, [data, currency, fx])
+  // Salary: planned per month from its history (Configurações → Orçamentos), received from the transactions.
+  const salary = useMemo(() => {
+    const cat = findSalaryCategory(data.categories)
+    if (!cat) return null
+    const rows = data.budgets.filter((b) => b.category_id === cat.id)
+    const rate = currency === 'BRL' ? fx.latest() : 1
+    const planned = selMonths.map((m) => salaryAt(rows, m)?.amount)
+    return {
+      name: cat.name,
+      b: planned.reduce<number>((s, v) => s + (v ?? 0), 0) * rate,
+      missing: selMonths.filter((_, i) => planned[i] === undefined),
+      a: txs.filter((t) => t.category_id === cat.id && t.kind === 'income' && selSet.has(t.month)).reduce((s, t) => s + t.value, 0),
+    }
+  }, [data, currency, fx, selMonths, selSet, txs])
   const checking = balances.filter((b) => b.account.type === 'checking' && b.account.currency === 'EUR').reduce((s, b) => s + b.display, 0)
   const insights = useMemo(() => savingsInsights({ txs: txs.filter((t) => !isTithe(t.categoryName)), last3: last3(), current: today().slice(0, 7), budgets, subs, checkingBalance: checking, fmt }), [txs, subs, checking, fmt, budgets])
   const alerts = subscriptionAlerts(subs, today(), fmt).filter((a) => !data.settings.dismissed_alerts.includes(a.key))
@@ -147,6 +162,19 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
         const actual = new Map(cats.map((c) => [c.name, c.value]))
         // Monthly budgets scale with the number of picked months.
         const rows = [...budgets].filter(([, b]) => b > 0).map(([name, b]) => ({ name, b: b * selMonths.length, a: actual.get(name) ?? 0 })).sort((x, y) => y.a / y.b - x.a / x.b)
+        // Totals: planned is every budget; actual is every expense, with or without a budget.
+        const totalB = rows.reduce((s, r) => s + r.b, 0)
+        const totalA = cats.reduce((s, c) => s + c.value, 0)
+        const unbudgeted = cats.filter((c) => !rows.some((r) => r.name === c.name)).reduce((s, c) => s + c.value, 0)
+        const pair = (b: number, a: number) => {
+          const top = Math.max(Math.abs(a), Math.abs(b)) || 1
+          return <div className="pair">
+            <div className="bar b" aria-label={`Orçado ${fmt(b)}`}><div style={{ width: `${(Math.max(0, b) / top) * 100}%` }} /></div>
+            <div className="bar a" aria-label={`Realizado ${fmt(a)}`}><div style={{ width: `${(Math.max(0, a) / top) * 100}%` }} /></div>
+          </div>
+        }
+        const amounts = (a: number, b: number, cls = '') => <td className="num" style={{ whiteSpace: 'nowrap' }}>
+          <span className={`v-actual ${cls}`}>{fmt(a)}</span>{' / '}<span className="v-budget">{fmt(b)}</span></td>
         return (
           <div className="card"><h3>Orçado x realizado — {period}{selMonths.length > 1 ? ` (orçamento × ${selMonths.length} meses)` : ''}</h3>
             <p className="muted" style={{ fontSize: 12 }}>
@@ -154,6 +182,11 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
               {' '}— <span className="pos">✓</span> até 80% · <span className="warn">⚠</span> 80–100% · <span className="neg">▲</span> acima do orçado
             </p>
             <table><tbody>
+              {salary && <tr><td style={{ width: '30%' }}><strong>{salary.name}</strong>
+                {salary.missing.length > 0 && <div className="muted" style={{ fontSize: 12 }}>
+                  {salary.b ? `sem valor informado em ${salary.missing.map(monthLabel).join(', ')}` : 'informe em Configurações → Orçamentos'}</div>}</td>
+                <td>{pair(salary.b, salary.a)}</td>
+                {amounts(salary.a, salary.b, salary.b && salary.a < salary.b ? 'neg' : '')}</tr>}
               {rows.map((r) => {
                 // Two bars on the same scale (the larger of the two), budget and actual each in its colour.
                 const used = r.a / r.b
@@ -170,7 +203,16 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
                       {' / '}<span className="v-budget">{fmt(r.b)}</span> <span className="muted">({Math.round(used * 100)}%)</span></td></tr>
                 )
               })}
-            </tbody></table>
+            </tbody>
+            <tfoot>
+              <tr><th style={{ textAlign: 'left' }}>Total despesas
+                {unbudgeted > 0.005 && <div className="muted" style={{ fontSize: 12, fontWeight: 400 }}>realizado inclui {fmt(unbudgeted)} sem orçamento</div>}</th>
+                <td>{pair(totalB, totalA)}</td>
+                {amounts(totalA, totalB, totalA > totalB ? 'neg' : '')}</tr>
+              {salary && <tr><th style={{ textAlign: 'left' }}>Sobra ({salary.name.toLowerCase()} − despesas)</th>
+                <td>{pair(salary.b - totalB, salary.a - totalA)}</td>
+                {amounts(salary.a - totalA, salary.b - totalB, salary.a - totalA < 0 ? 'neg' : '')}</tr>}
+            </tfoot></table>
           </div>)
       }
       case 'balance': return (

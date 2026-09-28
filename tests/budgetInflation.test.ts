@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { averageIncome, averageSpendByCategory, salaryAt } from '../src/domain/budget'
+import { averageIncome, averageSpendByCategory, findSalaryCategory, salaryAt } from '../src/domain/budget'
 import { payVsInflation, priceIndex } from '../src/domain/inflation'
 
 describe('budget averages', () => {
@@ -26,6 +26,12 @@ describe('salary', () => {
     expect(salaryAt(rows, '2026-08')).toEqual({ amount: 4000, since: '2026-05' })
     expect(salaryAt(rows, '2026-09')).toEqual({ amount: 4500, since: '2026-09' })
     expect(salaryAt(rows, '2026-04')).toBeNull()
+  })
+
+  it('finds the salary category with or without accent', () => {
+    expect(findSalaryCategory([{ name: 'Salário', kind: 'expense' }, { name: ' Salário ', kind: 'income' }])?.name).toBe(' Salário ')
+    expect(findSalaryCategory([{ name: 'SALARIO', kind: 'income' }])?.name).toBe('SALARIO')
+    expect(findSalaryCategory([{ name: 'Reembolso', kind: 'income' }])).toBeUndefined()
   })
 })
 
