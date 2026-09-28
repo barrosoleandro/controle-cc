@@ -3,10 +3,10 @@ import type { Ctx } from '../App'
 import { addCategory, addRule, clearCheckpoints, changeRuleCategory, deleteRule, deriveOpening, mergeCategories, refreshCategories, saveFx, setBudget, updateAccount, updateBankMap, updateCategory, updateRule } from '../lib/data'
 import { fetchEurBrl } from '../domain/fx'
 import { balanceSeries, enrich } from '../domain/analytics'
-import { averageSpendByCategory } from '../domain/budget'
+import { averageIncome, averageSpendByCategory, salaryAt } from '../domain/budget'
 import { monthWindow } from '../domain/period'
 import { today } from '../lib/hooks'
-import { money } from '../lib/format'
+import { money, monthLabel } from '../lib/format'
 import { MAPPING_OPEN_QUESTIONS } from '../domain/defaults'
 import type { CategoryKind } from '../domain/types'
 import { byName } from '../domain/categorize'
@@ -143,7 +143,8 @@ function Budgets({ ctx }: { ctx: Ctx }) {
     fill(false)
   }) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div className="card"><h3>Orçamento mensal (EUR) — total {eur(total)}</h3>
+  return <><Salary ctx={ctx} budgetTotal={total} quarter={quarter} />
+  <div className="card"><h3>Orçamento mensal (EUR) — total {eur(total)}</h3>
     <p className="muted">A média considera {months[0]} a {months.at(-1)}, todas as contas convertidas para euro, meses sem gasto contando como zero
       (uma conta anual fica dividida pelos 12 meses), arredondada para cima de 10 em 10. Total das médias: {eur(totalAvg)} em 12 meses,
       {' '}{eur(totalAvg3)} no último trimestre ({quarter[0]} a {quarter.at(-1)}).</p>
@@ -163,7 +164,68 @@ function Budgets({ ctx }: { ctx: Ctx }) {
           <td className="num"><input key={`${c.id}:${v ?? ''}`} type="number" step="1" min="0" defaultValue={v ?? ''} placeholder={a ? String(a) : ''} disabled={busy}
             className={v && a && v < a ? 'warn' : ''} title={v && a && v < a ? 'Abaixo da média gasta' : undefined}
             onBlur={(e) => e.target.value !== '' && Number(e.target.value) !== v && setBudget(c.id, Number(e.target.value)).then(ctx.reload)} /></td></tr>
-      })}</tbody></table></div>
+      })}</tbody></table></div></>
+}
+
+/**
+ * Net monthly salary (EUR) next to the budget. The new value applies from the current month
+ * on; the previous one is the value in force last month (typed here, or, with no history, the
+ * average received in the last quarter). The card shows the change and what is left of the
+ * salary after the expense budget, before and after.
+ */
+function Salary({ ctx, budgetTotal, quarter }: { ctx: Ctx; budgetTotal: number; quarter: string[] }) {
+  const { data, fx } = ctx
+  const eur = money('EUR')
+  const signed = (n: number) => `${n > 0 ? '+' : ''}${eur(n)}`
+  const cat = data.categories.find((c) => c.kind === 'income' && c.name === 'Salario')
+  const cur = today().slice(0, 7)
+  const prev = monthWindow(cur, 2)[0]
+  const rows = cat ? data.budgets.filter((b) => b.category_id === cat.id) : []
+  const etx = useMemo(() => enrich(data.transactions, data.categories, data.accounts, fx, 'EUR'), [data.transactions, data.categories, data.accounts, fx])
+  const received = cat ? averageIncome(etx, cat.id, quarter) : 0
+  const thisMonth = cat ? averageIncome(etx, cat.id, [cur]) : 0
+  if (!cat) return <div className="card"><h3>Salário</h3><p className="muted">Crie uma categoria de receita chamada “Salario” para planejar o salário.</p></div>
+
+  const now = salaryAt(rows, cur)
+  const newValue = now?.since === cur ? now.amount : undefined
+  const typedBefore = salaryAt(rows, prev)
+  const before = typedBefore?.amount ?? received
+  const after = now?.amount
+  const save = (v: string, month: string, old: number | undefined) => {
+    if (v === '' || Number(v) === old) return
+    setBudget(cat.id, Number(v), `${month}-01`).then(ctx.reload)
+  }
+  const history = rows.filter((r) => r.month).sort((a, b) => a.month!.localeCompare(b.month!))
+
+  return <div className="card"><h3>Salário líquido mensal (EUR)</h3>
+    <div className="row">
+      <label className="inline">Anterior (até {monthLabel(prev)})
+        <input key={`p:${typedBefore?.amount ?? ''}`} type="number" step="1" min="0" defaultValue={typedBefore?.amount ?? ''} placeholder={received ? String(Math.round(received)) : ''}
+          onBlur={(e) => save(e.target.value, typedBefore?.since ?? prev, typedBefore?.amount)} /></label>
+      <label className="inline">Novo (a partir de {monthLabel(cur)})
+        <input key={`n:${newValue ?? ''}`} type="number" step="1" min="0" defaultValue={newValue ?? ''} placeholder={after !== undefined ? String(after) : ''}
+          onBlur={(e) => save(e.target.value, cur, newValue)} /></label>
+    </div>
+    <p className="muted" style={{ fontSize: 13 }}>
+      {typedBefore ? `Anterior: valor informado desde ${monthLabel(typedBefore.since)}.` : `Anterior: média recebida de ${monthLabel(quarter[0])} a ${monthLabel(quarter.at(-1)!)} (${eur(received)}), até você informar o valor.`}
+      {' '}Recebido em {monthLabel(cur)} até agora: {eur(thisMonth)}.
+    </p>
+    {after === undefined ? <p className="muted">Informe o salário novo para ver o impacto.</p> : (() => {
+      const diff = after - before
+      const pct = before ? diff / before : 0
+      const cls = diff > 0 ? 'pos' : diff < 0 ? 'neg' : ''
+      return <div className="kpis">
+        <div className="kpi"><div className="l">Diferença por mês</div><div className={`v ${cls}`}>{signed(diff)}</div>
+          <div className="d muted">{before ? `${pct > 0 ? '+' : ''}${(pct * 100).toFixed(1).replace('.', ',')}% sobre ${eur(before)}` : '—'}</div></div>
+        <div className="kpi"><div className="l">Diferença em 12 meses</div><div className={`v ${cls}`}>{signed(diff * 12)}</div></div>
+        <div className="kpi"><div className="l">Sobra após o orçamento ({eur(budgetTotal)})</div><div className={`v ${after - budgetTotal < 0 ? 'neg' : ''}`}>{eur(after - budgetTotal)}</div>
+          <div className="d muted">antes {eur(before - budgetTotal)}</div></div>
+        <div className="kpi"><div className="l">Orçamento / salário</div><div className={`v ${budgetTotal > after ? 'neg' : ''}`}>{after ? `${Math.round((budgetTotal / after) * 100)}%` : '—'}</div>
+          <div className="d muted">antes {before ? `${Math.round((budgetTotal / before) * 100)}%` : '—'}</div></div>
+      </div>
+    })()}
+    {history.length > 0 && <p className="muted" style={{ fontSize: 13 }}>Histórico: {history.map((r) => `${monthLabel(r.month!.slice(0, 7))} ${eur(r.amount)}`).join(' · ')}</p>}
+  </div>
 }
 
 function Categories({ ctx }: { ctx: Ctx }) {

@@ -61,8 +61,9 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   const balances = useBalances(ctx)
   const subs = useSubscriptions(ctx)
   const budgets = useMemo(() => {
-    const catName = new Map(data.categories.map((c) => [c.id, c.name]))
-    return new Map(data.budgets.filter((b) => b.month === null).map((b) => [catName.get(b.category_id) ?? '', b.amount * (currency === 'BRL' ? fx.latest() : 1)]))
+    // Expense categories only: the salary is kept in the same table, as an income category.
+    const catName = new Map(data.categories.filter((c) => c.kind === 'expense').map((c) => [c.id, c.name]))
+    return new Map(data.budgets.filter((b) => b.month === null && catName.has(b.category_id)).map((b) => [catName.get(b.category_id) ?? '', b.amount * (currency === 'BRL' ? fx.latest() : 1)]))
   }, [data, currency, fx])
   const checking = balances.filter((b) => b.account.type === 'checking' && b.account.currency === 'EUR').reduce((s, b) => s + b.display, 0)
   const insights = useMemo(() => savingsInsights({ txs: txs.filter((t) => !isTithe(t.categoryName)), last3: last3(), current: today().slice(0, 7), budgets, subs, checkingBalance: checking, fmt }), [txs, subs, checking, fmt, budgets])

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { averageSpendByCategory } from '../src/domain/budget'
+import { averageIncome, averageSpendByCategory, salaryAt } from '../src/domain/budget'
 import { payVsInflation, priceIndex } from '../src/domain/inflation'
 
 describe('budget averages', () => {
@@ -11,6 +11,21 @@ describe('budget averages', () => {
       tx('2026-03', 5000, 'salario', 'income'), tx('2026-03', -900, 'transf', 'transfer'), tx('2025-12', -999, 'mercado'), tx('2026-01', -50, null),
     ], ['2026-01', '2026-02', '2026-03'])
     expect(Object.fromEntries(avg)).toEqual({ mercado: 200, seguro: 400 })
+  })
+})
+
+describe('salary', () => {
+  it('averages the income received in a category, empty months as zero', () => {
+    const tx = (month: string, value: number, category_id: string, kind = 'income') => ({ month, value, kind, category_id })
+    expect(averageIncome([tx('2026-07', 4000, 'sal'), tx('2026-08', 4200, 'sal'), tx('2026-08', 50, 'reemb'), tx('2026-06', 9999, 'sal'), tx('2026-08', -10, 'sal', 'expense')],
+      'sal', ['2026-07', '2026-08', '2026-09'])).toBeCloseTo(8200 / 3)
+  })
+
+  it('takes the latest dated value up to the month, ignoring the undated budget row', () => {
+    const rows = [{ month: null, amount: 1 }, { month: '2026-05-01', amount: 4000 }, { month: '2026-09-01', amount: 4500 }]
+    expect(salaryAt(rows, '2026-08')).toEqual({ amount: 4000, since: '2026-05' })
+    expect(salaryAt(rows, '2026-09')).toEqual({ amount: 4500, since: '2026-09' })
+    expect(salaryAt(rows, '2026-04')).toBeNull()
   })
 })
 

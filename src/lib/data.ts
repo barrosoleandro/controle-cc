@@ -466,8 +466,9 @@ export async function mergeCategories(fromIds: string[], toId: string, budgets: 
   must(await supabase.from('categories').delete().in('id', from))
   return moved.length
 }
-export async function setBudget(category_id: string, amount: number) {
-  must(await supabase.from('budgets').upsert({ category_id, month: null, amount }, { onConflict: 'user_id,category_id,month' }))
+/** `month` (first day, yyyy-mm-01) stores a value from that month on; null is the default monthly budget. */
+export async function setBudget(category_id: string, amount: number, month: string | null = null) {
+  must(await supabase.from('budgets').upsert({ category_id, month, amount }, { onConflict: 'user_id,category_id,month' }))
 }
 export async function saveSettings(patch: Partial<Settings>) {
   must(await supabase.from('user_settings').upsert({ ...patch, updated_at: new Date().toISOString() }))
