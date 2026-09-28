@@ -20,3 +20,29 @@ export function averageSpendByCategory(txs: SpendTx[], months: string[]): Map<st
   }
   return out
 }
+
+/**
+ * Average monthly income of one category over the given months (empty months as zero),
+ * e.g. the salary actually received, to compare with the salary typed in the budget.
+ */
+export function averageIncome(txs: SpendTx[], categoryId: string, months: string[]): number {
+  const inWindow = new Set(months)
+  const total = txs.reduce((s, t) => t.category_id === categoryId && t.kind === 'income' && inWindow.has(t.month) ? s + t.value : s, 0)
+  return total / Math.max(1, months.length)
+}
+
+/**
+ * The salary in force in a month. Its history is kept as budget rows of the salary category,
+ * each dated with the first day of the month the value starts.
+ */
+export function salaryAt(rows: { month: string | null; amount: number }[], month: string): { amount: number; since: string } | null {
+  const r = rows.filter((x) => x.month !== null && x.month.slice(0, 7) <= month)
+    .sort((a, b) => b.month!.localeCompare(a.month!))[0]
+  return r ? { amount: r.amount, since: r.month!.slice(0, 7) } : null
+}
+
+/** The income category holding the salary: "Salario", with or without accent, any case. */
+export function findSalaryCategory<C extends { name: string; kind: string }>(categories: C[]): C | undefined {
+  const plain = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').trim().toLowerCase()
+  return categories.find((c) => c.kind === 'income' && plain(c.name) === 'salario')
+}
