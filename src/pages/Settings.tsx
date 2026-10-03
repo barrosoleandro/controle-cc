@@ -13,14 +13,16 @@ import { byName } from '../domain/categorize'
 import { CategorySelect } from '../components/CategorySelect'
 import { planMerges } from '../domain/simplify'
 import { loadTheme, saveTheme, type Mode, type Theme } from '../lib/theme'
+import { DEFAULT_OLLAMA, listModels, loadOllama, normalizeUrl, ollamaReady, saveOllama, type OllamaConfig, type OllamaModel } from '../lib/ollama'
 
-const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações', 'Aparência'] as const
+const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações', 'IA local', 'Aparência'] as const
 
 export function SettingsPage({ ctx }: { ctx: Ctx }) {
   const [sec, setSec] = useState<(typeof SECTIONS)[number]>('Contas')
   return <>
     <div className="row">{SECTIONS.map((s) => <button key={s} className={s === sec ? 'active' : ''} onClick={() => setSec(s)}>{s}</button>)}</div>
     {sec === 'Contas' && <Accounts ctx={ctx} />}
+    {sec === 'IA local' && <LocalAi />}
     {sec === 'Aparência' && <Appearance />}
     {sec === 'Orçamentos' && <Budgets ctx={ctx} />}
     {sec === 'Categorias' && <Categories ctx={ctx} />}
@@ -31,6 +33,100 @@ export function SettingsPage({ ctx }: { ctx: Ctx }) {
 }
 
 /** Light / dark mode for this device. */
+
+/**
+ * Local model (Ollama). Per device on purpose: the address and the model belong to the
+ * computer in front of you, so each machine keeps its own without syncing the wrong one.
+ */
+function LocalAi() {
+  const [cfg, setCfg] = useState(loadOllama)
+  const [models, setModels] = useState<OllamaModel[] | null>(null)
+  const [erro, setErro] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const save = (next: OllamaConfig) => { setCfg(next); saveOllama(next) }
+
+  async function testar() {
+    setBusy(true); setErro(null); setModels(null)
+    const probe = { ...cfg, url: normalizeUrl(cfg.url) }
+    save(probe)
+    try {
+      const found = await listModels(probe)
+      setModels(found)
+      // One model only: pick it. With several, let the user choose.
+      if (!probe.model && found.length === 1) save({ ...probe, model: found[0].name })
+      if (!found.length) setErro('O Ollama respondeu, mas não tem nenhum modelo baixado. Rode, por exemplo: ollama pull llama3.1:8b')
+    } catch (e) { setErro((e as Error).message) } finally { setBusy(false) }
+  }
+
+  const gb = (n: number) => `${(n / 1e9).toFixed(1)} GB`
+  const origens = `setx OLLAMA_ORIGINS "${location.origin}"`
+
+  return <div className="card">
+    <h3>IA local (Ollama)</h3>
+    <p className="muted">
+      Com o Ollama rodando nesta máquina, a identificação de lançamentos e a explicação da comparação de holerites
+      acontecem <strong>sem nada sair do computador</strong> — nem estabelecimento, nem valor, nem holerite.
+      Em troca, um modelo local acerta menos que um modelo grande hospedado: as sugestões continuam vindo
+      desmarcadas para você conferir.
+    </p>
+
+    <div className="row">
+      <label className="inline">
+        <input type="checkbox" checked={cfg.enabled} onChange={(e) => save({ ...cfg, enabled: e.target.checked })} /> usar a IA local
+      </label>
+    </div>
+
+    <div className="form" style={{ marginTop: 8 }}>
+      <label>Endereço do Ollama
+        <input value={cfg.url} placeholder="http://localhost:11434" disabled={busy}
+          onChange={(e) => setCfg({ ...cfg, url: e.target.value })}
+          onBlur={(e) => save({ ...cfg, url: normalizeUrl(e.target.value) || DEFAULT_OLLAMA.url })} />
+      </label>
+      <label>Modelo
+        {models?.length
+          ? <select value={cfg.model} onChange={(e) => save({ ...cfg, model: e.target.value })}>
+            <option value="">escolha…</option>
+            {models.map((m) => <option key={m.name} value={m.name}>{m.name} · {gb(m.size)}{m.parameterSize ? ' · ' + m.parameterSize : ''}</option>)}
+          </select>
+          : <input value={cfg.model} placeholder="llama3.1:8b" disabled={busy}
+            onChange={(e) => setCfg({ ...cfg, model: e.target.value })} onBlur={(e) => save({ ...cfg, model: e.target.value.trim() })} />}
+      </label>
+    </div>
+
+    <div className="row" style={{ marginTop: 8 }}>
+      <button className="primary" onClick={testar} disabled={busy}>{busy ? 'Testando…' : 'Testar conexão'}</button>
+      {models && !erro && <span className="pos">✔ Ollama respondeu · {models.length} modelo(s) disponível(is)</span>}
+    </div>
+    {erro && <p className="err" style={{ whiteSpace: 'pre-wrap' }}>{erro}</p>}
+    {cfg.enabled && !ollamaReady(cfg) && !erro && <p className="warn">Falta escolher o modelo: a IA local só é chamada quando endereço e modelo estão definidos.</p>}
+
+    <details style={{ marginTop: 10 }}>
+      <summary>Como deixar o Ollama acessível para esta página</summary>
+      <p className="muted">
+        Esta página é servida pela Vercel, em outro domínio. O Ollama só aceita chamadas de origens que você autorizar,
+        então defina a variável abaixo <strong>no ambiente do Ollama</strong> e reinicie o serviço:
+      </p>
+      <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{origens}</pre>
+      <p className="muted">
+        No Safari isso não funciona, porque ele bloqueia uma página HTTPS falando com <code>http://localhost</code>;
+        no Chrome e no Edge funciona. Rodando o app localmente (<code>npm run dev</code>) funciona em todos.
+      </p>
+      <p className="muted">
+        <strong>Pasta dos modelos:</strong> quem decide onde os arquivos ficam é o próprio Ollama, pela variável
+        <code> OLLAMA_MODELS</code> — uma página web não consegue mudar isso. Para guardar os modelos em outro disco,
+        defina <code>OLLAMA_MODELS</code> no ambiente do Ollama (ex.: <code>D:\ollama\models</code>) e reinicie o serviço.
+      </p>
+      <p className="muted">
+        O que muda de computador para computador — e fica guardado aqui, só neste aparelho — é o endereço e o modelo.
+        Se o Ollama estiver em <em>outra</em> máquina da sua rede, o endereço dela precisa ser liberado na CSP do site
+        (<code>vercel.json</code>): a CSP aceita <code>localhost</code> e <code>127.0.0.1</code>, mas não uma faixa de IPs.
+      </p>
+    </details>
+  </div>
+}
+
+
 function Appearance() {
   const [t, setT] = useState<Theme>(loadTheme)
   const set = (next: Theme) => { setT(next); saveTheme(next) }

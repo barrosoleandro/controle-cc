@@ -5,6 +5,8 @@ import { bucketOf, bucketsOf, firstSeen, groupRows, movers, perMonth, summarize,
 import { countryOf } from '../../domain/countries'
 import { isTithe } from '../../domain/categorize'
 import { Delta, Kpi, Swatch } from './shared'
+import { ExplicarIA } from '../../components/ExplicarIA'
+import { analysisPrompt } from '../../domain/localAi'
 import { bucketLabel, defaultGrain, fullDate, noun, OTHER_COLOR, pct, seriesKeyOf, topWithOther, type ViewProps } from './util'
 
 const GRAINS: [Grain, string][] = [['day', 'Dia'], ['week', 'Semana'], ['month', 'Mês']]
@@ -81,6 +83,26 @@ export function Overview(p: ViewProps) {
   }, [rows, ctx.data.accounts])
 
   const total = s.total || 1
+  // Facts for the local-model narration: everything is already on this screen, nothing new is
+  // computed here. Tithe stays out, as everywhere else: the numbers show, the app does not comment.
+  const aiFacts = () => analysisPrompt({
+    medida: measure,
+    moeda: ctx.currency,
+    periodo: `${range.from} a ${range.to}`,
+    comparacao: prevRange ? `${prevRange.from} a ${prevRange.to}` : null,
+    total: s.total,
+    totalAnterior: ps?.total ?? null,
+    mediaMes: perMonth(s.total, range),
+    lancamentos: s.count,
+    ticketMedio: s.avgTicket,
+    maior: s.top ? { estabelecimento: s.top.merchant, valor: s.top.amt, dia: s.top.day } : null,
+    fluxos: p.unfiltered ? { receitas: flows.cur.income, despesas: flows.cur.expense, resultado: flows.cur.net, taxaPoupanca: flows.cur.rate } : null,
+    categorias: cats.filter((c) => !isTithe(c.key)).slice(0, 8).map((c) => ({ nome: c.key, total: c.total, fatia: c.total / total })),
+    subiram: (moved?.up ?? []).map((m) => ({ nome: m.key, antes: m.prev, agora: m.cur, delta: m.delta })),
+    cairam: (moved?.down ?? []).map((m) => ({ nome: m.key, antes: m.prev, agora: m.cur, delta: m.delta })),
+    novos: fresh.slice(0, 6).map((m) => ({ nome: m.key, total: m.total })),
+  })
+
   const label = noun(measure)
   const catList = topWithOther(cats, 8)
   const merchList = merchants.slice(0, 8)
@@ -216,6 +238,11 @@ export function Overview(p: ViewProps) {
           <p className="muted" style={{ fontSize: 12 }}>Pelo banco da conta: Itaú = Brasil, BCP e CCF = França, Millennium = Portugal.</p>
         </div>
       )}
+      <div className="card wide">
+        <h3>Resumo em texto</h3>
+        <ExplicarIA build={aiFacts} label="Resumir com a IA local"
+          signature={`${measure}|${range.from}|${range.to}|${prevRange?.from ?? ''}|${Math.round(s.total)}`} />
+      </div>
     </div>
   )
 }

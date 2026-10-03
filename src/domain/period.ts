@@ -53,19 +53,27 @@ function finish(key: string, sums: Map<string, number>, window: string[], baseli
   return { key, perMonth, outlier, isNew, avg, total: perMonth.reduce<number>((s, v) => s + (v ?? 0), 0), flagged: outlier.some(Boolean) }
 }
 
-/** Spending per category and, inside each, per merchant, over the window. Expenses only. */
-export function buildPeriod(txs: PeriodTx[], window: string[], baseline = baselineMonths(window)): CategoryGroup[] {
+/**
+ * Per category and, inside each, per merchant, over the window: spending when kind is
+ * "expense" (positive, refunds lowering the cell) or money received when it is "income"
+ * (positive). Transfers are built separately by the caller, since they net out.
+ */
+export function buildPeriod(
+  txs: PeriodTx[], window: string[], baseline = baselineMonths(window), kind: 'expense' | 'income' = 'expense',
+): CategoryGroup[] {
   const months = new Set([...window, ...baseline, ...monthWindow(window.at(-1) ?? '', window.length + NEW_LOOKBACK)])
   const since = txs.reduce((m, t) => (t.month < m ? t.month : m), '9999-12')
+  const sign = kind === 'expense' ? -1 : 1
   const cats = new Map<string, { sums: Map<string, number>; merchants: Map<string, Map<string, number>> }>()
   for (const t of txs) {
-    if (t.kind !== 'expense' || !months.has(t.month)) continue
+    if (t.kind !== kind || !months.has(t.month)) continue
     const c = cats.get(t.categoryName) ?? { sums: new Map(), merchants: new Map() }
     const mk = t.merchant || '(sem estabelecimento)'
     const ms = c.merchants.get(mk) ?? new Map<string, number>()
-    // Spending is positive; a refund in the same month lowers the cell.
-    c.sums.set(t.month, (c.sums.get(t.month) ?? 0) - t.value)
-    ms.set(t.month, (ms.get(t.month) ?? 0) - t.value)
+    // Both kinds read positive: spending is the negated value, income the value itself.
+    // A refund inside an expense category still lowers that month's cell.
+    c.sums.set(t.month, (c.sums.get(t.month) ?? 0) + sign * t.value)
+    ms.set(t.month, (ms.get(t.month) ?? 0) + sign * t.value)
     c.merchants.set(mk, ms)
     cats.set(t.categoryName, c)
   }

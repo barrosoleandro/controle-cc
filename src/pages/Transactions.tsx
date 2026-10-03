@@ -276,6 +276,15 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
     return buildPeriod(etx.filter((t) => shown(t.account_id)), months)
       .map((g) => (isTithe(g.key) ? { ...quiet(g), merchants: g.merchants.map(quiet) } : g))
   }, [etx, shown, months])
+  // Money received, built exactly like the expense groups so salary and the rest show up as
+  // their own lines. The out-of-pattern and "new" marks are switched off here: red means bad
+  // everywhere else in this table, and a bonus month is not bad news.
+  const receitas = useMemo(() => {
+    const quiet = <R extends PeriodRow>(r: R): R => ({ ...r, outlier: r.outlier.map(() => false), isNew: r.isNew.map(() => false), flagged: false })
+    return buildPeriod(etx.filter((t) => shown(t.account_id)), months, undefined, 'income')
+      .map((g) => ({ ...quiet(g), merchants: g.merchants.map(quiet) }))
+  }, [etx, shown, months])
+
   // Transfers between the user's own accounts (and paid card bills) of the ticked accounts:
   // per month by direction (for the totals) and per merchant (shown as their own category,
   // sent positive, received negative, never part of the expense total).
@@ -323,6 +332,8 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
     ? all.map((g) => ({ ...g, merchants: g.merchants.filter(needsLook) })).filter((g) => g.flagged || g.merchants.length)
     : all).map((g) => ({ ...g, merchants: [...g.merchants].sort(bySort) })).sort(bySort)
   const newCount = col === null ? 0 : all.reduce((s, g) => s + g.merchants.filter((m) => m.isNew[col]).length, 0)
+  const receitaTotals = months.map((_, i) => receitas.reduce((s, g) => s + (g.perMonth[i] ?? 0), 0))
+  const receitaGrand = receitaTotals.reduce((s, v) => s + v, 0)
   const columnTotals = months.map((_, i) => groups.reduce((s, g) => s + (g.perMonth[i] ?? 0), 0))
   const grand = columnTotals.reduce((s, v) => s + v, 0)
   const toReview = all.reduce((s, g) => s + g.merchants.filter((m) => subOf.get(m.key)?.reason).length, 0)
@@ -364,7 +375,7 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
           </select>
         </label>
         <label className="inline"><input type="checkbox" checked={onlyAlerts} onChange={(e) => setOnlyAlerts(e.target.checked)} /> só o que precisa de atenção</label>
-        <button onClick={() => setOpen(open.size ? new Set() : new Set(groups.map((g) => g.key)))}>{open.size ? 'Recolher tudo' : 'Expandir tudo'}</button>
+        <button onClick={() => setOpen(open.size ? new Set() : new Set([...receitas.map((g) => g.key), ...groups.map((g) => g.key), ...(transfers.group ? [transfers.group.key] : [])]))}>{open.size ? 'Recolher tudo' : 'Expandir tudo'}</button>
       </div>
       {gaps.map((g) => (
         <div key={g.name} className="alert warn" style={{ marginBottom: 8 }}>
@@ -373,7 +384,8 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
         </div>
       ))}
       <p className="muted">
-        Despesas {n === 1 ? `de ${months[0]}` : `de ${months[0]} a ${months.at(-1)}`} · total {fmt(grand)}
+        {n === 1 ? `Movimentos de ${months[0]}` : `Movimentos de ${months[0]} a ${months.at(-1)}`} · despesas {fmt(grand)}
+        {receitas.length > 0 && <> · <span className="pos">receitas {fmt(receitaGrand)}</span></>}
         {flagged > 0 && <> · <span className="neg">⚑ {flagged} categoria(s) fora da média</span></>}
         {toReview > 0 && <> · <span className="warn">↻ {toReview} assinatura(s) para revisar</span></>}
         {col !== null && <> · <span style={{ background: 'var(--new)', padding: '0 4px' }}>{newCount} estabelecimento(s) novos em {months[col]}</span></>}
@@ -401,6 +413,37 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
           <th /><th />
         </tr></thead>
         <tbody>
+          {receitas.length > 0 && !onlyAlerts && <>
+            <tr className="section"><th style={sticky} colSpan={months.length + 4}>Receitas</th></tr>
+            {receitas.map((g) => {
+              const isOpen = open.has(g.key)
+              return (
+                <Fragment key={`receita/${g.key}`}>
+                  <tr className="receita-row">
+                    <td style={{ ...sticky, whiteSpace: 'nowrap' }}>
+                      <button className="link" onClick={() => toggle(g.key)} aria-expanded={isOpen}>{isOpen ? '▾' : '▸'} {g.key}</button>
+                      <span className="muted" style={{ fontSize: 12 }}> entrada · fora do total de despesas</span>
+                    </td>
+                    <td />
+                    {cells(g)}
+                  </tr>
+                  {isOpen && g.merchants.map((m) => (
+                    <tr key={`receita/${g.key}/${m.key}`} className="receita-row">
+                      <td style={{ ...sticky, whiteSpace: 'nowrap', paddingLeft: 24, fontSize: 13 }}>
+                        {m.key}{' '}<button className="link" style={{ fontWeight: 400, fontSize: 12 }} onClick={() => onOpen(m.key)}>ver lançamentos</button>
+                      </td>
+                      <td style={{ minWidth: 170 }}>
+                        <CategorySelect ctx={ctx} value={catIdByName.get(g.key) ?? ''} empty="—" disabled={saving === m.key}
+                          label={`Categoria de ${m.key}`} onChange={(id) => moveMerchant(m.key, id)} />
+                      </td>
+                      {cells(m)}
+                    </tr>
+                  ))}
+                </Fragment>
+              )
+            })}
+            <tr className="section"><th style={sticky} colSpan={months.length + 4}>Despesas</th></tr>
+          </>}
           {groups.map((g) => {
             const isOpen = open.has(g.key) || onlyAlerts
             const reviews = g.merchants.filter((m) => subOf.get(m.key)?.reason).length
@@ -465,7 +508,13 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
             )
           })()}
         </tbody>
-        <tfoot><tr>
+        <tfoot>
+        {receitas.length > 0 && <tr>
+          <th style={sticky}>Total das receitas<div className="rule">soma das categorias de receita acima. Difere de “Total de entradas” quando um estorno cai numa categoria de despesa: ele entra como dinheiro recebido, mas acima abate a despesa do mês</div></th><th />
+          {receitaTotals.map((v, i) => <th key={i} className="num pos">{fmt(v)}</th>)}
+          <th /><th className="num pos">{fmt(receitaGrand)}</th>
+        </tr>}
+        <tr>
           <th style={sticky}>Total das despesas<div className="rule">soma das categorias de despesa acima, incluindo as compras do cartão pago por uma conta marcada; estornos abatem; sem transferências</div></th><th />
           {columnTotals.map((v, i) => <th key={i} className="num">{fmt(v)}</th>)}
           <th /><th className="num">{fmt(grand)}</th>

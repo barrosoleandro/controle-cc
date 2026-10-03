@@ -3,7 +3,10 @@ import type { Ctx } from '../App'
 import { saveSettings, sha256 } from '../lib/data'
 import { deletePayslip, listPayslips, savePayslip, type Payslip } from '../lib/payroll'
 import { money, monthLabel } from '../lib/format'
-import { checkContract, DEFAULT_CONTRACT, type ContractItem } from '../domain/payroll'
+import { checkContract, comparePayslips, DEFAULT_CONTRACT, type ContractItem, type LineDiff } from '../domain/payroll'
+import { inflationPrompt, payslipPrompt } from '../domain/localAi'
+import { HICP_GEO, hicpUrl, mergeOfficial, parseHicp } from '../domain/hicp'
+import { ExplicarIA } from '../components/ExplicarIA'
 import { pdfToRows } from '../parsers/pdfText'
 import { CartesianGrid, Legend, Line, LineChart, ReferenceDot, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
@@ -36,6 +39,7 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
   const [busy, setBusy] = useState(false)
   const saved = ctx.data.settings.payroll_contract
   const [contract, setContract] = useState<ContractItem[]>(saved?.length ? saved : DEFAULT_CONTRACT)
+  const [comparing, setComparing] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -112,6 +116,8 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
             <input type="file" multiple accept=".pdf" onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} /></label>
           <label className="inline"><span className="muted">Pasta inteira</span>
             <input ref={dirRef} type="file" multiple onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} /></label>
+          <button onClick={() => setComparing((v) => !v)} disabled={list.length < 2}
+            title={list.length < 2 ? 'Precisa de dois holerites importados' : undefined}>{comparing ? 'Fechar comparação' : 'Comparar dois meses'}</button>
           {cur && <button onClick={async () => { if (confirm(`Excluir o holerite de ${cur.period.slice(0, 7)}?`)) { await deletePayslip(cur.id); await load() } }}>Excluir</button>}
         </div>
         <p className="muted">Selecione vários PDFs de uma vez, ou a pasta inteira (subpastas incluídas; o que não for holerite é pulado).
@@ -208,6 +214,8 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
         </div>
       </>}
 
+      {comparing && <Comparar list={list} />}
+
       {list.length > 0 && <div className="card">
         <h3>Todos os meses</h3>
         <div className="scroll"><table>
@@ -222,6 +230,103 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
       </div>}
     </div>
   )
+}
+
+const FIELD_PT: Record<LineDiff['field'], string> = {
+  gain: 'ganho', deduction: 'desconto', employer: 'empregador', base: 'base', rate: 'taxa',
+}
+
+/** Side-by-side diff of two payslips: which totals moved and which lines moved them. */
+function Comparar({ list }: { list: Payslip[] }) {
+  const [aId, setAId] = useState(() => list[1]?.id ?? '')
+  const [bId, setBId] = useState(() => list[0]?.id ?? '')
+  const a = list.find((p) => p.id === aId)
+  const b = list.find((p) => p.id === bId)
+  const diff = useMemo(() => (a && b ? comparePayslips(toCompare(a), toCompare(b)) : null), [a, b])
+
+  if (list.length < 2) return <div className="card"><h3>Comparar dois meses</h3><p className="muted">Importe pelo menos dois holerites para comparar.</p></div>
+
+  const label = (p: Payslip) => monthLabel(p.period.slice(0, 7))
+  const sign = (v: number) => `${v > 0 ? '+' : ''}${eur(v)}`
+  const cls = (v: number) => (v > 0 ? 'pos' : v < 0 ? 'neg' : 'muted')
+
+  return (
+    <div className="card">
+      <h3>Comparar dois meses</h3>
+      <div className="row">
+        <label className="inline">De
+          <select value={aId} onChange={(e) => setAId(e.target.value)}>
+            {list.map((p) => <option key={p.id} value={p.id}>{label(p)}</option>)}
+          </select>
+        </label>
+        <label className="inline">Para
+          <select value={bId} onChange={(e) => setBId(e.target.value)}>
+            {list.map((p) => <option key={p.id} value={p.id}>{label(p)}</option>)}
+          </select>
+        </label>
+      </div>
+
+      {!diff || aId === bId ? <p className="muted">Escolha dois meses diferentes.</p> : <>
+        {!diff.totals.length && !diff.lines.length && <p className="pos">Os dois holerites são idênticos.</p>}
+
+        {diff.totals.length > 0 && <>
+          <h4>Totais</h4>
+          <div className="scroll"><table>
+            <thead><tr><th>Item</th><th className="num">{label(a!)}</th><th className="num">{label(b!)}</th><th className="num">Diferença</th></tr></thead>
+            <tbody>{diff.totals.map((t) => (
+              <tr key={t.key} style={t.key === 'gross' || t.key === 'net_paid' ? { fontWeight: 600 } : undefined}>
+                <td>{t.label}</td>
+                <td className="num">{t.key === 'pas_rate' ? (t.a ?? '—') : f(t.a)}</td>
+                <td className="num">{t.key === 'pas_rate' ? (t.b ?? '—') : f(t.b)}</td>
+                <td className={`num ${cls(t.diff)}`}>{t.key === 'pas_rate' ? `${t.diff > 0 ? '+' : ''}${t.diff.toFixed(2)}` : sign(t.diff)}</td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        </>}
+
+        {diff.lines.length > 0 && <>
+          <h4>Linhas que mudaram ({diff.lines.length})</h4>
+          <p className="muted" style={{ fontSize: 12 }}>
+            Ordenado pelo tamanho da diferença. A soma dos <strong>ganhos</strong> (fora da linha /101, que é o próprio bruto)
+            dá <span className={cls(diff.gainDiff)}>{sign(diff.gainDiff)}</span> — é o que explica a variação do bruto.
+            “nova” = só aparece no mês da direita; “saiu” = só no da esquerda.
+          </p>
+          <div className="scroll" style={{ maxHeight: 460, overflowY: 'auto' }}><table>
+            <thead><tr><th>Código</th><th>Linha</th><th>Coluna</th><th className="num">{label(a!)}</th><th className="num">{label(b!)}</th><th className="num">Diferença</th></tr></thead>
+            <tbody>{diff.lines.map((l, i) => (
+              <tr key={`${l.code ?? ''}|${l.label}|${l.field}|${i}`}>
+                <td>{l.code ?? ''}</td>
+                <td>{l.label}
+                  {l.status === 'added' && <span className="pos" style={{ fontSize: 12 }}> · nova</span>}
+                  {l.status === 'removed' && <span className="neg" style={{ fontSize: 12 }}> · saiu</span>}
+                </td>
+                <td className="muted" style={{ fontSize: 12 }}>{FIELD_PT[l.field]}</td>
+                <td className="num">{l.field === 'rate' ? l.a || '' : f(l.a)}</td>
+                <td className="num">{l.field === 'rate' ? l.b || '' : f(l.b)}</td>
+                <td className={`num ${cls(l.diff)}`}>{l.field === 'rate' ? l.diff.toFixed(2) : sign(l.diff)}</td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        </>}
+        <ExplicarIA
+          signature={`${aId}|${bId}`}
+          build={() => payslipPrompt(label(a!), label(b!), diff.totals, diff.lines, diff.gainDiff)}
+          note="Texto escrito por um modelo local a partir dos números da tabela acima. Os valores vêm do holerite; a leitura é do modelo e pode estar errada — a tabela é a fonte." />
+      </>}
+    </div>
+  )
+}
+
+/** The stored row reshaped into what comparePayslips expects. */
+function toCompare(p: Payslip) {
+  return {
+    totals: {
+      gross: p.gross, employee_contrib: p.employee_contrib, employer_contrib: p.employer_contrib,
+      employer_cost: p.employer_cost, net_social: p.net_social, net_before_tax: p.net_before_tax,
+      net_taxable: p.net_taxable, pas_rate: p.pas_rate, pas_amount: p.pas_amount, net_paid: p.net_paid,
+    },
+    lines: p.lines,
+  }
 }
 
 const PAY_COUNTRIES = Object.keys(DEFAULT_INFLATION) as (keyof typeof DEFAULT_INFLATION)[]
@@ -249,6 +354,33 @@ function PayEvolution({ ctx, list }: { ctx: Ctx; list: Payslip[] }) {
     await saveSettings({ dashboard: { ...ctx.data.settings.dashboard, payroll } })
   }
 
+  const [buscando, setBuscando] = useState(false)
+  const [fonte, setFonte] = useState<string | null>(null)
+  const [erroFonte, setErroFonte] = useState<string | null>(null)
+
+  /**
+   * Replaces the stored rates with the official ones, keeping the user's own figures for
+   * the years Eurostat has not published yet (those stay estimates and stay editable).
+   */
+  async function buscarOficial() {
+    const geo = HICP_GEO[country]
+    if (!geo) return
+    setBuscando(true); setFonte(null); setErroFonte(null)
+    try {
+      const res = await fetch(hicpUrl(geo), { headers: { Accept: 'application/json' } })
+      if (!res.ok) throw new Error(`O Eurostat respondeu ${res.status}.`)
+      const parsed = parseHicp(await res.json())
+      const next = { ...tables, [country]: mergeOfficial(table, parsed.rates) }
+      setTables(next); save({ inflation: next })
+      const anos = Object.keys(parsed.rates).sort()
+      setFonte(`Eurostat (HICP, variação média anual): ${anos.length} ano(s) atualizados, ${anos[0]}–${anos.at(-1)}`
+        + `${parsed.updated ? `, publicado em ${parsed.updated.slice(0, 10)}` : ''}.`
+        + ` Anos depois de ${parsed.lastYear} continuam estimativa sua.`)
+    } catch (e) {
+      setErroFonte(`Não foi possível buscar no Eurostat: ${(e as Error).message} Os números atuais continuam valendo.`)
+    } finally { setBuscando(false) }
+  }
+
   if (!r) return <div className="card"><h3>Evolução do salário</h3><p className="muted">Importe pelo menos dois holerites dos últimos 24 meses para ver a evolução.</p></div>
 
   const rows = r.rows.map((x) => ({ label: monthLabel(x.month), month: x.month, bruto: x.gross, liquido: x.net, corrigido: Math.round(x.corrected) }))
@@ -265,6 +397,18 @@ function PayEvolution({ ctx, list }: { ctx: Ctx; list: Payslip[] }) {
           </select></label>
         <button onClick={() => setEditing(!editing)}>{editing ? 'Fechar inflação' : 'Ver/editar inflação'}</button>
       </div>
+      <div className="row">
+        <button onClick={buscarOficial} disabled={buscando || !HICP_GEO[country]}
+          title={HICP_GEO[country] ? 'Eurostat: HICP, variação média anual' : 'O Eurostat não publica o IPCA do Brasil'}>
+          {buscando ? 'Buscando…' : 'Buscar inflação oficial'}
+        </button>
+        {!HICP_GEO[country] && <span className="muted" style={{ fontSize: 12 }}>
+          Busca automática só para França e Portugal (Eurostat). Para o Brasil, informe o IPCA do IBGE em "Ver/editar inflação".
+        </span>}
+      </div>
+      {fonte && <p className="pos" style={{ fontSize: 13 }}>{fonte}</p>}
+      {erroFonte && <p className="err" style={{ fontSize: 13 }}>{erroFonte}</p>}
+
       {editing && (
         <div className="row">
           {years.map((y) => (
@@ -298,6 +442,23 @@ function PayEvolution({ ctx, list }: { ctx: Ctx; list: Payslip[] }) {
             label={{ value: 'pico', position: 'top', fill: 'var(--text)', fontSize: 12 }} />
         </LineChart>
       </ResponsiveContainer>
+      <ExplicarIA label="Explicar com a IA local"
+        signature={`${country}|${r.rows[0]?.month ?? ''}|${r.rows.at(-1)?.month ?? ''}|${Math.round(r.recent)}`}
+        build={() => inflationPrompt({
+          pais: country,
+          moeda: 'EUR',
+          de: r.rows[0]?.month ?? '',
+          ate: r.rows.at(-1)?.month ?? '',
+          liquidoBase: r.base,
+          liquidoRecente: r.recent,
+          variacaoNominal: r.nominalChange,
+          inflacao: r.inflation,
+          variacaoReal: r.realChange,
+          lacunaMensal: r.monthlyGap,
+          picoValor: r.peak.net,
+          picoMes: r.peak.month,
+          anosEstimados: Object.keys(table).map(Number).filter((y) => y >= ESTIMATED_FROM),
+        })} />
       <p className="muted" style={{ fontSize: 12 }}>
         A linha tracejada é o líquido médio dos 3 primeiros holerites corrigido pela inflação de {country}: o que seria preciso receber para manter o poder de compra.
         Meses com bônus ou prêmio aparecem como picos; a comparação usa a média de 3 meses para não depender de um mês isolado.

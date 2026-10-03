@@ -2,7 +2,7 @@
 -- corrected by hand. Kept separate from transactions so the description survives
 -- re-imports and is reused by the next one (this is the memory that makes the
 -- import get better over time).
-create table public.merchant_profiles (
+create table if not exists public.merchant_profiles (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users on delete cascade,
   merchant text not null, -- merchantKey(), the same grouping key used everywhere
@@ -17,6 +17,9 @@ create table public.merchant_profiles (
 
 alter table public.merchant_profiles enable row level security;
 alter table public.merchant_profiles force row level security;
+-- Postgres has no "create policy if not exists": dropping first keeps this re-runnable.
+drop policy if exists owner_all on public.merchant_profiles;
+drop policy if exists require_mfa on public.merchant_profiles;
 create policy owner_all on public.merchant_profiles for all to authenticated
   using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 create policy require_mfa on public.merchant_profiles as restrictive for all to authenticated
@@ -24,4 +27,4 @@ create policy require_mfa on public.merchant_profiles as restrictive for all to 
   with check ((select auth.jwt()->>'aal') = 'aal2');
 revoke all on public.merchant_profiles from anon;
 
-create index merchant_profiles_user_merchant on public.merchant_profiles (user_id, merchant);
+create index if not exists merchant_profiles_user_merchant on public.merchant_profiles (user_id, merchant);

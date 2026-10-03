@@ -21,6 +21,34 @@ The interface is in Portuguese; code and comments stay in English.
 | Learning | Every category you set by hand becomes a merchant rule, so the next import repeats the choice. The Import tab also derives rules from your history and lets you set categories **before** the rows are written. |
 | Simulation | Country scenarios (FR, PT incl. IFICI, LU, BR, custom): gross/year → net/month, rent, school, cost-of-living index, extra costs, savings projection (nominal and real), side-by-side comparison, savings proposals. The baseline is calculated from your real data. |
 
+## Local model (Ollama), optional
+
+Merchant identification and the payslip-comparison explanation can run on a local model, so
+nothing leaves the machine. Turn it on in **Ajustes → IA local** (address + model). The setting
+is **per device** (localStorage), like the appearance one: each computer keeps its own address
+and model instead of syncing the wrong one across machines.
+
+- Install Ollama and pull a model: `ollama pull qwen3.5:4b`.
+- The deployed site runs on another origin, so Ollama has to accept it. Set `OLLAMA_ORIGINS` to
+  `https://controle-cc.vercel.app` in Ollama's environment and restart the service. Safari blocks
+  an HTTPS page from calling `http://localhost`; Chrome and Edge allow it, and running the app
+  locally (`npm run dev`) works everywhere.
+- **Where the model files live is an Ollama setting, not an app one.** It is the `OLLAMA_MODELS`
+  environment variable, read by the daemon at startup — a web page cannot move a folder on disk,
+  so it is not configurable from Ajustes. Point it at another drive only if you also move the
+  existing files; the default is `%USERPROFILE%\.ollama\models`, and an empty new path makes
+  already-pulled models look gone.
+- `vercel.json` allows `localhost` and `127.0.0.1` in `connect-src`. Ollama on **another machine**
+  needs that host added there too — CSP takes hosts, not IP ranges.
+- The arithmetic always stays in code. The model only puts an already-computed diff into words, or
+  proposes a category from the user's own list: it cannot change a number, and a category it
+  invents is rejected by the same parser the Claude file exchange uses.
+- Measured on qwen3.5:4b (4.7B, Q4_K_M): about 70 s for 4 merchants and 38 s for one payslip
+  explanation. Budget minutes, not seconds. A local model is also less accurate than a hosted one,
+  which is why suggestions below 60% confidence arrive unchecked.
+- Reasoning models are called with thinking off: on a local machine it costs minutes and buys
+  nothing on these two tasks.
+
 ## Security model
 
 - **A dedicated Supabase project.** Don't share one with other apps.

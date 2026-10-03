@@ -30,6 +30,9 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   const [dupDecision, setDupDecision] = useState<'skip' | 'import' | 'pick' | null>(null)
   const [keepDups, setKeepDups] = useState<Set<string>>(() => new Set())
   const dirRef = useRef<HTMLInputElement>(null)
+  const doneRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { if (done) doneRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }, [done])
 
   // webkitdirectory is not in React's prop types; set it on the element itself.
   useEffect(() => {
@@ -95,27 +98,45 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
       }
       let data = await loadAll()
       let total = 0
-      // Re-plan against freshly loaded data between files, so dedupe sees the rows
-      // the previous file just inserted.
+      let okFiles = 0
+      const falhas: string[] = []
+      // Re-plan against freshly loaded data between files, so dedupe sees the rows the
+      // previous file just inserted. One bad file no longer discards the whole run: it is
+      // reported and the remaining files still go in — it matters with a whole folder.
       let i = 0
       for (const p of plans) {
         setProgress(`Importando ${++i} de ${plans.length}: ${p.fileName}`)
-        const fresh = planImport(p.fileName, p.sha256, p.result, data)
-        const forced = new Set(dupDecision === 'import' ? p.duplicates.map((d) => d.id) : dupDecision === 'pick' ? p.duplicates.filter((d) => keepDups.has(d.id)).map((d) => d.id) : [])
-        total += await executeImport({ ...fresh, duplicates: p.duplicates }, data, forced)
-        data = await loadAll()
+        try {
+          const fresh = planImport(p.fileName, p.sha256, p.result, data)
+          const forced = new Set(dupDecision === 'import' ? p.duplicates.map((d) => d.id) : dupDecision === 'pick' ? p.duplicates.filter((d) => keepDups.has(d.id)).map((d) => d.id) : [])
+          total += await executeImport({ ...fresh, duplicates: p.duplicates }, data, forced)
+          okFiles++
+          data = await loadAll()
+        } catch (e) { falhas.push(`${p.fileName}: ${(e as Error).message}`) }
       }
-      // Rebuild opening balances from the bank's own balances.
-      for (const a of data.accounts) {
-        const o = deriveOpening(a, data.transactions, data.checkpoints)
-        if (o && (o.opening_balance !== a.opening_balance || o.opening_date !== a.opening_date)) await updateAccount(a.id, o)
-      }
+      // The rows are written by now, so everything below is a finishing touch: a failure
+      // there becomes a warning instead of hiding an import that did happen.
+      const avisos: string[] = []
+      setProgress('Recalculando saldos iniciais…')
+      try {
+        for (const a of data.accounts) {
+          const o = deriveOpening(a, data.transactions, data.checkpoints)
+          if (o && (o.opening_balance !== a.opening_balance || o.opening_date !== a.opening_date)) await updateAccount(a.id, o)
+        }
+      } catch (e) { avisos.push(`os saldos iniciais não foram recalculados (${(e as Error).message})`) }
       // Card bills now in the app: their payments in the paying account become transfers.
-      const linked = await linkCardPayments(await loadAll())
-      setDone(`${total} lançamentos novos importados de ${plans.length} arquivos` +
-        (chosen.length ? ` · ${chosen.length} regras criadas` : '') +
-        (linked ? ` · ${linked} pagamentos de fatura marcados como transferência` : '') +
-        '. Saldos iniciais recalculados — confira a conciliação em Ajustes → Contas.')
+      let linked = 0
+      try { linked = await linkCardPayments(await loadAll()) }
+      catch (e) { avisos.push(`os pagamentos de fatura não foram marcados como transferência (${(e as Error).message})`) }
+
+      setDone([
+        `${total} ${total === 1 ? 'lançamento novo importado' : 'lançamentos novos importados'} de ${okFiles} de ${plans.length} arquivo(s).`,
+        chosen.length ? `${chosen.length} regra(s) criada(s) para os próximos imports.` : '',
+        linked ? `${linked} pagamento(s) de fatura marcados como transferência.` : '',
+        falhas.length ? `${falhas.length} arquivo(s) falharam e não entraram — veja a lista acima.` : '',
+        avisos.length ? `Atenção: ${avisos.join('; ')}.` : 'Saldos iniciais recalculados — confira a conciliação em Ajustes → Contas.',
+      ].filter(Boolean).join(' '))
+      setErrors(falhas)
       setPlans([]); setChoices({}); setDupDecision(null); setKeepDups(new Set())
       await ctx.reload()
     } catch (e) { setErrors([(e as Error).message]) } finally { setProgress(null); setBusy(false) }
@@ -160,7 +181,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
           </p>
         )}
         {errors.length > 0 && <details>
-          <summary className="err">{errors.length} arquivo(s) não foram lidos</summary>
+          <summary className="err">{errors.length} arquivo(s) com problema</summary>
           {errors.slice(0, 30).map((e) => <p key={e} className="err" style={{ fontSize: 13 }}>{e}</p>)}
           {errors.length > 30 && <p className="muted">e mais {errors.length - 30}…</p>}
         </details>}
@@ -215,7 +236,14 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
             <button onClick={() => setPlans([])} disabled={busy}>Cancelar</button>
           </div>
         </>}
-        {done && <p className="pos">{done}</p>}
+        {done && (
+          <div className="alert ok" ref={doneRef} style={{ display: 'block', marginTop: 12 }}>
+            <strong>✔ Importação concluída.</strong> {done}
+            <div className="row" style={{ marginTop: 8 }}>
+              <button onClick={() => setDone(null)}>Entendi</button>
+            </div>
+          </div>
+        )}
       </div>
       <AiSuggestions ctx={ctx} />
       <ImportHistory ctx={ctx} />

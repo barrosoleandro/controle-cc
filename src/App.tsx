@@ -16,12 +16,13 @@ import { Simulation } from './pages/Simulation'
 import { SettingsPage } from './pages/Settings'
 import { Payslips } from './pages/Payslips'
 import { Investments } from './pages/Investments'
+import { Market } from './pages/Market'
 import { Cards } from './pages/Cards'
 
-const TABS = ['Painel', 'Análises', 'Lançamentos', 'Cartões', 'Recorrentes', 'Simulação', 'Investimentos', 'Holerites', 'Importar', 'Ajustes'] as const
+const TABS = ['Painel', 'Análises', 'Lançamentos', 'Cartões', 'Recorrentes', 'Simulação', 'Investimentos', 'Mercado', 'Holerites', 'Importar', 'Ajustes'] as const
 const ICON: Record<(typeof TABS)[number], IconName> = {
   Painel: 'painel', Análises: 'analises', Lançamentos: 'lancamentos', Cartões: 'cartoes', Recorrentes: 'recorrentes', Simulação: 'simulacao',
-  Investimentos: 'investimentos', Holerites: 'holerites', Importar: 'importar', Ajustes: 'ajustes',
+  Investimentos: 'investimentos', Mercado: 'mercado', Holerites: 'holerites', Importar: 'importar', Ajustes: 'ajustes',
 }
 // On a phone the bottom bar holds these four; the rest open from "Mais".
 const PRIMARY: (typeof TABS)[number][] = ['Painel', 'Lançamentos', 'Cartões', 'Importar']
@@ -149,6 +150,7 @@ function Shell() {
         {tab === 'Recorrentes' && <Subscriptions ctx={ctx} />}
         {tab === 'Simulação' && <Simulation ctx={ctx} />}
         {tab === 'Investimentos' && <Investments ctx={ctx} />}
+        {tab === 'Mercado' && <Market />}
         {tab === 'Holerites' && <Payslips ctx={ctx} />}
         {tab === 'Importar' && <ImportPage ctx={ctx} />}
         {tab === 'Ajustes' && <SettingsPage ctx={ctx} />}

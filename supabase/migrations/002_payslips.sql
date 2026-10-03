@@ -1,6 +1,6 @@
 -- Payslips (bulletins de paie): one row per month, parsed in the browser.
 -- Only amounts and labels are stored (no social-security number, no bank account).
-create table public.payslips (
+create table if not exists public.payslips (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users on delete cascade,
   period date not null, -- first day of the pay month
@@ -26,6 +26,9 @@ create table public.payslips (
 
 alter table public.payslips enable row level security;
 alter table public.payslips force row level security;
+-- Postgres has no "create policy if not exists": dropping first keeps this re-runnable.
+drop policy if exists owner_all on public.payslips;
+drop policy if exists require_mfa on public.payslips;
 create policy owner_all on public.payslips for all to authenticated
   using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 create policy require_mfa on public.payslips as restrictive for all to authenticated
@@ -33,4 +36,4 @@ create policy require_mfa on public.payslips as restrictive for all to authentic
 revoke all on public.payslips from anon;
 
 -- Contract amounts expected on every payslip (null = app defaults).
-alter table public.user_settings add column payroll_contract jsonb;
+alter table public.user_settings add column if not exists payroll_contract jsonb;

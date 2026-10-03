@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
 import { saveMerchantProfiles, vendorsToEnrich, type VendorSuggestion } from '../lib/ai'
 import { buildExchangeRequest, parseExchangeAnswer } from '../domain/claudeExchange'
+import { parseVendorAnswer, VENDOR_BATCH, vendorPrompt } from '../domain/localAi'
+import { ask, loadOllama, ollamaReady } from '../lib/ollama'
 import { byName } from '../domain/categorize'
 import { addCategory, addRule, markAiNote, setCategoryForTransactions } from '../lib/data'
 import type { CategoryKind } from '../domain/types'
@@ -18,22 +20,88 @@ interface Row extends VendorSuggestion {
 }
 
 /**
- * Identifies merchants the rules could not place with Claude, through a file exchange
- * (see domain/claudeExchange). Nothing is applied until the user accepts a row.
+ * Identifies merchants the rules could not place. Two paths, same contract and same
+ * validation (domain/claudeExchange): the local model through Ollama, which keeps
+ * everything on this machine, or a file exchange with Claude. Nothing is applied
+ * until the user accepts a row.
  */
 export function AiSuggestions({ ctx }: { ctx: Ctx }) {
   const { data } = ctx
   const [rows, setRows] = useState<Row[] | null>(null)
   const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [criandoPara, setCriandoPara] = useState<string | null>(null)
   const [nome, setNome] = useState('')
   const [tipo, setTipo] = useState<CategoryKind>('expense')
+  // Read on mount and again on focus, so turning it on in Ajustes shows up here.
+  const [cfg, setCfg] = useState(loadOllama)
+  useEffect(() => {
+    const refresh = () => setCfg(loadOllama())
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => { window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh) }
+  }, [])
 
   const pending = useMemo(() => vendorsToEnrich(data), [data])
   const catByName = useMemo(() => new Map(data.categories.map((c) => [c.name, c.id])), [data.categories])
   const sortedCats = useMemo(() => [...data.categories].sort(byName), [data.categories])
+  const localReady = ollamaReady(cfg)
+
+  /** Turns suggestions into review rows and remembers the descriptions either way. */
+  const showSuggestions = useCallback(async (suggestions: VendorSuggestion[]) => {
+    const stats = new Map<string, { charges: number; total: number; currency: string }>()
+    for (const t of data.transactions) {
+      const s = stats.get(t.merchant) ?? { charges: 0, total: 0, currency: t.currency }
+      s.charges++; s.total += Math.abs(Number(t.amount))
+      stats.set(t.merchant, s)
+    }
+    setRows(suggestions.map((s) => {
+      const st = stats.get(s.merchant)
+      const categoryId = s.category ? catByName.get(s.category) ?? '' : ''
+      return {
+        ...s, categoryId,
+        charges: st?.charges ?? 0, total: st?.total ?? 0, currency: st?.currency ?? 'EUR',
+        use: Boolean(categoryId) && s.confidence >= 0.6,
+      }
+    }))
+    // Keep the descriptions even if the user accepts nothing: the next import reuses them.
+    await saveMerchantProfiles(suggestions.map((s) => ({
+      merchant: s.merchant, description: s.description,
+      suggested_category_id: s.category ? catByName.get(s.category) ?? null : null,
+      confidence: s.confidence, source: 'ai' as const,
+    })))
+  }, [data.transactions, catByName])
+
+  /**
+   * Local model, in batches. A small model trips over long prompts and sometimes emits
+   * broken JSON, so one bad batch is reported and the rest still count.
+   */
+  async function runLocal() {
+    const c = loadOllama()
+    setCfg(c)
+    if (!ollamaReady(c)) { setError('Ative e configure o endereço e o modelo em Ajustes → IA local.'); return }
+    setBusy(true); setError(null); setMsg(null)
+    const names = data.categories.map((x) => x.name)
+    const found: VendorSuggestion[] = []
+    const falhas: string[] = []
+    try {
+      for (let i = 0; i < pending.length; i += VENDOR_BATCH) {
+        const lote = pending.slice(i, i + VENDOR_BATCH)
+        setProgress(`${c.model}: ${Math.min(i + lote.length, pending.length)} de ${pending.length} estabelecimentos…`)
+        const { system, prompt } = vendorPrompt(lote, names)
+        try {
+          found.push(...parseVendorAnswer(await ask(c, prompt, { json: true, system }), names, lote.map((v) => v.merchant)))
+        } catch (e) { falhas.push((e as Error).message) }
+      }
+      if (!found.length) throw new Error(falhas[0] ?? 'O modelo local não devolveu nenhuma sugestão utilizável.')
+      await showSuggestions(found)
+      setMsg(`${found.length} de ${pending.length} estabelecimentos identificados por ${c.model}, sem nada sair deste computador`
+        + `${falhas.length ? ` · ${falhas.length} lote(s) falharam` : ''}. Nada foi aplicado ainda — confira abaixo.`)
+      if (falhas.length) setError(`Lotes que falharam: ${[...new Set(falhas)].slice(0, 3).join(' · ')}`)
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false); setProgress(null) }
+  }
 
   function exportForClaude() {
     setError(null); setMsg(null)
@@ -48,28 +116,7 @@ export function AiSuggestions({ ctx }: { ctx: Ctx }) {
   async function importAnswer(file: File) {
     setBusy(true); setError(null); setMsg(null)
     try {
-      const suggestions = parseExchangeAnswer(await file.text(), data.categories.map((c) => c.name), pending.map((v) => v.merchant))
-      const stats = new Map<string, { charges: number; total: number; currency: string }>()
-      for (const t of data.transactions) {
-        const s = stats.get(t.merchant) ?? { charges: 0, total: 0, currency: t.currency }
-        s.charges++; s.total += Math.abs(Number(t.amount))
-        stats.set(t.merchant, s)
-      }
-      setRows(suggestions.map((s) => {
-        const st = stats.get(s.merchant)
-        const categoryId = s.category ? catByName.get(s.category) ?? '' : ''
-        return {
-          ...s, categoryId,
-          charges: st?.charges ?? 0, total: st?.total ?? 0, currency: st?.currency ?? 'EUR',
-          use: Boolean(categoryId) && s.confidence >= 0.6,
-        }
-      }))
-      // Keep the descriptions even if the user accepts nothing: the next import reuses them.
-      await saveMerchantProfiles(suggestions.map((s) => ({
-        merchant: s.merchant, description: s.description,
-        suggested_category_id: s.category ? catByName.get(s.category) ?? null : null,
-        confidence: s.confidence, source: 'ai' as const,
-      })))
+      await showSuggestions(parseExchangeAnswer(await file.text(), data.categories.map((c) => c.name), pending.map((v) => v.merchant)))
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
 
@@ -119,19 +166,37 @@ export function AiSuggestions({ ctx }: { ctx: Ctx }) {
     <div className="card" style={{ gridColumn: '1/-1' }}>
       <h3>Identificar com IA</h3>
       <p className="muted">
-        1. Baixe o arquivo com os estabelecimentos sem categoria. Ele leva só a chave do estabelecimento e trechos da
-        descrição do extrato, nunca o arquivo, o saldo ou o número da conta. 2. Peça ao Claude (Claude Code ou claude.ai)
-        para categorizá-lo. 3. Importe o arquivo de resposta. O Claude escolhe só entre as <em>suas</em> categorias, e nada é
-        aplicado sem você aceitar.
+        Só a chave do estabelecimento e trechos da descrição do extrato são usados — nunca o arquivo, o saldo ou o número
+        da conta. Qualquer dos caminhos escolhe apenas entre as <em>suas</em> categorias, e nada é aplicado sem você aceitar.
       </p>
+
       <div className="row">
-        <button className="primary" onClick={exportForClaude} disabled={busy || !pending.length}>
-          {pending.length ? `Baixar ${pending.length} estabelecimentos sem categoria` : 'Nada sem categoria'}
+        <button className="primary" onClick={runLocal} disabled={busy || !pending.length || !localReady}
+          title={!localReady ? 'Configure em Ajustes → IA local' : `Roda em ${cfg.model}, neste computador`}>
+          {pending.length ? `Identificar ${pending.length} com a IA local` : 'Nada sem categoria'}
         </button>
-        <label className="inline"><span className="muted">Importar resposta do Claude</span>
-          <input type="file" accept=".json,application/json" disabled={busy}
-            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) importAnswer(f) }} /></label>
+        {localReady
+          ? <span className="muted" style={{ fontSize: 12 }}>modelo local: {cfg.model}</span>
+          : <span className="muted" style={{ fontSize: 12 }}>IA local desligada — ligue em Ajustes → IA local para não enviar nada para fora</span>}
       </div>
+      {progress && <p className="muted">{progress} (um modelo local pode levar alguns minutos)</p>}
+
+      <details style={{ marginTop: 8 }}>
+        <summary className="muted">Ou fazer pelo Claude, por arquivo</summary>
+        <p className="muted" style={{ fontSize: 13 }}>
+          1. Baixe o arquivo com os estabelecimentos sem categoria. 2. Peça ao Claude (Claude Code ou claude.ai) para
+          categorizá-lo. 3. Importe o arquivo de resposta aqui. Útil quando o modelo local errar muito.
+        </p>
+        <div className="row">
+          <button onClick={exportForClaude} disabled={busy || !pending.length}>
+            {pending.length ? `Baixar ${pending.length} estabelecimentos` : 'Nada sem categoria'}
+          </button>
+          <label className="inline"><span className="muted">Importar resposta do Claude</span>
+            <input type="file" accept=".json,application/json" disabled={busy}
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) importAnswer(f) }} /></label>
+        </div>
+      </details>
+
       {error && <p className="err">{error}</p>}
       {msg && <p className="pos">{msg}</p>}
 

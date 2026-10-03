@@ -27,6 +27,9 @@ create table if not exists public.card_statements (
 
 alter table public.card_statements enable row level security;
 alter table public.card_statements force row level security;
+-- Postgres has no "create policy if not exists": dropping first keeps this re-runnable.
+drop policy if exists owner_all on public.card_statements;
+drop policy if exists require_mfa on public.card_statements;
 create policy owner_all on public.card_statements for all to authenticated
   using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 create policy require_mfa on public.card_statements as restrictive for all to authenticated

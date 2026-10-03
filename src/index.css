@@ -166,6 +166,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 .auth { width: min(380px, 100%); display: grid; gap: 10px; }
 .alert { padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--card-2); margin-bottom: 8px; display: flex; gap: 8px; justify-content: space-between; align-items: center; flex-wrap: wrap; }
 .alert.warn { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); background: color-mix(in srgb, var(--warn) 8%, var(--card)); }
+.alert.ok { border-color: color-mix(in srgb, var(--pos) 55%, var(--line)); background: color-mix(in srgb, var(--pos) 10%, var(--card)); }
 .err { color: var(--neg); white-space: pre-wrap; }
 label.inline { display: flex; gap: 6px; align-items: center; }
 .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 16px; }
@@ -207,6 +208,8 @@ tr.sub-row > td { font-size: 13px; padding-top: 4px; padding-bottom: 4px; border
 
 /* Lançamentos: the transfers category is set apart from the expense categories. */
 tr.transfer-row > td { background: var(--card-2); }
+tr.receita-row > td { background: var(--card-2); }
+tr.section > th { background: var(--card-2); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 
 /* ---------- Análises ---------- */
 /* Series 6–7 of the validated palette and a gray for "Outros" (never a generated hue). */
