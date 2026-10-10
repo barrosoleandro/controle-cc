@@ -3,7 +3,7 @@ import type { Ctx } from '../App'
 import { saveMerchantProfiles, vendorsToEnrich, type VendorSuggestion } from '../lib/ai'
 import { buildExchangeRequest, parseExchangeAnswer } from '../domain/claudeExchange'
 import { parseVendorAnswer, VENDOR_BATCH, vendorPrompt } from '../domain/localAi'
-import { ask, loadOllama, ollamaReady } from '../lib/ollama'
+import { ask, loadOllama, OLLAMA_EVENT, ollamaReady } from '../lib/ollama'
 import { byName } from '../domain/categorize'
 import { addCategory, addRule, markAiNote, setCategoryForTransactions } from '../lib/data'
 import type { CategoryKind } from '../domain/types'
@@ -35,13 +35,18 @@ export function AiSuggestions({ ctx }: { ctx: Ctx }) {
   const [criandoPara, setCriandoPara] = useState<string | null>(null)
   const [nome, setNome] = useState('')
   const [tipo, setTipo] = useState<CategoryKind>('expense')
-  // Read on mount and again on focus, so turning it on in Ajustes shows up here.
+  // Read on mount and again on focus or change, so turning it on in Ajustes, or this
+  // computer being recognised, shows up here.
   const [cfg, setCfg] = useState(loadOllama)
   useEffect(() => {
     const refresh = () => setCfg(loadOllama())
     window.addEventListener('focus', refresh)
+    window.addEventListener(OLLAMA_EVENT, refresh)
     document.addEventListener('visibilitychange', refresh)
-    return () => { window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh) }
+    return () => {
+      window.removeEventListener('focus', refresh); window.removeEventListener(OLLAMA_EVENT, refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
   }, [])
 
   const pending = useMemo(() => vendorsToEnrich(data), [data])

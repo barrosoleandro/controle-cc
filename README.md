@@ -25,8 +25,13 @@ The interface is in Portuguese; code and comments stay in English.
 
 Merchant identification and the payslip-comparison explanation can run on a local model, so
 nothing leaves the machine. Turn it on in **Ajustes → IA local** (address + model). The setting
-is **per device** (localStorage), like the appearance one: each computer keeps its own address
-and model instead of syncing the wrong one across machines.
+is **per computer**: each one keeps its own address and model instead of syncing the wrong one
+across machines. It is stored in the `devices` table (migration `006_devices.sql`), and the app
+recognises the computer by itself — a web page cannot read the machine's name, so it compares the
+hardware the browser reports (GPU, cores, memory) and the models in the local Ollama. A wrong or
+new guess is corrected in Ajustes ("Não é este? É o…"). `supabase/seeds/` holds the entries for
+known machines (e.g. `device_surface_l.sql`); run one after the migration so that machine is
+recognised on its first visit.
 
 - Install Ollama and pull a model: `ollama pull qwen3.5:4b`.
 - The deployed site runs on another origin, so Ollama has to accept it. Set `OLLAMA_ORIGINS` to
@@ -63,7 +68,7 @@ and model instead of syncing the wrong one across machines.
 ## Setup (≈20 minutes, once)
 
 1. **Supabase**: create a new project (e.g. `controle-cc`, region Frankfurt/Paris).
-   - SQL Editor → paste and run `supabase/migrations/001_schema.sql`, then `002_payslips.sql`, then `003_merchant_profiles.sql`, then `004_cards.sql` (credit cards linked to accounts).
+   - SQL Editor → paste and run `supabase/migrations/001_schema.sql`, then `002_payslips.sql`, then `003_merchant_profiles.sql`, then `004_cards.sql` (credit cards linked to accounts), `005_benchmarks.sql` (market) and `006_devices.sql` (local-AI settings per computer).
    - Authentication → Sign In / Providers → **disable "Allow new users to sign up"**.
    - Authentication → Multi-Factor → make sure **TOTP is enabled**.
    - For the e-mail code login: Authentication → Emails → the "Magic Link" template must contain `{{ .Token }}`,

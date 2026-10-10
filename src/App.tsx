@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { APP_NAME, AuthGate, ReauthLock } from './components/Auth'
 import { trustedDevice } from './lib/trust'
+import { syncDevice } from './lib/device'
 import { configError, configured, supabase } from './lib/supabase'
 import { loadAll, saveFx, saveSettings, seedDefaults, type AppData } from './lib/data'
 import { FxTable, fetchEurBrl } from './domain/fx'
@@ -73,6 +74,8 @@ function Shell() {
     } catch (e) { setError((e as Error).message) }
   }, [])
   useEffect(() => { reload() }, [reload])
+  // Which computer this is, and its local-AI settings. In the background: the AI is optional.
+  useEffect(() => { syncDevice() }, [])
   useEffect(() => { try { sessionStorage.setItem('tab', tab) } catch { /* ignore */ } }, [tab])
 
   // Inatividade: primeiro trava a tela, depois encerra a sessão (exceto em dispositivo lembrado).

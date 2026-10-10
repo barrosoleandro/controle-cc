@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ask, loadOllama, ollamaReady } from '../lib/ollama'
+import { ask, loadOllama, OLLAMA_EVENT, ollamaReady } from '../lib/ollama'
 
 /**
  * "Explain with the local model" button, shared by every screen that has already
@@ -19,11 +19,12 @@ export function ExplicarIA({ build, signature, label = 'Explicar com a IA local'
   const [erro, setErro] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  // Turning it on in Ajustes should show up here without a reload.
+  // Turning it on in Ajustes, or this computer being recognised, shows up here without a reload.
   useEffect(() => {
     const refresh = () => setCfg(loadOllama())
     window.addEventListener('focus', refresh)
-    return () => window.removeEventListener('focus', refresh)
+    window.addEventListener(OLLAMA_EVENT, refresh)
+    return () => { window.removeEventListener('focus', refresh); window.removeEventListener(OLLAMA_EVENT, refresh) }
   }, [])
   // Different numbers: the old text no longer describes them.
   useEffect(() => { setTexto(null); setErro(null) }, [signature])

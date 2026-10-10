@@ -13,6 +13,7 @@ import { monthWindow } from '../domain/period'
 import { isTithe } from '../domain/categorize'
 import { findSalaryCategory, salaryAt } from '../domain/budget'
 import { Menu } from './analysis/shared'
+import { VERSION, versionLabel } from '../lib/version'
 
 // A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
 export const WIDGETS = [
@@ -284,6 +285,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
       )}
       <div className="grid">{widgets.filter((w) => w.visible).map((w) => <div key={w.id} style={{ display: 'contents' }}>{widget(w.id)}</div>)}</div>
       <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>Tendências, comparações, estabelecimentos e datas: aba <strong>Análises</strong>.</p>
+      <p className="muted" style={{ fontSize: 12 }} title={VERSION.message}>{versionLabel()}</p>
     </>
   )
 }

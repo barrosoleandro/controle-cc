@@ -14,6 +14,7 @@ import { CategorySelect } from '../components/CategorySelect'
 import { planMerges } from '../domain/simplify'
 import { loadTheme, saveTheme, type Mode, type Theme } from '../lib/theme'
 import { DEFAULT_OLLAMA, listModels, loadOllama, normalizeUrl, ollamaReady, saveOllama, type OllamaConfig, type OllamaModel } from '../lib/ollama'
+import { chooseDevice, deleteDevice, DEVICE_EVENT, deviceState, saveThisDevice, syncDevice } from '../lib/device'
 
 const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações', 'IA local', 'Aparência'] as const
 
@@ -22,7 +23,7 @@ export function SettingsPage({ ctx }: { ctx: Ctx }) {
   return <>
     <div className="row">{SECTIONS.map((s) => <button key={s} className={s === sec ? 'active' : ''} onClick={() => setSec(s)}>{s}</button>)}</div>
     {sec === 'Contas' && <Accounts ctx={ctx} />}
-    {sec === 'IA local' && <LocalAi />}
+    {sec === 'IA local' && <><ThisComputer /><LocalAi /></>}
     {sec === 'Aparência' && <Appearance />}
     {sec === 'Orçamentos' && <Budgets ctx={ctx} />}
     {sec === 'Categorias' && <Categories ctx={ctx} />}
@@ -34,17 +35,101 @@ export function SettingsPage({ ctx }: { ctx: Ctx }) {
 
 /** Light / dark mode for this device. */
 
+const COMO: Record<string, string> = {
+  lembrado: 'reconhecido pela visita anterior deste navegador',
+  reconhecido: 'reconhecido pelo hardware e pelos modelos do Ollama',
+  novo: 'computador novo, cadastrado agora',
+  escolhido: 'escolhido por você',
+}
+
 /**
- * Local model (Ollama). Per device on purpose: the address and the model belong to the
- * computer in front of you, so each machine keeps its own without syncing the wrong one.
+ * Which computer the app thinks this is, found by itself on load. A wrong or new guess is
+ * corrected here by picking the right one, and leftovers can be removed.
+ */
+function ThisComputer() {
+  const [st, setSt] = useState(deviceState)
+  const [busy, setBusy] = useState(!deviceState())
+  const [erro, setErro] = useState<string | null>(null)
+  useEffect(() => {
+    const refresh = () => { setSt(deviceState()); setBusy(false) }
+    window.addEventListener(DEVICE_EVENT, refresh)
+    // Not identified yet (still loading, or failed): try once more from here.
+    if (!deviceState()) syncDevice().then(refresh)
+    return () => window.removeEventListener(DEVICE_EVENT, refresh)
+  }, [])
+  const run = (f: () => Promise<void>) => { setErro(null); f().catch((e) => setErro((e as Error).message)) }
+
+  if (busy) return <div className="card muted">Identificando este computador…</div>
+  if (!st) return <div className="card">
+    <h3>Este computador</h3>
+    <p className="warn">
+      As configurações por computador ainda não estão no banco: rode <code>supabase/migrations/006_devices.sql</code> no
+      SQL Editor do Supabase. Até lá, a configuração abaixo fica guardada só neste navegador.
+    </p>
+  </div>
+
+  const { device, devices, how } = st
+  const outros = devices.filter((d) => d.id !== device.id)
+  const quando = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('pt-BR') : '—')
+  return <div className="card">
+    <h3>Este computador</h3>
+    <div className="form">
+      <label>Nome
+        <input key={device.id} defaultValue={device.name}
+          onBlur={(e) => { const name = e.target.value.trim(); if (name && name !== device.name) run(() => saveThisDevice({ name })) }} />
+      </label>
+    </div>
+    <p className="muted" style={{ fontSize: 13 }}>
+      {COMO[how]}{device.hardware.gpu ? ` · ${device.hardware.gpu}` : ''}{device.hardware.cores ? ` · ${device.hardware.cores} núcleos` : ''}
+    </p>
+    {outros.length > 0 && <>
+      <div className="row">
+        <label className="inline">Não é este? É o
+          <select value="" onChange={(e) => e.target.value && run(() => chooseDevice(e.target.value))}>
+            <option value="">escolha…</option>
+            {outros.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </label>
+      </div>
+      <details style={{ marginTop: 8 }}>
+        <summary>Outros computadores ({outros.length})</summary>
+        <div className="scroll"><table><thead><tr><th>Nome</th><th>Modelo</th><th>Visto em</th><th /></tr></thead><tbody>
+          {outros.map((d) => <tr key={d.id}>
+            <td>{d.name}</td>
+            <td>{d.ollama_enabled && d.ollama_model ? d.ollama_model : <span className="muted">desligada</span>}</td>
+            <td>{quando(d.last_seen_at)}</td>
+            <td><button className="link" title="Remover este computador" aria-label={`Remover ${d.name}`}
+              onClick={() => confirm(`Remover "${d.name}"? As configurações de IA dele serão apagadas.`) && run(() => deleteDevice(d.id))}>✕</button></td>
+          </tr>)}
+        </tbody></table></div>
+      </details>
+    </>}
+    {erro && <p className="err">{erro}</p>}
+  </div>
+}
+
+/**
+ * Local model (Ollama). Per computer on purpose: the address and the model belong to the
+ * machine in front of you, so each one keeps its own without syncing the wrong one. Saved
+ * to this computer's row in `devices` (lib/device.ts), which the app finds by itself.
  */
 function LocalAi() {
   const [cfg, setCfg] = useState(loadOllama)
   const [models, setModels] = useState<OllamaModel[] | null>(null)
   const [erro, setErro] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // The computer may be recognised after this screen opened: show its settings when it is.
+  useEffect(() => {
+    const refresh = () => setCfg(loadOllama())
+    window.addEventListener(DEVICE_EVENT, refresh)
+    return () => window.removeEventListener(DEVICE_EVENT, refresh)
+  }, [])
 
-  const save = (next: OllamaConfig) => { setCfg(next); saveOllama(next) }
+  const save = (next: OllamaConfig) => {
+    setCfg(next); saveOllama(next)
+    saveThisDevice({ ollama_url: normalizeUrl(next.url), ollama_model: next.model, ollama_enabled: next.enabled })
+      .catch((e) => setErro(`Salvo só neste navegador: ${(e as Error).message}`))
+  }
 
   async function testar() {
     setBusy(true); setErro(null); setModels(null)
@@ -118,7 +203,7 @@ function LocalAi() {
         defina <code>OLLAMA_MODELS</code> no ambiente do Ollama (ex.: <code>D:\ollama\models</code>) e reinicie o serviço.
       </p>
       <p className="muted">
-        O que muda de computador para computador — e fica guardado aqui, só neste aparelho — é o endereço e o modelo.
+        O que muda de computador para computador — e fica guardado no cadastro deste computador, acima — é o endereço e o modelo.
         Se o Ollama estiver em <em>outra</em> máquina da sua rede, o endereço dela precisa ser liberado na CSP do site
         (<code>vercel.json</code>): a CSP aceita <code>localhost</code> e <code>127.0.0.1</code>, mas não uma faixa de IPs.
       </p>

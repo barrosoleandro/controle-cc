@@ -2,9 +2,11 @@
  * Local model through Ollama. Nothing here leaves the machine: the browser talks straight
  * to the Ollama daemon, so merchant names and payslip figures never reach a third party.
  *
- * Kept per device (localStorage), like the appearance setting — the address and the model
- * are properties of the computer in front of you, not of the account, so a laptop running
- * a small model and a desktop running a big one each keep their own.
+ * Kept per computer — the address and the model are properties of the machine in front of
+ * you, not of the account, so a laptop running a small model and a desktop running a big one
+ * each keep their own. The source of truth is the machine's row in `devices` (lib/device.ts,
+ * which recognises the computer by itself); localStorage holds a copy so every screen can read
+ * it synchronously, and keeps working before migration 006 is run.
  *
  * Note on folders: where Ollama stores the model files is a setting of the daemon
  * (the OLLAMA_MODELS environment variable), not something a web page can reach. What
@@ -41,14 +43,18 @@ export function loadOllama(): OllamaConfig {
   } catch { return DEFAULT_OLLAMA }
 }
 
+/** Fired on window whenever the config changes, so screens already open pick it up. */
+export const OLLAMA_EVENT = 'ollama-config'
+
 export function saveOllama(c: OllamaConfig) {
   try { localStorage.setItem(KEY, JSON.stringify({ ...c, url: normalizeUrl(c.url) })) } catch { /* storage blocked: applies for this visit only */ }
+  window.dispatchEvent(new Event(OLLAMA_EVENT))
 }
 
 /** True when the config is complete enough to call. */
 export const ollamaReady = (c: OllamaConfig) => c.enabled && Boolean(c.url) && Boolean(c.model)
 
-export interface OllamaModel { name: string; size: number; family?: string; parameterSize?: string }
+export interface OllamaModel { name: string; size: number; digest?: string; family?: string; parameterSize?: string }
 
 const TIMEOUT_LIST = 8000
 const TIMEOUT_CHAT = 180000 // a local model on CPU is slow; the user is watching a progress line
@@ -75,6 +81,7 @@ function explainNetworkError(e: unknown, url: string): string {
     `Não foi possível falar com o Ollama em ${url}.`,
     'Confira: o Ollama está rodando (ollama serve)?',
     `Ele aceita chamadas desta página? Defina OLLAMA_ORIGINS=${location.origin} no ambiente do Ollama e reinicie-o.`,
+    'O Chrome e o Edge pedem permissão para o site "acessar dispositivos da rede local": se foi negada, libere no cadeado ao lado do endereço.',
   ]
   if (https && localTarget) {
     hints.push('Esta página está em HTTPS e o Ollama em HTTP local: o Safari bloqueia isso. No Chrome/Edge funciona; se precisar do Safari, use o app rodando local (npm run dev).')
@@ -82,12 +89,12 @@ function explainNetworkError(e: unknown, url: string): string {
   return hints.join(' ')
 }
 
-export async function listModels(cfg: OllamaConfig): Promise<OllamaModel[]> {
-  const res = await call(cfg.url, '/api/tags', { method: 'GET' }, TIMEOUT_LIST)
+export async function listModels(cfg: Pick<OllamaConfig, 'url'>, timeoutMs = TIMEOUT_LIST): Promise<OllamaModel[]> {
+  const res = await call(cfg.url, '/api/tags', { method: 'GET' }, timeoutMs)
   if (!res.ok) throw new Error(`Ollama respondeu ${res.status} em /api/tags.`)
-  const body = await res.json() as { models?: { name: string; size: number; details?: { family?: string; parameter_size?: string } }[] }
+  const body = await res.json() as { models?: { name: string; size: number; digest?: string; details?: { family?: string; parameter_size?: string } }[] }
   return (body.models ?? []).map((m) => ({
-    name: m.name, size: m.size, family: m.details?.family, parameterSize: m.details?.parameter_size,
+    name: m.name, size: m.size, digest: m.digest, family: m.details?.family, parameterSize: m.details?.parameter_size,
   })).sort((a, b) => a.name.localeCompare(b.name))
 }
 
