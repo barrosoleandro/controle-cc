@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { guessName, matchDevice, normalizeGpu, uniqueName, type Device, type Hardware } from '../src/domain/device'
+import { guessName, matchDevice, normalizeGpu, unclaimedDevice, uniqueName, type Device, type Hardware } from '../src/domain/device'
 
 const QWEN35 = '2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd'
 const CODER = 'd7372fd828518a4d38b1eb196c673c31a85f2ed302b3d1e406c4c2d1b64a0668'
@@ -68,6 +68,20 @@ describe('recognising this computer', () => {
   it('separates identical laptops by their models', () => {
     const twin = device('TWIN', SURFACE, [LLAMA])
     expect(matchDevice([surface, twin], { hardware: SURFACE, digests: [LLAMA] })?.id).toBe('TWIN')
+  })
+})
+
+describe('an entry written ahead of time', () => {
+  const seeded = device('SURFACE_L', {}, [QWEN35])
+  const seen = device('DESKTOP', DESKTOP)
+
+  it('is claimed when it is the only one no browser has reported yet', () => {
+    expect(unclaimedDevice([seeded, seen])?.id).toBe('SURFACE_L')
+  })
+
+  it('is left alone when two are waiting, or once a browser has reported it', () => {
+    expect(unclaimedDevice([seeded, device('OTHER', {})])).toBeNull()
+    expect(unclaimedDevice([seen])).toBeNull()
   })
 })
 

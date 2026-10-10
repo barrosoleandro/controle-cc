@@ -98,6 +98,17 @@ export function matchDevice(devices: Device[], seen: Seen): Device | null {
   return scored[0].d
 }
 
+/**
+ * A machine entry written ahead of time (supabase/seeds) that no browser has reported
+ * hardware for yet. When it is the only one, the first computer that cannot be recognised
+ * otherwise is taken to be it — the model check can miss on that first visit (Chrome is
+ * still asking for local-network permission) and a duplicate entry would be created.
+ */
+export function unclaimedDevice(devices: Device[]): Device | null {
+  const waiting = devices.filter((d) => !Object.keys(d.hardware ?? {}).length)
+  return waiting.length === 1 ? waiting[0] : null
+}
+
 /** A first name for a machine the browser cannot name: "Windows · Intel Iris Xe Graphics". */
 export function guessName(h: Hardware): string {
   const gpu = h.gpu?.replace(/\((R|TM)\)/gi, '').replace(/^[^,]+,\s*/, '').replace(/\s+/g, ' ').trim()

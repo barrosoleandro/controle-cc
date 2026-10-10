@@ -26,8 +26,10 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   const [progress, setProgress] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [choices, setChoices] = useState<Record<string, Choice>>({})
-  // Repeated rows are never written silently: the user decides before importing.
-  const [dupDecision, setDupDecision] = useState<'skip' | 'import' | 'pick' | null>(null)
+  // Repeated rows are never written silently. Skipping them is the default: a statement that
+  // overlaps the last one is the normal case, and requiring a choice first left the import
+  // button disabled behind a tooltip, so new rows looked like they would not load.
+  const [dupDecision, setDupDecision] = useState<'skip' | 'import' | 'pick'>('skip')
   const [keepDups, setKeepDups] = useState<Set<string>>(() => new Set())
   const dirRef = useRef<HTMLInputElement>(null)
   const doneRef = useRef<HTMLDivElement>(null)
@@ -42,7 +44,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
 
   async function onFiles(files: FileList | null) {
     if (!files?.length) return
-    setBusy(true); setDone(null); setErrors([]); setPlans([]); setChoices({}); setDupDecision(null); setKeepDups(new Set())
+    setBusy(true); setDone(null); setErrors([]); setPlans([]); setChoices({}); setDupDecision('skip'); setKeepDups(new Set())
     const ps: ImportPlan[] = [], errs: string[] = []
     const pending: Pending[] = [] // rows of the files planned so far
     let ignored = 0, duplicateFiles = 0
@@ -137,7 +139,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         avisos.length ? `Atenção: ${avisos.join('; ')}.` : 'Saldos iniciais recalculados — confira a conciliação em Ajustes → Contas.',
       ].filter(Boolean).join(' '))
       setErrors(falhas)
-      setPlans([]); setChoices({}); setDupDecision(null); setKeepDups(new Set())
+      setPlans([]); setChoices({}); setDupDecision('skip'); setKeepDups(new Set())
       await ctx.reload()
     } catch (e) { setErrors([(e as Error).message]) } finally { setProgress(null); setBusy(false) }
   }
@@ -146,7 +148,6 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   const totalDup = plans.reduce((s, p) => s + p.dupRows, 0)
   const allDups = plans.flatMap((p) => p.duplicates.map((d) => ({ ...d, file: p.fileName })))
   const keptCount = dupDecision === 'import' ? allDups.length : dupDecision === 'pick' ? keepDups.size : 0
-  const mustDecide = allDups.length > 0 && dupDecision === null
   const dupsInBase = allDups.filter((d) => d.inBase).length
   const dupsBetweenFiles = allDups.length - dupsInBase
 
@@ -200,7 +201,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
             <div className="alert warn" style={{ display: 'block', marginTop: 12 }}>
               <strong>{allDups.length} linha(s) repetida(s)</strong> (mesma conta, data, valor e estabelecimento):
               <ul style={{ margin: '4px 0 6px 18px' }}>
-                {dupsInBase > 0 && <li>{dupsInBase} já estão gravadas na base;</li>}
+                {dupsInBase > 0 && <li>{dupsInBase} já estão gravadas na base e ficam como estão: pulá-las não altera nada no que já foi importado;</li>}
                 {dupsBetweenFiles > 0 && <li>{dupsBetweenFiles} aparecem em dois arquivos desta seleção (por exemplo, o extrato do app e o Extrato Mensal
                   do mesmo mês). A primeira cópia é importada normalmente; a pergunta é só sobre a segunda.</li>}
               </ul>
@@ -231,7 +232,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
           )}
           <ImportCategories ctx={ctx} plans={plans} choices={choices} setChoices={setChoices} busy={busy} />
           <div className="row" style={{ marginTop: 10 }}>
-            <button className="primary" onClick={run} disabled={busy || mustDecide} title={mustDecide ? 'Escolha antes o que fazer com as linhas repetidas' : undefined}>
+            <button className="primary" onClick={run} disabled={busy}>
               Importar {totalNew + keptCount} linhas{keptCount ? ` (${keptCount} repetidas mantidas)` : ''}{Object.values(choices).filter((c) => c.categoryId).length ? ` e criar ${Object.values(choices).filter((c) => c.categoryId).length} regras` : ''}</button>
             <button onClick={() => setPlans([])} disabled={busy}>Cancelar</button>
           </div>

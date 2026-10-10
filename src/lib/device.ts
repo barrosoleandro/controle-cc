@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { DEFAULT_OLLAMA, listModels, loadOllama, saveOllama, type OllamaConfig } from './ollama'
-import { guessName, matchDevice, normalizeGpu, uniqueName, type Device, type Hardware } from '../domain/device'
+import { guessName, matchDevice, normalizeGpu, unclaimedDevice, uniqueName, type Device, type Hardware } from '../domain/device'
 
 /**
  * This computer's row in `devices`, found without asking (domain/device.ts decides how),
@@ -96,6 +96,8 @@ async function identify(): Promise<DeviceState | null> {
     let how: DeviceState['how'] = device && device.id === storedId ? 'lembrado' : 'reconhecido'
     const digests = await localDigests(device?.ollama_url || local.url)
     if (!device) device = matchDevice(devices, { hardware, digests })
+    // A phone is never the computer an entry was written for.
+    if (!device && !mobile()) device = unclaimedDevice(devices)
 
     const seen = { hardware, last_seen_at: new Date().toISOString(), ...(digests.length ? { model_digests: digests } : {}) }
     if (device) {
