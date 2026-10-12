@@ -3,7 +3,7 @@ import { categorize, merchantKey, patternMatches } from '../src/domain/categoriz
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../src/domain/defaults'
 import { detectSubscriptions } from '../src/domain/subscriptions'
 import { grossToNet } from '../src/domain/tax'
-import { runScenario, type Scenario } from '../src/domain/simulation'
+import { applyRealBase, BRAZIL_LINE, realBaseChanges, runScenario, type RealBase, type Scenario } from '../src/domain/simulation'
 import { FxTable } from '../src/domain/fx'
 
 const cat = (description: string, amount: number, bankCategory?: string, bankSubcategory?: string) =>
@@ -107,6 +107,33 @@ describe('simulation', () => {
     expect(r.expenses.total).toBe(5100)
     expect(r.surplusMonth).toBe(900)
     expect(r.projection[1].savings).toBe(1000 + 900 * 24)
+  })
+
+  const measured: RealBase = { rent: 1900.4, school: 500, brazil: 320.6, variable: 2500, months: ['2026-04', '2026-09'] }
+
+  it('takes housing and school from the statements only in France', () => {
+    const fr = applyRealBase({ ...s, country: 'FR' }, measured)
+    expect(fr.rentMonth).toBe(1900)
+    expect(fr.schoolYear).toBe(6000)
+    expect(fr.baselineVariableMonth).toBe(2500)
+    const pt = applyRealBase({ ...s, country: 'PT' }, measured)
+    expect(pt.rentMonth).toBe(s.rentMonth)
+    expect(pt.schoolYear).toBe(s.schoolYear)
+    expect(pt.baselineVariableMonth).toBe(2500)
+  })
+
+  it('keeps one Brazil line, other extras untouched, and none in a Brazil scenario', () => {
+    const once = applyRealBase(applyRealBase({ ...s, country: 'FR' }, measured), measured)
+    expect(once.extraLines).toEqual([{ name: 'x', monthly: 100 }, { name: BRAZIL_LINE, monthly: 321 }])
+    expect(applyRealBase({ ...s, country: 'BR' }, measured).extraLines).toEqual([{ name: 'x', monthly: 100 }])
+  })
+
+  it('reports what moved, and nothing when the scenario already matches', () => {
+    const before = { ...s, country: 'FR' as const }
+    const after = applyRealBase(before, measured)
+    expect(realBaseChanges(before, after).map((c) => c.label))
+      .toEqual(['moradia/mês', 'escola/ano', 'outros gastos/mês', 'custos no Brasil/mês'])
+    expect(realBaseChanges(after, applyRealBase(after, measured))).toEqual([])
   })
 })
 

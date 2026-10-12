@@ -327,3 +327,57 @@ export function marketResearchPrompt(f: ResearchFacts): { system: string; prompt
     prompt: linhas.join('\n'),
   }
 }
+
+export interface SimulationFacts {
+  moeda: string
+  base: { de: string; ate: string; moradia: number; escola: number; brasil: number; outros: number; salarioLiquido: number }
+  cenario: {
+    nome: string; pais: string; moeda: string; brutoAno: number; liquidoMes: number; aliquota: number
+    rendaMes: number; moradia: number; escola: number; outros: number; indiceCustoVida: number; extras: number
+    sobraMes: number; taxaPoupanca: number; anos: number; poupancaFinalReal: number
+  }
+  comparacao: { nome: string; rendaMesEur: number; custosMesEur: number; sobraMesEur: number; taxaPoupanca: number; poupancaFinalEur: number }[]
+}
+
+/**
+ * Reading of the simulation screen. Every figure comes from runScenario and from the measured
+ * base, both already on screen, so the text cannot disagree with the tables — and the model is
+ * told, as everywhere else here, that the arithmetic is not its job.
+ */
+export function simulationPrompt(f: SimulationFacts): { system: string; prompt: string } {
+  const n = (v: number, moeda = f.moeda) => `${v.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} ${moeda}`
+  const c = f.cenario
+  const linhas = [
+    'Simulação de mudança de país de uma pessoa física (casada, com filhos). Os números abaixo já foram calculados pelo aplicativo.',
+    '',
+    `Base real medida nos extratos, média por mês de ${f.base.de} a ${f.base.ate} (em ${f.moeda}):`,
+    `- moradia ${n(f.base.moradia)} · escola e filhos ${n(f.base.escola)} · outros gastos ${n(f.base.outros)} · custos no Brasil ${n(f.base.brasil)}`,
+    `- salário líquido realmente recebido hoje: ${n(f.base.salarioLiquido)}/mês`,
+    '',
+    `Cenário em edição: ${c.nome} (${c.pais}), valores em ${c.moeda}.`,
+    `- bruto ${n(c.brutoAno, c.moeda)}/ano → líquido ${n(c.liquidoMes, c.moeda)}/mês (${(c.aliquota * 100).toFixed(1)}% de descontos)`,
+    `- renda da família ${n(c.rendaMes, c.moeda)}/mês`,
+    `- moradia ${n(c.moradia, c.moeda)} · escola ${n(c.escola, c.moeda)} · outros gastos ${n(c.outros, c.moeda)} (base real × índice de custo de vida ${c.indiceCustoVida}) · extras ${n(c.extras, c.moeda)}`,
+    `- sobra ${n(c.sobraMes, c.moeda)}/mês, taxa de poupança ${(c.taxaPoupanca * 100).toFixed(0)}%`,
+    `- poupança depois de ${c.anos} anos, em moeda de hoje: ${n(c.poupancaFinalReal, c.moeda)}`,
+  ]
+  if (f.comparacao.length > 1) {
+    linhas.push('', `Cenários comparados (convertidos para ${f.moeda}):`,
+      ...f.comparacao.map((x) => `- ${x.nome}: renda ${n(x.rendaMesEur)}/mês, custos ${n(x.custosMesEur)}/mês, sobra ${n(x.sobraMesEur)}/mês (${(x.taxaPoupanca * 100).toFixed(0)}%), poupança no fim ${n(x.poupancaFinalEur)}`))
+  }
+  linhas.push(
+    '',
+    'Escreva, em no máximo 170 palavras e sem listas longas:',
+    '1. Como o cenário em edição se compara com a vida de hoje: o que a sobra mensal faz de diferente.',
+    '2. Qual premissa pesa mais no resultado (moradia, escola, índice de custo de vida, impostos) e em que direção.',
+    '3. Que premissa merece conferência antes de qualquer decisão. Se as premissas estiverem coerentes com a base real, diga isso.',
+    '',
+    ...LIMITES,
+    '- O modelo de imposto é simplificado: não afirme o líquido como certo, trate como estimativa.',
+    '- Não recomende mudar de país, de emprego nem de escola: apenas descreva o que os números mostram.',
+  )
+  return {
+    system: 'Você lê simulações de custo de vida entre países para uma pessoa física, em português do Brasil, de forma direta e sem moralismo.',
+    prompt: linhas.filter((l) => l !== '').join('\n'),
+  }
+}

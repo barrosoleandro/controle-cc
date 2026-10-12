@@ -81,3 +81,42 @@ export function savingsProposals(s: Scenario, r: ScenarioResult, fmt: (n: number
   if (r.surplusMonth > 0) out.push({ title: 'Automate the surplus', detail: `Standing order of ${fmt(Math.floor(r.surplusMonth * 0.8 / 50) * 50)} on salary day into savings; spend what is left, not the other way round.` })
   return out
 }
+
+/** Monthly averages measured from the real statements, in EUR. */
+export interface RealBase { rent: number; school: number; brazil: number; variable: number; months: string[] }
+
+/** Name of the extra line that carries the costs still paid in Brazil. */
+export const BRAZIL_LINE = 'Custos Brasil (imóvel, cartão)'
+
+/**
+ * Rebuilds the scenario's cost lines from measured averages. Pure on purpose: the refresh
+ * that runs when the screen opens and the one behind the button produce the same scenario.
+ *
+ * Housing and school are only taken from the statements for France, where the measurement
+ * comes from; in another country they are an estimate of the destination, which no statement
+ * of today can know. Everything else (variable spending, costs kept in Brazil) travels along.
+ */
+export function applyRealBase(s: Scenario, base: RealBase): Scenario {
+  const others = s.extraLines.filter((l) => l.name !== BRAZIL_LINE)
+  const here = s.country === 'FR'
+  return {
+    ...s,
+    rentMonth: here ? Math.round(base.rent) : s.rentMonth,
+    schoolYear: here ? Math.round(base.school * 12) : s.schoolYear,
+    baselineVariableMonth: Math.round(base.variable),
+    extraLines: s.country !== 'BR' && Math.round(base.brazil) > 0 ? [...others, { name: BRAZIL_LINE, monthly: Math.round(base.brazil) }] : others,
+  }
+}
+
+export interface BaseChange { label: string; from: number; to: number }
+
+/** What applyRealBase changed, so the screen can say it instead of moving numbers silently. */
+export function realBaseChanges(before: Scenario, after: Scenario): BaseChange[] {
+  const line = (s: Scenario) => s.extraLines.find((l) => l.name === BRAZIL_LINE)?.monthly ?? 0
+  return ([
+    { label: 'moradia/mês', from: before.rentMonth, to: after.rentMonth },
+    { label: 'escola/ano', from: before.schoolYear, to: after.schoolYear },
+    { label: 'outros gastos/mês', from: before.baselineVariableMonth, to: after.baselineVariableMonth },
+    { label: 'custos no Brasil/mês', from: line(before), to: line(after) },
+  ] satisfies BaseChange[]).filter((c) => c.from !== c.to)
+}

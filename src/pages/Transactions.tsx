@@ -3,7 +3,8 @@ import type { Ctx } from '../App'
 import { addCategory, markAiNote, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote } from '../lib/data'
 import { CategorySelect } from '../components/CategorySelect'
 import { monthLabel, money } from '../lib/format'
-import { today, useFmt, useSubscriptions } from '../lib/hooks'
+import { today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
+import { Menu } from './analysis/shared'
 import { balanceSeries } from '../domain/analytics'
 import { buildPeriod, monthBalances, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
 import type { CategoryKind } from '../domain/types'
@@ -18,7 +19,9 @@ const VIEWS = ['1 mês', '6 meses', '12 meses', '24 meses', 'Por país', 'Lista'
 const MONTHS: Record<string, number> = { '1 mês': 1, '6 meses': 6, '12 meses': 12, '24 meses': 24 }
 
 export function Transactions({ ctx }: { ctx: Ctx }) {
-  const [view, setView] = useState<(typeof VIEWS)[number]>('6 meses')
+  // Opens on the current month: the question on this screen is almost always "what happened
+  // now"; the longer windows are one click away on the same control.
+  const [view, setView] = useState<(typeof VIEWS)[number]>('1 mês')
   const [merchant, setMerchant] = useState('') // set from a month view: the list shows only this merchant
   // Opens on the main account (BCP checking, the joint account); the others are one click away.
   // Card accounts are left out here: their detail lives on the Cartões page, and the
@@ -34,22 +37,62 @@ export function Transactions({ ctx }: { ctx: Ctx }) {
   // card's spending into the expense lines and the list (never into balances).
   const payerOf = useMemo(() => new Map(ctx.data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!])), [ctx.data.accounts])
   const inScope = useCallback((id: string) => shown(id) || (payerOf.has(id) && shown(payerOf.get(id)!)), [shown, payerOf])
+  const fmt = useFmt(ctx)
+  const balances = useBalances(ctx)
+  const mine = balances.filter((b) => shown(b.account.id))
+  const totalBalance = mine.reduce((s, b) => s + b.display, 0)
+  const nShown = accounts.filter((a) => shown(a.id)).length
+  const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
+
   return <>
-    <div className="row">{VIEWS.map((v) => (
-      <button key={v} className={v === view ? 'active' : ''} onClick={() => { setView(v); setMerchant('') }}>{v}</button>
-    ))}</div>
-    <div className="row">
-      <span className="muted">Contas:</span>
-      {/* Shortcuts: tick only the accounts of one country, or all of them. */}
-      {[...new Set(accounts.map((a) => countryOf(a.bank)))].map((c) => (
-        <button key={c} onClick={() => setHidden(new Set(accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
-      ))}
-      <button onClick={() => setHidden(new Set())}>Todas</button>
-      {accounts.map((a) => (
-        <label key={a.id} className="inline"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
-          const next = new Set(prev); if (next.has(a.id)) next.delete(a.id); else next.add(a.id); return next
-        })} />{a.name}</label>
-      ))}
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-head">
+        <h3>Saldo hoje</h3>
+        <span className="muted" style={{ fontSize: 12 }}>
+          {nShown} de {accounts.length} conta(s) marcadas · total convertido em {ctx.currency}
+        </span>
+      </div>
+      <div className="kpis">
+        <div className="kpi total">
+          <div className="l">Total ({ctx.currency})</div>
+          <div className={`v ${totalBalance < 0 ? 'neg' : ''}`}>{fmt(totalBalance)}</div>
+        </div>
+        {mine.map((b) => (
+          <div className="kpi" key={b.account.id}>
+            <div className="l">{b.account.name}</div>
+            <div className={`v ${b.native < 0 ? 'neg' : ''}`}>{money(b.account.currency, 2)(b.native)}</div>
+            {b.account.currency !== ctx.currency && <div className="sub">{fmt(b.display)}</div>}
+          </div>
+        ))}
+        {mine.length === 0 && <p className="muted">Nenhuma conta marcada.</p>}
+      </div>
+    </div>
+
+    <div className="toolbar">
+      <div className="seg" role="tablist" aria-label="Como ver os lançamentos">
+        {VIEWS.map((v) => (
+          <button key={v} role="tab" aria-selected={v === view} className={v === view ? 'on' : ''}
+            onClick={() => { setView(v); setMerchant('') }}>{v}</button>
+        ))}
+      </div>
+      {/* The account tickboxes used to be a wall of checkboxes above every view; they live in
+          one menu now, with the country shortcuts, and the button says what is ticked. */}
+      <Menu align="right" active={nShown < accounts.length}
+        label={nShown === accounts.length ? 'Todas as contas' : nShown === 1 ? accounts.find((a) => shown(a.id))?.name ?? '1 conta' : `${nShown} de ${accounts.length} contas`}>
+        <div className="row" style={{ marginBottom: 8 }}>
+          {countries.map((c) => (
+            <button key={c} onClick={() => setHidden(new Set(accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
+          ))}
+          <button onClick={() => setHidden(new Set())}>Todas</button>
+        </div>
+        <div className="opts">
+          {accounts.map((a) => (
+            <label key={a.id} className="inline opt"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
+              const next = new Set(prev); if (next.has(a.id)) next.delete(a.id); else next.add(a.id); return next
+            })} />{a.name} <span className="muted" style={{ fontSize: 12 }}>· {countryOf(a.bank)}</span></label>
+          ))}
+        </div>
+      </Menu>
     </div>
     {view === 'Lista'
       ? <Lista ctx={ctx} shown={inScope} merchant={merchant} onClearMerchant={() => setMerchant('')} />
@@ -162,33 +205,44 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
 
   return (
     <div className="card">
-      <div className="row">
-        <input placeholder="Buscar…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <select value={month} onChange={(e) => setMonth(e.target.value)}><option value="">Todos os meses</option>{months.map((m) => <option key={m}>{m}</option>)}</select>
-        <label className="inline" title="Data da compra (FACT no extrato), não a data em que o banco lançou">Compra de
-          <input type="date" value={de} onChange={(e) => setDe(e.target.value)} /></label>
-        <label className="inline">até <input type="date" value={ate} onChange={(e) => setAte(e.target.value)} /></label>
-        <label className="inline">Ordenar por
-          <select value={ordem} onChange={(e) => setOrdem(e.target.value as 'data' | 'valor')}>
-            <option value="data">data</option><option value="valor">valor (maiores gastos primeiro)</option>
-          </select></label>
-        <select value={cat} onChange={(e) => setCat(e.target.value)}><option value="">Todas as categorias</option><option value="__none">(sem categoria)</option>{sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-        <button onClick={exportCsv}>Exportar CSV</button>
-        <button onClick={async () => { const n = await reapplyRules(data); setMsg(`${n} lançamentos recategorizados.`); ctx.reload() }}>Reaplicar regras</button>
+      <div className="filters">
+        <input className="grow" placeholder="Buscar descrição ou observação…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <select value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Mês"><option value="">Todos os meses</option>{months.map((m) => <option key={m}>{m}</option>)}</select>
+        <select value={cat} onChange={(e) => setCat(e.target.value)} aria-label="Categoria"><option value="">Todas as categorias</option><option value="__none">(sem categoria)</option>{sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        <select value={ordem} onChange={(e) => setOrdem(e.target.value as 'data' | 'valor')} aria-label="Ordenar por">
+          <option value="data">mais recentes primeiro</option><option value="valor">maiores gastos primeiro</option>
+        </select>
+        {/* Purchase-date range (the FACT date on card lines), e.g. the days of a business trip. */}
+        <Menu label="Data da compra" active={Boolean(de || ate)}>
+          <div className="custom" style={{ border: 0, margin: 0, paddingTop: 0 }}>
+            <label>de <input type="date" value={de} onChange={(e) => setDe(e.target.value)} /></label>
+            <label>até <input type="date" value={ate} onChange={(e) => setAte(e.target.value)} /></label>
+            <span className="muted" style={{ fontSize: 12 }}>Data da compra (FACT no extrato), não a data em que o banco lançou.</span>
+            {(de || ate) && <button onClick={() => { setDe(''); setAte('') }}>Limpar</button>}
+          </div>
+        </Menu>
+        <Menu label="Ações" align="right">
+          <div className="presets">
+            <button onClick={exportCsv}>Exportar CSV ({rows.length} linhas)</button>
+            <button onClick={async () => { const n = await reapplyRules(data); setMsg(`${n} lançamentos recategorizados.`); ctx.reload() }}>Reaplicar regras</button>
+          </div>
+        </Menu>
       </div>
       {merchant && <p className="row alert" style={{ justifyContent: 'space-between' }}>
         <span>Só <strong>{merchant}</strong></span><button onClick={onClearMerchant}>Ver todos</button></p>}
-      <p className="muted">
-        {rows.length} lançamentos · soma dos lançamentos listados {fmt(total)}{msg ? ` · ${msg}` : ''}
-      </p>
+      {msg && <p className="alert">{msg}</p>}
       <p className="muted" style={{ fontSize: 13 }}>
-        Saldo {month ? `no fim de ${month}` : 'atual'}:{' '}
-        {balances.map(({ a, bal }, i) => <span key={a.id}>{i > 0 && ' · '}{a.name} <strong className={bal < 0 ? 'neg' : ''}>{money(a.currency, 2)(bal)}</strong></span>)}
+        {rows.length} lançamento(s) · soma dos listados <strong>{fmt(total)}</strong>
+        {month && <> · saldo no fim de {month}: {balances.map(({ a, bal }, i) => <span key={a.id}>{i > 0 && ' · '}{a.name} <strong className={bal < 0 ? 'neg' : ''}>{money(a.currency, 2)(bal)}</strong></span>)}</>}
       </p>
-      <p className="muted" style={{ fontSize: 12 }}>
-        Trocar a categoria na linha muda todo o histórico daquele estabelecimento. Para mudar só algumas linhas, marque-as e use
-        “Aplicar só nestas linhas”. Em qualquer lista de categorias, “+ Nova categoria…” cria uma nova.
-      </p>
+      <details className="help">
+        <summary>Como mudar categorias aqui</summary>
+        <div>
+          <span>Trocar a categoria <strong>na linha</strong> muda todo o histórico daquele estabelecimento e salva a regra para os próximos imports.</span>
+          <span>Para mudar <strong>só algumas linhas</strong>, marque-as e use “Aplicar só nestas linhas”.</span>
+          <span>Em qualquer lista de categorias, “+ Nova categoria…” cria uma nova.</span>
+        </div>
+      </details>
       {sel.size > 0 && (
         <div className="row alert">
           <strong>{sel.size} selecionada(s)</strong>
@@ -350,6 +404,9 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
     finally { setSaving(null) }
   }
 
+  // The "change category" column only has controls on expanded merchant rows: while nothing
+  // is expanded it is an empty column, so it stays out of the table altogether.
+  const catCol = open.size > 0 || onlyAlerts
   const toggle = (k: string) => setOpen((prev) => { const next = new Set(prev); if (next.has(k)) next.delete(k); else next.add(k); return next })
   const sticky = { position: 'sticky' as const, left: 0, background: 'var(--card)' }
 
@@ -368,7 +425,7 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
 
   return (
     <div className="card">
-      <div className="row">
+      <div className="filters">
         <label className="inline">{n === 1 ? 'Mês' : 'Terminando em'}
           <select value={lastMonth} onChange={(e) => setEnd(e.target.value)}>
             {[...allMonths].reverse().map((m) => <option key={m}>{m}</option>)}
@@ -376,6 +433,9 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
         </label>
         <label className="inline"><input type="checkbox" checked={onlyAlerts} onChange={(e) => setOnlyAlerts(e.target.checked)} /> só o que precisa de atenção</label>
         <button onClick={() => setOpen(open.size ? new Set() : new Set([...receitas.map((g) => g.key), ...groups.map((g) => g.key), ...(transfers.group ? [transfers.group.key] : [])]))}>{open.size ? 'Recolher tudo' : 'Expandir tudo'}</button>
+        <span className="muted" style={{ fontSize: 12, marginLeft: 'auto' }}>
+          {n === 1 ? monthLabel(months[0]) : `${monthLabel(months[0])} a ${monthLabel(months.at(-1)!)}`}
+        </span>
       </div>
       {gaps.map((g) => (
         <div key={g.name} className="alert warn" style={{ marginBottom: 8 }}>
@@ -383,23 +443,37 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
           <button onClick={() => setEnd(g.last)}>Ver até {monthLabel(g.last)}</button>
         </div>
       ))}
-      <p className="muted">
-        {n === 1 ? `Movimentos de ${months[0]}` : `Movimentos de ${months[0]} a ${months.at(-1)}`} · despesas {fmt(grand)}
-        {receitas.length > 0 && <> · <span className="pos">receitas {fmt(receitaGrand)}</span></>}
-        {flagged > 0 && <> · <span className="neg">⚑ {flagged} categoria(s) fora da média</span></>}
-        {toReview > 0 && <> · <span className="warn">↻ {toReview} assinatura(s) para revisar</span></>}
-        {col !== null && <> · <span style={{ background: 'var(--new)', padding: '0 4px' }}>{newCount} estabelecimento(s) novos em {months[col]}</span></>}
-      </p>
+      {/* The headline of the window, before the table: the table answers "where", these answer "how much". */}
+      <div className="kpis" style={{ marginBottom: 12 }}>
+        {receitas.length > 0 && <div className="kpi"><div className="l">Receitas</div><div className="v pos">{fmt(receitaGrand)}</div></div>}
+        <div className="kpi"><div className="l">Despesas</div><div className="v neg">{fmt(grand)}</div></div>
+        {receitas.length > 0 && <div className="kpi"><div className="l">Resultado</div>
+          <div className={`v ${receitaGrand - grand < 0 ? 'neg' : 'pos'}`}>{fmt(receitaGrand - grand)}</div>
+          {n > 1 && <div className="sub">{fmt((receitaGrand - grand) / months.length)}/mês</div>}</div>}
+        <div className="kpi"><div className="l">Saldo no fim de {monthLabel(months.at(-1)!)}</div>
+          <div className={`v ${(saldos.closing.at(-1) ?? 0) < 0 ? 'neg' : ''}`}>{fmt(saldos.closing.at(-1) ?? 0)}</div></div>
+        {n > 1 && <div className="kpi"><div className="l">Despesa média/mês</div><div className="v">{fmt(grand / months.length)}</div></div>}
+      </div>
+      {(flagged > 0 || toReview > 0 || (col !== null && newCount > 0)) && (
+        <p className="muted" style={{ fontSize: 13 }}>
+          {flagged > 0 && <><span className="neg">⚑ {flagged} categoria(s) fora da média</span>{' '}</>}
+          {toReview > 0 && <><span className="warn">↻ {toReview} assinatura(s) para revisar</span>{' '}</>}
+          {col !== null && newCount > 0 && <span style={{ background: 'var(--new)', padding: '0 4px' }}>{newCount} estabelecimento(s) novos em {months[col]}</span>}
+        </p>)}
       {erro && <p className="err">{erro}</p>}
-      <p className="muted" style={{ fontSize: 12 }}>
-        Expanda uma categoria (▸) para mudar a categoria de um estabelecimento (vale para todo o histórico dele) ou abrir os lançamentos dele.
-        <br /><span className="neg"><strong>Vermelho</strong></span>: mês pelo menos 50% acima da média da linha{n === 1 ? ' (média dos 6 meses anteriores)' : ''}.
-        <span style={{ background: 'var(--new)', padding: '0 4px' }}>Amarelo</span>: gasto novo no mês (nada nos 6 meses anteriores).
-        Clique num mês para ordenar por ele, ou em Total para voltar. ⚑: linha com algum mês fora da média. ↻: assinatura; <span className="warn">revisar</span> quando o preço subiu, é nova, parou de cobrar ou a renovação anual está perto.
-      </p>
+      <details className="help">
+        <summary>Como ler esta tabela</summary>
+        <div>
+          <span>Expanda uma categoria (▸) para mudar a categoria de um estabelecimento (vale para todo o histórico dele) ou abrir os lançamentos dele.</span>
+          <span><span className="neg"><strong>Vermelho</strong></span>: mês pelo menos 50% acima da média da linha{n === 1 ? ' (média dos 6 meses anteriores)' : ''}.
+            <span style={{ background: 'var(--new)', padding: '0 4px', marginLeft: 6 }}>Amarelo</span>: gasto novo no mês (nada nos 6 meses anteriores).</span>
+          <span>Clique num mês para ordenar por ele, ou em Total para voltar. ⚑: linha com algum mês fora da média.
+            ↻: assinatura; <span className="warn">revisar</span> quando o preço subiu, é nova, parou de cobrar ou a renovação anual está perto.</span>
+        </div>
+      </details>
       <div className="scroll"><table>
         <thead><tr>
-          <th style={sticky}>Categoria / estabelecimento</th><th>Mudar categoria</th>
+          <th style={sticky}>Categoria / estabelecimento</th>{catCol && <th>Mudar categoria</th>}
           {months.map((m, i) => (
             <th key={m} className="num sortable" title="Ordenar por este mês" onClick={() => setSortBy(col === i ? null : i)}>
               {m.slice(2)}{col === i ? ' ▼' : ''}</th>
@@ -408,13 +482,13 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
           <th className="num sortable" title="Ordenar pelo total" onClick={() => setSortBy(null)}>Total{col === null ? ' ▼' : ''}</th>
         </tr>
         <tr className="muted">
-          <th style={sticky}>Saldo inicial</th><th />
+          <th style={sticky}>Saldo inicial</th>{catCol && <th />}
           {saldos.opening.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : ''}`}>{fmt(v)}</th>)}
           <th /><th />
         </tr></thead>
         <tbody>
           {receitas.length > 0 && !onlyAlerts && <>
-            <tr className="section"><th style={sticky} colSpan={months.length + 4}>Receitas</th></tr>
+            <tr className="section"><th style={sticky} colSpan={months.length + (catCol ? 4 : 3)}>Receitas</th></tr>
             {receitas.map((g) => {
               const isOpen = open.has(g.key)
               return (
@@ -424,7 +498,7 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
                       <button className="link" onClick={() => toggle(g.key)} aria-expanded={isOpen}>{isOpen ? '▾' : '▸'} {g.key}</button>
                       <span className="muted" style={{ fontSize: 12 }}> entrada · fora do total de despesas</span>
                     </td>
-                    <td />
+                    {catCol && <td />}
                     {cells(g)}
                   </tr>
                   {isOpen && g.merchants.map((m) => (
@@ -442,7 +516,7 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
                 </Fragment>
               )
             })}
-            <tr className="section"><th style={sticky} colSpan={months.length + 4}>Despesas</th></tr>
+            <tr className="section"><th style={sticky} colSpan={months.length + (catCol ? 4 : 3)}>Despesas</th></tr>
           </>}
           {groups.map((g) => {
             const isOpen = open.has(g.key) || onlyAlerts
@@ -455,7 +529,7 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
                     {g.flagged && <span className="neg" title="Algum mês fora da média"> ⚑</span>}
                     {reviews > 0 && <span className="warn" title="Assinaturas para revisar"> ↻{reviews}</span>}
                   </td>
-                  <td />
+                  {catCol && <td />}
                   {cells(g)}
                 </tr>
                 {isOpen && g.merchants.map((m) => {
@@ -489,7 +563,7 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
                     <button className="link" onClick={() => toggle(g.key)} aria-expanded={isOpen}>{isOpen ? '▾' : '▸'} Transferências</button>
                     <span className="muted" style={{ fontSize: 12 }}> entre suas contas · fora do total</span>
                   </td>
-                  <td />
+                  {catCol && <td />}
                   {cells(g)}
                 </tr>
                 {isOpen && g.merchants.map((m) => (
@@ -510,32 +584,32 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
         </tbody>
         <tfoot>
         {receitas.length > 0 && <tr>
-          <th style={sticky}>Total das receitas<div className="rule">soma das categorias de receita acima. Difere de “Total de entradas” quando um estorno cai numa categoria de despesa: ele entra como dinheiro recebido, mas acima abate a despesa do mês</div></th><th />
+          <th style={sticky}>Total das receitas<div className="rule">soma das categorias de receita acima. Difere de “Total de entradas” quando um estorno cai numa categoria de despesa: ele entra como dinheiro recebido, mas acima abate a despesa do mês</div></th>{catCol && <th />}
           {receitaTotals.map((v, i) => <th key={i} className="num pos">{fmt(v)}</th>)}
           <th /><th className="num pos">{fmt(receitaGrand)}</th>
         </tr>}
         <tr>
-          <th style={sticky}>Total das despesas<div className="rule">soma das categorias de despesa acima, incluindo as compras do cartão pago por uma conta marcada; estornos abatem; sem transferências</div></th><th />
+          <th style={sticky}>Total das despesas<div className="rule">soma das categorias de despesa acima, incluindo as compras do cartão pago por uma conta marcada; estornos abatem; sem transferências</div></th>{catCol && <th />}
           {columnTotals.map((v, i) => <th key={i} className="num">{fmt(v)}</th>)}
           <th /><th className="num">{fmt(grand)}</th>
         </tr>
         <tr>
-          <th style={sticky}>Total de entradas</th><th />
+          <th style={sticky}>Total de entradas</th>{catCol && <th />}
           {entradas.map((v, i) => <th key={i} className="num pos">{fmt(v)}</th>)}
           <th /><th className="num pos">{fmt(entradas.reduce((s, v) => s + v, 0))}</th>
         </tr>
         <tr>
-          <th style={sticky}>Total de saídas</th><th />
+          <th style={sticky}>Total de saídas</th>{catCol && <th />}
           {saidas.map((v, i) => <th key={i} className="num neg">{fmt(v)}</th>)}
           <th /><th className="num neg">{fmt(saidas.reduce((s, v) => s + v, 0))}</th>
         </tr>
         <tr>
-          <th style={sticky}>Transferências (líquido)</th><th />
+          <th style={sticky}>Transferências (líquido)</th>{catCol && <th />}
           {liquido.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : v > 0 ? 'pos' : 'muted'}`}>{Math.abs(v) > 0.005 ? fmt(v) : '—'}</th>)}
           <th /><th className="num">{fmt(liquido.reduce((s, v) => s + v, 0))}</th>
         </tr>
         <tr>
-          <th style={sticky}>Saldo final{perAccount.length > 1 || perAccount.some((x) => x.a.currency !== ctx.currency) ? ` (em ${ctx.currency})` : ''}</th><th />
+          <th style={sticky}>Saldo final{perAccount.length > 1 || perAccount.some((x) => x.a.currency !== ctx.currency) ? ` (em ${ctx.currency})` : ''}</th>{catCol && <th />}
           {saldos.closing.map((v, i) => <th key={i} className={`num ${v < 0 ? 'neg' : ''}`}>{fmt(v)}</th>)}
           <th /><th />
         </tr>
@@ -543,7 +617,7 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
           const f = money(a.currency, 2)
           return (
             <tr key={a.id} className="sub-row">
-              <td style={sticky} className="muted">↳ {a.name}</td><td />
+              <td style={sticky} className="muted">↳ {a.name}</td>{catCol && <td />}
               {closing.map((v, i) => <td key={i} className={`num ${v < 0 ? 'neg' : 'muted'}`}>{f(v)}</td>)}
               <td /><td />
             </tr>

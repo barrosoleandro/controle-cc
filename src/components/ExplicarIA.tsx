@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ask, loadOllama, OLLAMA_EVENT, ollamaReady } from '../lib/ollama'
 
 /**
@@ -6,13 +6,20 @@ import { ask, loadOllama, OLLAMA_EVENT, ollamaReady } from '../lib/ollama'
  * computed its numbers. The prompt is built by the caller from those numbers, so the
  * model only ever puts arithmetic into words — it never produces a figure of its own.
  */
-export function ExplicarIA({ build, signature, label = 'Explicar com a IA local', note }: {
+export function ExplicarIA({ build, signature, label = 'Explicar com a IA local', note, auto = false }: {
   /** Called on click; returns the system + user prompt built from facts already on screen. */
   build: () => { system: string; prompt: string }
   /** Changes whenever the underlying numbers change, which clears a stale explanation. */
   signature: string
   label?: string
   note?: string
+  /**
+   * Runs once as soon as the screen is open and the local model is reachable, instead of
+   * waiting for a click. For screens whose whole point is the reading (the simulation),
+   * pass it only when the numbers are already final — a run on half-loaded data would
+   * describe zeros. Editing a field clears the text, as always, and the button comes back.
+   */
+  auto?: boolean
 }) {
   const [cfg, setCfg] = useState(loadOllama)
   const [texto, setTexto] = useState<string | null>(null)
@@ -39,6 +46,14 @@ export function ExplicarIA({ build, signature, label = 'Explicar com a IA local'
       setTexto(await ask(c, prompt, { system, temperature: 0.2 }))
     } catch (e) { setErro((e as Error).message) } finally { setBusy(false) }
   }
+
+  // "At each opening": one run per visit to the screen, never one per keystroke.
+  const ranRef = useRef(false)
+  useEffect(() => {
+    if (!auto || ranRef.current || !ollamaReady(cfg)) return
+    ranRef.current = true
+    void explicar()
+  }, [auto, cfg])
 
   const ready = ollamaReady(cfg)
   return (
