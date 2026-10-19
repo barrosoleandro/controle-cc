@@ -27,12 +27,18 @@ export interface ScenarioResult {
   net: NetResult
   partnerNet: NetResult | null
   incomeMonth: number
-  expenses: { rent: number; school: number; variable: number; extras: number; total: number }
+  expenses: { rent: number; school: number; variable: number; extras: number; tithe: number; total: number }
   surplusMonth: number
   savingsRate: number
   surplusMonthEur: number
   projection: { year: number; savings: number; savingsReal: number }[]
 }
+
+/**
+ * Tithe is always 10% of the net received in the month — never the historical average, so a
+ * scenario with another salary gives the tithe of that salary.
+ */
+export const TITHE_RATE = 0.1
 
 export function runScenario(s: Scenario): ScenarioResult {
   const net = grossToNet(s.country, s.grossYear, s.household)
@@ -43,7 +49,8 @@ export function runScenario(s: Scenario): ScenarioResult {
   const variable = toLocal(s.baselineVariableMonth) * s.costOfLivingIndex
   const extras = s.extraLines.reduce((a, l) => a + l.monthly, 0)
   const school = s.schoolYear / 12
-  const total = s.rentMonth + school + variable + extras
+  const tithe = Math.max(0, incomeMonth) * TITHE_RATE
+  const total = s.rentMonth + school + variable + extras + tithe
   const surplusMonth = incomeMonth - total
   const r = s.savingsReturnPct / 100 / 12
   const inf = s.inflationPct / 100
@@ -55,7 +62,7 @@ export function runScenario(s: Scenario): ScenarioResult {
   }
   return {
     currency, net, partnerNet, incomeMonth,
-    expenses: { rent: s.rentMonth, school, variable, extras, total },
+    expenses: { rent: s.rentMonth, school, variable, extras, tithe, total },
     surplusMonth, savingsRate: incomeMonth > 0 ? surplusMonth / incomeMonth : 0,
     surplusMonthEur: currency === 'BRL' ? surplusMonth / s.fxEurBrl : surplusMonth,
     projection,

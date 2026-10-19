@@ -104,9 +104,10 @@ describe('simulation', () => {
   it('computes surplus and linear projection at 0% return', () => {
     const r = runScenario(s)
     expect(r.incomeMonth).toBe(6000)
-    expect(r.expenses.total).toBe(5100)
-    expect(r.surplusMonth).toBe(900)
-    expect(r.projection[1].savings).toBe(1000 + 900 * 24)
+    expect(r.expenses.tithe).toBe(600) // 10% of the 6000 net, whatever the history says
+    expect(r.expenses.total).toBe(5700)
+    expect(r.surplusMonth).toBe(300)
+    expect(r.projection[1].savings).toBe(1000 + 300 * 24)
   })
 
   const measured: RealBase = { rent: 1900.4, school: 500, brazil: 320.6, variable: 2500, months: ['2026-04', '2026-09'] }

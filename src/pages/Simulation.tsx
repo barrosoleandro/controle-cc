@@ -10,6 +10,7 @@ import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
 import { countryOf } from '../domain/countries'
 import { ExplicarIA } from '../components/ExplicarIA'
 import { simulationPrompt } from '../domain/localAi'
+import { isTithe } from '../domain/categorize'
 
 /** Measurement windows offered for the real base, in complete months. */
 const WINDOWS = [3, 6, 12]
@@ -59,14 +60,16 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
     const sum = (cats: Map<string, number>, names: string[]) => names.reduce((s, n) => s + (cats.get(n) ?? 0), 0)
     const totalFr = [...fr.values()].reduce((s, v) => s + v, 0)
     const rent = sum(fr, HOUSING), school = sum(fr, SCHOOL)
-    const variable = totalFr - rent - school - sum(fr, BRAZIL) - sum(fr, REIMBURSED)
+    // Tithe is left out: the scenario charges 10% of its own net income instead of the history.
+    const tithe = sum(fr, [...fr.keys()].filter(isTithe))
+    const variable = totalFr - rent - school - sum(fr, BRAZIL) - sum(fr, REIMBURSED) - tithe
     const salary = eurTx.filter((t) => t.categoryName === 'Salario' && set.has(t.month)).reduce((s, t) => s + t.value, 0) / n
     const m = monthly(eurTx).filter((x) => set.has(x.month))
     // The averages divide by the whole window, so a month that was never imported pulls them
     // down. Count what is really there: a diluted base must say so, not pass as measured.
     const covered = new Set(eurTx.filter((t) => set.has(t.month)).map((t) => t.month)).size
     const lines: Line[] = [
-      ...[...fr].filter(([n]) => !BRAZIL.includes(n) && !REIMBURSED.includes(n)).map(([name, value]) => ({ name, group: groupOf(name), value })),
+      ...[...fr].filter(([n]) => !BRAZIL.includes(n) && !REIMBURSED.includes(n) && !isTithe(n)).map(([name, value]) => ({ name, group: groupOf(name), value })),
       ...BRAZIL.filter((n) => (all.get(n) ?? 0) > 0).map((name) => ({ name, group: 'brazil' as Group, value: all.get(name) ?? 0 })),
     ].sort((a, b) => b.value - a.value)
     return { lines, rent, school, brazil: sum(all, BRAZIL), variable, reimbursed: sum(fr, REIMBURSED), total: totalFr, salary, months, covered, income: m.reduce((s, x) => s + x.income, 0) / n }
@@ -144,7 +147,7 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
       nome: s.name, pais: PRESETS[s.country].label, moeda: r.currency,
       brutoAno: r.net.grossYear, liquidoMes: r.net.netMonth, aliquota: r.net.effectiveRate,
       rendaMes: r.incomeMonth, moradia: r.expenses.rent, escola: r.expenses.school, outros: r.expenses.variable,
-      indiceCustoVida: s.costOfLivingIndex, extras: r.expenses.extras,
+      indiceCustoVida: s.costOfLivingIndex, extras: r.expenses.extras, dizimo: r.expenses.tithe,
       sobraMes: r.surplusMonth, taxaPoupanca: r.savingsRate, anos: s.years, poupancaFinalReal: r.projection.at(-1)?.savingsReal ?? 0,
     },
     comparacao: compare.map((c) => {
@@ -250,6 +253,7 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
         <tr><td>Aluguel</td><td className="num">{loc(r.expenses.rent)}</td></tr>
         <tr><td>Escola</td><td className="num">{loc(r.expenses.school)}</td></tr>
         <tr><td>Outros gastos (× {s.costOfLivingIndex})</td><td className="num">{loc(r.expenses.variable)}</td></tr>
+        <tr><td>Dízimo (10% do líquido do mês)</td><td className="num">{loc(r.expenses.tithe)}</td></tr>
         <tr><td>Custos extras</td><td className="num">{loc(r.expenses.extras)}</td></tr>
         <tr><td><strong>Sobra / mês</strong></td><td className={`num ${r.surplusMonth >= 0 ? 'pos' : 'neg'}`}><strong>{loc(r.surplusMonth)}</strong> · {(r.savingsRate * 100).toFixed(0)}% de taxa de poupança</td></tr>
         <tr><td>Poupança após {s.years} anos (em moeda de hoje)</td><td className="num">{loc(r.projection.at(-1)?.savingsReal ?? 0)}</td></tr>

@@ -333,7 +333,7 @@ export interface SimulationFacts {
   base: { de: string; ate: string; moradia: number; escola: number; brasil: number; outros: number; salarioLiquido: number }
   cenario: {
     nome: string; pais: string; moeda: string; brutoAno: number; liquidoMes: number; aliquota: number
-    rendaMes: number; moradia: number; escola: number; outros: number; indiceCustoVida: number; extras: number
+    rendaMes: number; moradia: number; escola: number; outros: number; indiceCustoVida: number; extras: number; dizimo: number
     sobraMes: number; taxaPoupanca: number; anos: number; poupancaFinalReal: number
   }
   comparacao: { nome: string; rendaMesEur: number; custosMesEur: number; sobraMesEur: number; taxaPoupanca: number; poupancaFinalEur: number }[]
@@ -357,7 +357,7 @@ export function simulationPrompt(f: SimulationFacts): { system: string; prompt: 
     `Cenário em edição: ${c.nome} (${c.pais}), valores em ${c.moeda}.`,
     `- bruto ${n(c.brutoAno, c.moeda)}/ano → líquido ${n(c.liquidoMes, c.moeda)}/mês (${(c.aliquota * 100).toFixed(1)}% de descontos)`,
     `- renda da família ${n(c.rendaMes, c.moeda)}/mês`,
-    `- moradia ${n(c.moradia, c.moeda)} · escola ${n(c.escola, c.moeda)} · outros gastos ${n(c.outros, c.moeda)} (base real × índice de custo de vida ${c.indiceCustoVida}) · extras ${n(c.extras, c.moeda)}`,
+    `- moradia ${n(c.moradia, c.moeda)} · escola ${n(c.escola, c.moeda)} · outros gastos ${n(c.outros, c.moeda)} (base real × índice de custo de vida ${c.indiceCustoVida}) · extras ${n(c.extras, c.moeda)} · dízimo (10% do líquido) ${n(c.dizimo, c.moeda)}`,
     `- sobra ${n(c.sobraMes, c.moeda)}/mês, taxa de poupança ${(c.taxaPoupanca * 100).toFixed(0)}%`,
     `- poupança depois de ${c.anos} anos, em moeda de hoje: ${n(c.poupancaFinalReal, c.moeda)}`,
   ]
