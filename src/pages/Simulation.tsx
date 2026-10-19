@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Ctx } from '../App'
-import { applyRealBase, BRAZIL_LINE, realBaseChanges, runScenario, savingsProposals, type RealBase, type Scenario } from '../domain/simulation'
+import { applyRealBase, realBaseChanges, runScenario, savingsProposals, type RealBase, type Scenario } from '../domain/simulation'
 import type { Country } from '../domain/tax'
 import { byCategory, lastCompleteMonths, monthly } from '../domain/analytics'
 import { deleteScenario, saveScenario } from '../lib/data'
@@ -28,6 +28,19 @@ const PRESETS: Record<Country, { label: string; col: number; currency: 'EUR' | '
   CUSTOM: { label: 'Personalizado', col: 1, currency: 'EUR' },
 }
 
+type Group = 'rent' | 'school' | 'brazil' | 'variable'
+interface Line { name: string; group: Group; value: number }
+
+const groupOf = (name: string): Group =>
+  HOUSING.includes(name) ? 'rent' : SCHOOL.includes(name) ? 'school' : BRAZIL.includes(name) ? 'brazil' : 'variable'
+const GROUP_LABEL: Record<Group, string> = { rent: 'Moradia', school: 'Escola e filhos', brazil: 'Custos no Brasil', variable: 'Outros gastos (França)' }
+
+/** The real base the scenario receives: the measured lines with the user's edits laid over them. */
+function realBaseOf(lines: Line[], edits: Record<string, number>, months: string[]): RealBase {
+  const sum = (g: Group) => lines.filter((l) => l.group === g).reduce((t, l) => t + (edits[l.name] ?? l.value), 0)
+  return { rent: sum('rent'), school: sum('school'), brazil: sum('brazil'), variable: sum('variable'), months }
+}
+
 export function Simulation({ ctx }: { ctx: Ctx }) {
   const { data, fx } = ctx
   const eur = money('EUR')
@@ -52,61 +65,65 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
     // The averages divide by the whole window, so a month that was never imported pulls them
     // down. Count what is really there: a diluted base must say so, not pass as measured.
     const covered = new Set(eurTx.filter((t) => set.has(t.month)).map((t) => t.month)).size
-    return { rent, school, brazil: sum(all, BRAZIL), variable, reimbursed: sum(fr, REIMBURSED), total: totalFr, salary, months, covered, income: m.reduce((s, x) => s + x.income, 0) / n }
+    const lines: Line[] = [
+      ...[...fr].filter(([n]) => !BRAZIL.includes(n) && !REIMBURSED.includes(n)).map(([name, value]) => ({ name, group: groupOf(name), value })),
+      ...BRAZIL.filter((n) => (all.get(n) ?? 0) > 0).map((name) => ({ name, group: 'brazil' as Group, value: all.get(name) ?? 0 })),
+    ].sort((a, b) => b.value - a.value)
+    return { lines, rent, school, brazil: sum(all, BRAZIL), variable, reimbursed: sum(fr, REIMBURSED), total: totalFr, salary, months, covered, income: m.reduce((s, x) => s + x.income, 0) / n }
   }, [ctx.etx, fx, data.accounts])
-  const [win, setWin] = useState(6)
-  const base = useMemo(() => baseFor(win), [baseFor, win])
+  // No window chosen at the start: the scenario begins with the 110k salary and no school,
+  // and only takes the statements' numbers once a window is picked.
+  const [win, setWin] = useState<number | null>(null)
+  const [edits, setEdits] = useState<Record<string, number>>({})
+  const base = useMemo(() => baseFor(win ?? 6), [baseFor, win])
   /** No statements in the window: refreshing from it would zero the scenario, so it is blocked. */
   const temBase = base.total > 0
   /** Window only partly imported: the averages are real but diluted. */
-  const parcial = base.covered > 0 && base.covered < win
-  const realBase: RealBase = { rent: base.rent, school: base.school, brazil: base.brazil, variable: base.variable, months: base.months }
+  const parcial = base.covered > 0 && base.covered < (win ?? 6)
+  const lines = base.lines.map((l) => ({ ...l, value: edits[l.name] ?? l.value }))
 
   const make = (country: Country): Scenario => ({
     name: PRESETS[country].label, country, household: { married: true, children: 2 },
-    grossYear: country === 'BR' ? 600000 : 150000, partnerGrossYear: 0, otherIncomeMonth: 0,
-    rentMonth: country === 'FR' ? Math.round(base.rent) : 0, schoolYear: country === 'FR' ? Math.round(base.school * 12) : 0,
-    baselineVariableMonth: Math.round(base.variable), costOfLivingIndex: PRESETS[country].col,
-    extraLines: base.brazil > 0 && country !== 'BR' ? [{ name: BRAZIL_LINE, monthly: Math.round(base.brazil) }] : [],
+    grossYear: country === 'BR' ? 600000 : 110000, partnerGrossYear: 0, otherIncomeMonth: 0,
+    rentMonth: 0, schoolYear: 0, baselineVariableMonth: 0, costOfLivingIndex: PRESETS[country].col,
+    extraLines: [],
     savingsReturnPct: 3, inflationPct: 2, years: 10, startingSavings: 0, fxEurBrl: Math.round(fx.latest() * 100) / 100,
   })
 
   const saved = data.scenarios.map((s) => ({ id: s.id, s: s.data as Scenario }))
-  const [s, setS] = useState<Scenario>(() => saved[0]?.s ?? make('FR'))
-  const [editingId, setEditingId] = useState<string | null>(saved[0]?.id ?? null)
+  const [s, setS] = useState<Scenario>(() => make('FR'))
+  const [editingId, setEditingId] = useState<string | null>(null)
   const r = runScenario(s)
   const loc = money(r.currency)
   const set = <K extends keyof Scenario>(k: K, v: Scenario[K]) => setS({ ...s, [k]: v })
   const num = (k: keyof Scenario) => ({ type: 'number', value: s[k] as number, onChange: (e: React.ChangeEvent<HTMLInputElement>) => set(k, Number(e.target.value) as never) })
 
   const [aviso, setAviso] = useState<string | null>(null)
-  const janela = () => `${base.months[0]} a ${base.months.at(-1)}`
+  const janela = (b = base) => `${b.months[0]} a ${b.months.at(-1)}`
 
-  /**
-   * Puts the measured base into a scenario and says, in words, what moved: the fields it
-   * touches are far below this card, so a silent change looks like a button that does nothing.
-   */
-  function aplicarBase(sc: Scenario, abrindo = false, destino: string | null = editingId) {
-    if (!temBase) { setAviso(`Nenhum lançamento em ${janela()}: importe os extratos desse período para atualizar a base.`); return }
-    const next = applyRealBase(sc, realBase)
+  /** Puts a measured base (with the user's edits) into the scenario and says what moved. */
+  function aplicarBase(sc: Scenario, rb: RealBase) {
+    const next = applyRealBase(sc, rb)
     const changes = realBaseChanges(sc, next)
     setS(next)
-    const como = abrindo ? 'conferida ao abrir' : 'aplicada'
-    setAviso(changes.length === 0
-      ? `Base real de ${janela()} ${como}: o cenário já estava igual aos seus números.`
-      : `Base real de ${janela()} ${como}: ` + changes.map((c) => `${c.label} ${eur(c.from)} → ${eur(c.to)}`).join(' · ')
-        + (destino ? ' — clique em Salvar para guardar no cenário.' : '')
-        + (parcial ? ` Atenção: só ${base.covered} dos ${win} meses têm lançamentos, as médias estão diluídas.` : ''))
+    setAviso(changes.length === 0 ? null
+      : `Base de ${rb.months[0]} a ${rb.months.at(-1)} aplicada: ` + changes.map((c) => `${c.label} ${eur(c.from)} → ${eur(c.to)}`).join(' · ')
+        + (editingId ? ' — clique em Salvar para guardar no cenário.' : ''))
   }
 
-  // "A cada abertura": the scenario on screen is recomputed from the statements as soon as
-  // they are loaded, once per visit. Nothing is written to the database until Salvar.
-  const opened = useRef(false)
-  useEffect(() => {
-    if (opened.current || !temBase) return
-    opened.current = true
-    aplicarBase(s, true)
-  }, [temBase])
+  function escolherJanela(n: number) {
+    if (n === win) { setWin(null); setEdits({}); setAviso(null); return }
+    const b = baseFor(n)
+    setWin(n); setEdits({})
+    if (b.total <= 0) { setAviso(null); return }
+    aplicarBase(s, realBaseOf(b.lines, {}, b.months))
+  }
+
+  function editarLinha(name: string, value: number) {
+    const e = { ...edits, [name]: value }
+    setEdits(e)
+    aplicarBase(s, realBaseOf(base.lines, e, base.months))
+  }
 
   const compare = [...saved.filter((x) => x.id !== editingId), { id: 'current', s }].map((x) => ({ ...x, r: runScenario(x.s) }))
   const chart = Array.from({ length: Math.max(...compare.map((c) => c.s.years)) }, (_, i) => {
@@ -143,46 +160,49 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
   return <div className="grid">
     <div className="card" style={{ gridColumn: '1/-1' }}>
       <div className="row" style={{ justifyContent: 'space-between' }}>
-        <h3 style={{ margin: 0 }}>Sua base real (últimos {win} meses, EUR/mês)</h3>
+        <h3 style={{ margin: 0 }}>Sua base real {win ? `(últimos ${win} meses, EUR/mês)` : '(escolha um período)'}</h3>
         <div className="row">
-          {WINDOWS.map((n) => <button key={n} className={n === win ? 'on' : ''} aria-pressed={n === win} onClick={() => setWin(n)}>{n} meses</button>)}
-          <button className="primary" disabled={!temBase} onClick={() => aplicarBase(s)}
-            title={temBase
-              ? `Moradia ${eur(base.rent)} · escola ${eur(base.school)} · outros ${eur(base.variable)} · Brasil ${eur(base.brazil)} por mês (${janela()})`
-              : `Nenhum lançamento em ${janela()}`}>
-            Atualizar base do cenário</button>
+          {WINDOWS.map((n) => <button key={n} className={n === win ? 'on' : ''} aria-pressed={n === win} onClick={() => escolherJanela(n)}>{n} meses</button>)}
         </div>
       </div>
-      <p className="muted" style={{ fontSize: 12 }}>
-        {janela()}. Moradia, escola e outros gastos vêm das contas da França (BCP e CCF); os custos no Brasil,
-        de todas as contas. Business Trips ({eur(base.reimbursed)}/mês) ficam de fora porque são reembolsadas.
-      </p>
+      {!win && <p className="muted" style={{ fontSize: 13 }}>
+        A simulação começa com salário bruto de 110.000 e escola zerada. Escolha 3, 6 ou 12 meses para trazer
+        o que foi gasto de fato, linha por linha, e ajuste os valores que quiser.</p>}
       {aviso && <p className="alert" style={{ display: 'block', fontSize: 13 }}>{aviso}</p>}
-      {!temBase && <p className="err" style={{ fontSize: 13 }}>Nenhum lançamento em {janela()}: importe os extratos desse período, ou escolha uma janela maior.</p>}
-      {parcial && <p className="err" style={{ fontSize: 13 }}>Só {base.covered} dos {win} meses de {janela()} têm lançamentos: as médias dividem pela janela inteira, então estão para baixo.</p>}
-      {s.country !== 'FR' && (
+      {win && !temBase && <p className="err" style={{ fontSize: 13 }}>Nenhum lançamento em {janela()}: importe os extratos desse período, ou escolha uma janela maior.</p>}
+      {win && parcial && <p className="err" style={{ fontSize: 13 }}>Só {base.covered} dos {win} meses de {janela()} têm lançamentos: as médias dividem pela janela inteira, então estão para baixo.</p>}
+      {win && temBase && <>
         <p className="muted" style={{ fontSize: 12 }}>
-          No cenário de {PRESETS[s.country].label}, moradia e escola são estimativas do destino — seus extratos de hoje não as conhecem.
-          A base real atualiza os outros gastos e os custos no Brasil.
-        </p>)}
-      <div className="kpis">
-        <div className="kpi"><div className="l">Salário líquido recebido</div><div className="v">{eur(base.salary)}</div></div>
-        <div className="kpi"><div className="l">Todas as receitas</div><div className="v">{eur(base.income)}</div></div>
-        <div className="kpi"><div className="l">Moradia</div><div className="v">{eur(base.rent)}</div></div>
-        <div className="kpi"><div className="l">Escola e filhos</div><div className="v">{eur(base.school)}</div></div>
-        <div className="kpi"><div className="l">Custos no Brasil</div><div className="v">{eur(base.brazil)}</div></div>
-        <div className="kpi"><div className="l">Outros gastos (França)</div><div className="v">{eur(base.variable)}</div></div>
-      </div>
-      <p className="muted">Use o “salário líquido recebido” para calibrar: o modelo da França com o seu bruto real deve chegar perto desse valor.</p>
+          {janela()}. Média por mês. Moradia, escola e outros gastos vêm das contas da França (BCP e CCF); os custos no Brasil,
+          de todas as contas. Business Trips ({eur(base.reimbursed)}/mês) ficam de fora porque são reembolsadas.
+          {s.country !== 'FR' && ` No cenário de ${PRESETS[s.country].label}, moradia e escola são estimativas do destino e não mudam.`}
+        </p>
+        <div className="scroll"><table>
+          <thead><tr><th>Linha</th><th>Grupo</th><th className="num">Atual (EUR/mês)</th><th className="num">Ajustado</th></tr></thead>
+          <tbody>{base.lines.map((l) => (
+            <tr key={l.name}><td>{l.name}</td><td className="muted">{GROUP_LABEL[l.group]}</td>
+              <td className="num">{eur(l.value)}</td>
+              <td className="num"><input type="number" step={10} style={{ width: 100 }} aria-label={`${l.name} por mês`}
+                value={Math.round(edits[l.name] ?? l.value)} onChange={(e) => editarLinha(l.name, Number(e.target.value))} /></td></tr>))}</tbody>
+          <tfoot>{(Object.keys(GROUP_LABEL) as Group[]).map((g) => (
+            <tr key={g}><td colSpan={3}><strong>{GROUP_LABEL[g]}</strong></td>
+              <td className="num"><strong>{eur(lines.filter((l) => l.group === g).reduce((t, l) => t + l.value, 0))}</strong></td></tr>))}</tfoot>
+        </table></div>
+        <div className="kpis">
+          <div className="kpi"><div className="l">Salário líquido recebido</div><div className="v">{eur(base.salary)}</div></div>
+          <div className="kpi"><div className="l">Todas as receitas</div><div className="v">{eur(base.income)}</div></div>
+        </div>
+        <p className="muted">Use o “salário líquido recebido” para calibrar: o modelo da França com o seu bruto real deve chegar perto desse valor.</p>
+      </>}
     </div>
 
     <div className="card" style={{ gridColumn: '1/-1' }}>
       <div className="row">
         <strong>Cenário</strong>
-        <select value={editingId ?? ''} onChange={(e) => { const x = saved.find((y) => y.id === e.target.value); setEditingId(x?.id ?? null); aplicarBase(x?.s ?? make('FR'), true, x?.id ?? null) }}>
+        <select value={editingId ?? ''} onChange={(e) => { const x = saved.find((y) => y.id === e.target.value); setEditingId(x?.id ?? null); setS(x?.s ?? make('FR')); setAviso(null) }}>
           <option value="">(novo)</option>{saved.map((x) => <option key={x.id} value={x.id}>{x.s.name}</option>)}
         </select>
-        {(Object.keys(PRESETS) as Country[]).map((c) => <button key={c} onClick={() => { setEditingId(null); setS(make(c)); setAviso(null) }}>{c}</button>)}
+        {(Object.keys(PRESETS) as Country[]).map((c) => <button key={c} onClick={() => { setEditingId(null); setAviso(null); const n = make(c); setS(win && temBase ? applyRealBase(n, realBaseOf(base.lines, edits, base.months)) : n) }}>{c}</button>)}
       </div>
       <div className="form">
         <label>Nome<input value={s.name} onChange={(e) => set('name', e.target.value)} /></label>
@@ -197,9 +217,7 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
         <label>Outras receitas líquidas / mês<input {...num('otherIncomeMonth')} /></label>
         <label>Aluguel / mês<input {...num('rentMonth')} step={50} /></label>
         <label>Escola / ano (todos os filhos)<input {...num('schoolYear')} step={500} /></label>
-        <label>Base de outros gastos (EUR/mês)<input {...num('baselineVariableMonth')} step={50} />
-          <button type="button" style={{ fontSize: 12 }} onClick={() => set('baselineVariableMonth', Math.round(base.variable))}>
-            Usar média {win} meses França ({eur(base.variable)})</button></label>
+        <label>Base de outros gastos (EUR/mês)<input {...num('baselineVariableMonth')} step={50} /></label>
         <label>Índice de custo de vida<input {...num('costOfLivingIndex')} step={0.05} /></label>
         <label>Rendimento da poupança % / ano<input {...num('savingsReturnPct')} step={0.5} /></label>
         <label>Inflação % / ano<input {...num('inflationPct')} step={0.5} /></label>
