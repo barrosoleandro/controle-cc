@@ -25,6 +25,7 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   // now"; the longer windows are one click away on the same control.
   const [view, setView] = useState<(typeof VIEWS)[number]>(() => VIEWS.find((v) => v === sub) ?? '1 mês')
   const [merchant, setMerchant] = useState('') // set from a month view: the list shows only this merchant
+  const [rec, setRec] = useState<Rec>('all') // recurring filter: applies to expenses; with one picked, only expenses show
   // Opens on the main account (BCP checking, the joint account); the others are one click away.
   // Card accounts are left out here: their detail lives on the Cartões page, and the
   // checking account already shows each bill payment.
@@ -69,6 +70,11 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
       <Tabs label="Como ver os lançamentos" items={VIEWS} value={view} onChange={(v) => { setView(v); setMerchant('') }} />
       {/* The account tickboxes used to be a wall of checkboxes above every view; they live in
           one menu now, with the country shortcuts, and the button says what is ticked. */}
+      <select value={rec} onChange={(e) => setRec(e.target.value as Rec)} aria-label="Filtrar por recorrência" style={{ marginLeft: 'auto' }}>
+        <option value="all">Recorrentes e não recorrentes</option>
+        <option value="yes">Só recorrentes</option>
+        <option value="no">Só não recorrentes</option>
+      </select>
       <Menu align="right" active={nShown < accounts.length}
         label={nShown === accounts.length ? 'Todas as contas' : nShown === 1 ? accounts.find((a) => shown(a.id))?.name ?? '1 conta' : `${nShown} de ${accounts.length} contas`}>
         <div className="row" style={{ marginBottom: 8 }}>
@@ -88,10 +94,10 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
     </div>
     <RecurringQuestions ctx={ctx} />
     {view === 'Lista'
-      ? <Lista ctx={ctx} shown={inScope} merchant={merchant} onClearMerchant={() => setMerchant('')} />
+      ? <Lista ctx={ctx} shown={inScope} rec={rec} merchant={merchant} onClearMerchant={() => setMerchant('')} />
       : view === 'Por país'
         ? <PorPais ctx={ctx} shown={inScope} />
-        : <Periodo ctx={ctx} shown={inScope} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
+        : <Periodo ctx={ctx} shown={inScope} rec={rec} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
   </>
 }
 
@@ -107,13 +113,17 @@ function useRecurring(ctx: Ctx) {
   const autoBills = useMemo(() => new Set(monthlyBills(
     etx.filter((t) => brChecking.has(t.account_id)).map((t) => ({ ...t, value: ctx.fx.convert(t.amount, t.currency, 'BRL', t.booking_date) })),
     today(), skipRecurring).map((l) => l.label)), [etx, brChecking, ctx.fx])
-  const isBill = (t: { merchant: string }) => billEffective(t.merchant, marks, autoBills.has(t.merchant))
+  const isBill = useCallback((t: { merchant: string }) => billEffective(t.merchant, marks, autoBills.has(t.merchant)), [marks, autoBills])
   async function setRecurring(merchant: string, on: boolean) {
     const months = [...etx.filter((t) => t.merchant === merchant).map((t) => t.month), currentMonth()]
     await ctx.patchSettings({ dashboard: { ...data.settings.dashboard, billMarks: markHistory(marks, merchant, months, on) } })
   }
   return { marks, isBill, setRecurring }
 }
+type Rec = 'all' | 'yes' | 'no'
+/** The recurring filter: with one picked, only expenses of that kind pass. */
+const recPasses = (rec: Rec, isBill: (t: { merchant: string }) => boolean) => (t: { kind: string; merchant: string }) =>
+  rec === 'all' || (t.kind === 'expense' && isBill(t) === (rec === 'yes'))
 const skipRecurring = (n: string) => isTithe(n) || n === 'Cartão Itaú'
 
 /** Spent in 3 of the last 6 months at similar values (±20%), not answered yet: asked once, on every view. */
@@ -140,7 +150,7 @@ function RecurringQuestions({ ctx }: { ctx: Ctx }) {
   )
 }
 
-function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (accountId: string) => boolean; merchant: string; onClearMerchant: () => void }) {
+function Lista({ ctx, shown, rec, merchant, onClearMerchant }: { ctx: Ctx; shown: (accountId: string) => boolean; rec: Rec; merchant: string; onClearMerchant: () => void }) {
   const fmt = useFmt(ctx)
   const { data, etx } = ctx
   const [q, setQ] = useState('')
@@ -164,20 +174,21 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
   const months = useMemo(() => [...new Set([...etx.map((t) => t.month), currentMonth()])].sort().reverse(), [etx])
   const sortedCats = [...data.categories].sort(byName)
 
+  const { isBill, setRecurring } = useRecurring(ctx)
   const rows = useMemo(() => {
     const qq = q.trim().toUpperCase()
+    const recOk = recPasses(rec, isBill)
     const inRange = (t: { description: string; booking_date: string }) => {
       const d = purchaseDate(t.description, t.booking_date)
       return (!de || d >= de) && (!ate || d <= ate)
     }
-    return etx.filter((t) => (!merchant || t.merchant === merchant) && (!month || t.month === month) && shown(t.account_id) && inRange(t)
+    return etx.filter((t) => recOk(t) && (!merchant || t.merchant === merchant) && (!month || t.month === month) && shown(t.account_id) && inRange(t)
       && (!cat || (cat === '__none' ? !t.category_id : t.category_id === cat))
       && (!qq || t.description.toUpperCase().includes(qq) || (t.notes ?? '').toUpperCase().includes(qq)))
       // "valor": biggest spending first (most negative), then the rest.
       .sort((a, b) => (ordem === 'valor' ? a.value - b.value : b.booking_date.localeCompare(a.booking_date)))
-  }, [etx, q, month, cat, shown, de, ate, merchant, ordem])
+  }, [etx, q, month, cat, shown, de, ate, merchant, ordem, rec, isBill])
   const total = rows.reduce((s, t) => s + t.value, 0)
-  const { isBill, setRecurring } = useRecurring(ctx)
   // The real balance of each ticked account (own currency): at the end of the filtered month, or today.
   const balances = useMemo(() => {
     const until = month ? `${month}-31` : '9999-12-31'
@@ -342,7 +353,7 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
  * and recurring charges that deserve a look (price up, new, stopped, annual renewal
  * coming) are marked for review.
  */
-function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: string) => boolean; n: number; onOpen: (merchant: string) => void }) {
+function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: string) => boolean; rec: Rec; n: number; onOpen: (merchant: string) => void }) {
   const { isBill, setRecurring } = useRecurring(ctx)
   const fmt = useFmt(ctx)
   const { data, etx } = ctx
@@ -372,9 +383,10 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
   const subOf = useMemo(() => new Map(subs.map((s) => [s.merchant, { reason: subscriptionReview(s, today()), active: s.status !== 'possibly_cancelled' }])), [subs])
   const all = useMemo(() => {
     const quiet = <R extends PeriodRow>(r: R): R => ({ ...r, outlier: r.outlier.map(() => false), isNew: r.isNew.map(() => false), flagged: false })
-    return buildPeriod(etx.filter((t) => shown(t.account_id)), months)
+    const recOk = recPasses(rec, isBill)
+    return buildPeriod(etx.filter((t) => shown(t.account_id) && recOk(t)), months)
       .map((g) => (isTithe(g.key) ? { ...quiet(g), merchants: g.merchants.map(quiet) } : g))
-  }, [etx, shown, months])
+  }, [etx, shown, months, rec, isBill])
   // Money received, built exactly like the expense groups so salary and the rest show up as
   // their own lines. The out-of-pattern and "new" marks are switched off here: red means bad
   // everywhere else in this table, and a bonus month is not bad news.
