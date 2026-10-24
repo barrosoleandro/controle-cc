@@ -12,7 +12,7 @@ import { countryOf } from '../domain/countries'
 import { monthWindow } from '../domain/period'
 import { CARD_PAYMENT, isTithe } from '../domain/categorize'
 import { findSalaryCategory, salaryAt } from '../domain/budget'
-import { brazilCard, brazilTransfer, forecastNextMonth, sentToBrazil } from '../domain/forecast'
+import { brazilCard, brazilTransfer, forecastNextMonth, nextMonthOf, sentToBrazil } from '../domain/forecast'
 import { Menu } from './analysis/shared'
 import { VERSION, versionLabel } from '../lib/version'
 import { Icon } from '../components/Icons'
@@ -101,22 +101,25 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     const brTx = ctx.etx.filter((t) => brIds.has(t.account_id)).map((t) => ({ ...t, value: fx.convert(t.amount, t.currency, 'BRL', t.booking_date) }))
     // The card payment in the checking account is the bill itself, counted apart: not a recurring charge.
     const br = forecastNextMonth(brTx, now, (n) => skip(n) || n === 'Cartão Itaú')
-    // The bill may not be imported as a statement yet, but its payment is in the data: on the card,
-    // or as the debit in the checking account.
+    // The card bill that falls in the coming month: the imported open bills, or, while none is
+    // imported, the card purchases already assigned to that month's bill (statement_due) or, failing
+    // that, made this month, which is what that bill will carry.
+    const next = nextMonthOf(now)
     const cardIds = new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type === 'card').map((a) => a.id))
-    const cardPaidSeen = ctx.etx.some((t) => t.month === now.slice(0, 7) && (
-      (cardIds.has(t.account_id) && t.bank_category === CARD_PAYMENT && t.amount > 0)
-      || (brIds.has(t.account_id) && !cardIds.has(t.account_id) && t.amount < 0 && (t.categoryName === 'Cartão Itaú' || (t.kind === 'transfer' && /FATURA|ITAUCARD|CART[AÃ]O/i.test(t.description))))))
-    const cards = brazilCard(data.cardStatements, new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type === 'card').map((a) => a.id)), now.slice(0, 7))
+    const openBills = brazilCard(data.cardStatements, cardIds, now.slice(0, 7)).open
+    const cardBuys = brTx.filter((t) => cardIds.has(t.account_id) && t.amount < 0 && t.bank_category !== CARD_PAYMENT)
+    const dueNext = cardBuys.filter((t) => t.statement_due?.slice(0, 7) === next)
+    const cardNext = openBills > 0 ? openBills
+      : -(dueNext.length ? dueNext : cardBuys.filter((t) => t.month === now.slice(0, 7))).reduce((a, t) => a + t.value, 0)
     const balance = balances.filter((b) => brIds.has(b.account.id) && b.account.type === 'checking').reduce((s, b) => s + fx.convert(b.native, b.account.currency, 'BRL', now), 0)
-    return { mine, br, send: brIds.size ? { ...brazilTransfer(br, cards.open, balance, now), paid: cards.paidThisMonth || cardPaidSeen, lines: br.monthlyLines.concat(br.periodic), sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
+    return { mine, br, send: brIds.size ? { ...brazilTransfer(br, cardNext, balance, now), lines: br.monthlyLines.concat(br.periodic), sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
   }, [txs, ctx.etx, data.accounts, data.cardStatements, balances, fx])
   const brl = money('BRL')
   const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
   const send = nextMonth.send
   const sendEur = send ? money('EUR')(send.transfer / fx.latest()) : ''
   // A transfer already made this month settles it: the alert only asks for one when none went yet.
-  const open = !!send && send.transfer > 0 && !send.sent && !send.paid
+  const open = !!send && send.transfer > 0 && !send.sent
   const sendLine = send && (send.sent
     ? <>Transferência para o Brasil já feita em {monthLabel(today().slice(0, 7))}: {brl(send.sent.amount)} (último envio em {dayMonth(send.sent.date)}).</>
     : send.transfer > 0
@@ -169,7 +172,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
               sub={(cur?.income ?? 0) > 0 ? `${Math.round((net / cur.income) * 100)}% das receitas` : period} />
           </div>)
       }
-      case 'transfer': return send?.paid ? null : !send ? (
+      case 'transfer': return !send ? (
         <div className="alert" style={{ display: 'block', gridColumn: '1/-1' }}>Transferência para o Brasil: ainda não há conta do Itaú no app. Importe um extrato do Itaú para eu estimar quanto enviar do BCP.</div>
       ) : (
         <div className={`alert ${open ? 'warn' : 'ok'}`} role="status" style={{ display: 'block', fontSize: 15, gridColumn: '1/-1' }}>
