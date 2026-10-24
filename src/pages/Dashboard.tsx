@@ -14,6 +14,8 @@ import { isTithe } from '../domain/categorize'
 import { findSalaryCategory, salaryAt } from '../domain/budget'
 import { Menu } from './analysis/shared'
 import { VERSION, versionLabel } from '../lib/version'
+import { Icon } from '../components/Icons'
+import { Stat } from '../components/Page'
 
 // A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
 export const WIDGETS = [
@@ -107,18 +109,24 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
 
   const widget = (id: string) => {
     switch (id) {
-      case 'kpis': return (
-        <div className="card" style={{ gridColumn: '1/-1' }}>
-          <div className="kpis">
-            {balances.filter((b) => shown(b.account.id)).map((b) => (
-              <div className="kpi" key={b.account.id}><div className="l">{b.account.name}</div><div className="v">{fmt(b.display)}</div></div>
-            ))}
-            <div className="kpi"><div className="l">Total</div><div className="v">{fmt(balances.filter((b) => shown(b.account.id)).reduce((s, b) => s + b.display, 0))}</div></div>
-            <div className="kpi"><div className="l">Receitas {period}</div><div className="v pos">{fmt(cur?.income ?? 0)}</div></div>
-            <div className="kpi"><div className="l">Despesas {period}</div><div className="v neg">{fmt(cur?.expense ?? 0)}</div></div>
-            <div className="kpi"><div className="l">Resultado {period}</div><div className={`v ${(cur?.net ?? 0) >= 0 ? 'pos' : 'neg'}`}>{fmt(cur?.net ?? 0)}</div></div>
-          </div>
-        </div>)
+      case 'kpis': {
+        // The four numbers that answer "how am I doing": balance today (with each account
+        // under it), and money in, out and left over in the picked months.
+        const mine = balances.filter((b) => shown(b.account.id))
+        const net = cur?.net ?? 0
+        return (
+          <div className="stats">
+            <Stat tone="accent" icon="carteira" label="Saldo hoje" value={fmt(mine.reduce((s, b) => s + b.display, 0))}>
+              {mine.length > 1 && <div className="stat-list">
+                {mine.map((b) => <div key={b.account.id}><span>{b.account.name}</span><span className={b.display < 0 ? 'neg' : ''}>{fmt(b.display)}</span></div>)}
+              </div>}
+            </Stat>
+            <Stat tone="pos" icon="entrada" label="Receitas" value={<span className="pos">{fmt(cur?.income ?? 0)}</span>} sub={period} />
+            <Stat tone="neg" icon="saida" label="Despesas" value={<span className="neg">{fmt(cur?.expense ?? 0)}</span>} sub={period} />
+            <Stat tone="neutral" icon="resultado" label="Sobrou" value={<span className={net >= 0 ? 'pos' : 'neg'}>{fmt(net)}</span>}
+              sub={(cur?.income ?? 0) > 0 ? `${Math.round((net / cur.income) * 100)}% das receitas` : period} />
+          </div>)
+      }
       case 'alerts': return (
         <div className="card"><h3>Alertas</h3>
           {alerts.length === 0 && <p className="muted">Nenhum alerta.</p>}
@@ -185,7 +193,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
             <table><tbody>
               {salary && <tr><td style={{ width: '30%' }}><strong>{salary.name}</strong>
                 {salary.missing.length > 0 && <div className="muted" style={{ fontSize: 12 }}>
-                  {salary.b ? `sem valor informado em ${salary.missing.map(monthLabel).join(', ')}` : 'informe em Configurações → Orçamentos'}</div>}</td>
+                  {salary.b ? `sem valor informado em ${salary.missing.map(monthLabel).join(', ')}` : <button className="link" onClick={() => ctx.go('Ajustes', 'Orçamentos')}>informar em Ajustes → Orçamentos</button>}</div>}</td>
                 <td>{pair(salary.b, salary.a)}</td>
                 {amounts(salary.a, salary.b, salary.b && salary.a < salary.b ? 'neg' : '')}</tr>}
               {rows.map((r) => {
@@ -231,9 +239,9 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
 
   return (
     <>
-      <div className="row">
+      <div className="toolbar"><div className="toolbar-group">
         <details className="monthpick">
-          <summary aria-label="Meses">📅 {period}</summary>
+          <summary aria-label="Meses"><Icon name="calendario" size={17} />{period} ▾</summary>
           <div>
             <div className="row">
               <button onClick={() => pickLast(1)}>Último mês</button>
@@ -269,10 +277,12 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
             })} />{a.name}</label>
           ))}
         </Menu>
-        <button onClick={() => setEditing(!editing)}>{editing ? 'Pronto' : 'Personalizar'}</button>
+        </div>
+        <button className={editing ? 'primary' : ''} onClick={() => setEditing(!editing)}><Icon name="editar" size={16} /> {editing ? 'Pronto' : 'Personalizar painel'}</button>
       </div>
       {editing && (
-        <div className="card" style={{ marginBottom: 12 }}><h3>Blocos do painel</h3>
+        <div className="card" style={{ marginBottom: 20 }}><h3>Blocos do painel</h3>
+          <p className="muted" style={{ marginTop: -6 }}>Escolha o que aparece e em que ordem.</p>
           {widgets.map((w, i) => (
             <div key={w.id} className="row" style={{ marginBottom: 4 }}>
               <label className="inline"><input type="checkbox" checked={w.visible} onChange={(e) => persist(widgets.map((x) => x.id === w.id ? { ...x, visible: e.target.checked } : x))} />
@@ -284,8 +294,10 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
         </div>
       )}
       <div className="grid">{widgets.filter((w) => w.visible).map((w) => <div key={w.id} style={{ display: 'contents' }}>{widget(w.id)}</div>)}</div>
-      <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>Tendências, comparações, estabelecimentos e datas: aba <strong>Análises</strong>.</p>
-      <p className="muted" style={{ fontSize: 12 }} title={VERSION.message}>{versionLabel()}</p>
+      <div className="row" style={{ marginTop: 20, justifyContent: 'space-between' }}>
+        <button onClick={() => ctx.go('Análises')}>Tendências, estabelecimentos e comparações em Análises <Icon name="seta" size={15} /></button>
+        <span className="muted" style={{ fontSize: 12 }} title={VERSION.message}>{versionLabel()}</span>
+      </div>
     </>
   )
 }

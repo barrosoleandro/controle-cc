@@ -8,6 +8,8 @@ import { money } from '../lib/format'
 import { today, useFmt } from '../lib/hooks'
 import type { CategoryKind } from '../domain/types'
 import { byName } from '../domain/categorize'
+import { Help } from '../components/Page'
+import { Menu } from './analysis/shared'
 
 const CADENCIA: Record<Subscription['cadence'], string> = {
   weekly: 'semanal', monthly: 'mensal', quarterly: 'trimestral', yearly: 'anual',
@@ -38,20 +40,33 @@ export function Subscriptions({ ctx }: { ctx: Ctx }) {
   return (
     <div className="grid">
       <div className="card" style={{ gridColumn: '1/-1' }}>
-        <h3>Cobranças recorrentes — {fmt(total)}/mês · {fmt(total * 12)}/ano{hidden.size ? ' (contas marcadas)' : ''}</h3>
-        <div className="row">
-          <span className="muted">Contas:</span>
-          {[...new Set(data.accounts.map((a) => countryOf(a.bank)))].map((c) => (
-            <button key={c} onClick={() => setHidden(new Set(data.accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
-          ))}
-          <button onClick={() => setHidden(new Set())}>Todas</button>
-          {data.accounts.map((a) => (
-            <label key={a.id} className="inline"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
-              const next = new Set(prev); if (next.has(a.id)) next.delete(a.id); else next.add(a.id); return next
-            })} />{a.name}</label>
-          ))}
+        <div className="card-head">
+          <h3>Cobranças recorrentes</h3>
+          <Menu align="right" active={hidden.size > 0} label={hidden.size ? `${data.accounts.length - hidden.size} de ${data.accounts.length} contas` : 'Todas as contas'}>
+            <div className="row" style={{ marginBottom: 8 }}>
+              {[...new Set(data.accounts.map((a) => countryOf(a.bank)))].map((c) => (
+                <button key={c} onClick={() => setHidden(new Set(data.accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
+              ))}
+              <button onClick={() => setHidden(new Set())}>Todas</button>
+            </div>
+            <div className="opts">
+              {data.accounts.map((a) => (
+                <label key={a.id} className="inline opt"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
+                  const next = new Set(prev); if (next.has(a.id)) next.delete(a.id); else next.add(a.id); return next
+                })} />{a.name}</label>
+              ))}
+            </div>
+          </Menu>
         </div>
-        <p className="muted">Detectadas sozinhas: mesmo estabelecimento, intervalo regular e valor estável. Inclui aluguel, empréstimo e seguro, não só streaming. Abra uma linha para ver o histórico e definir a categoria que os próximos imports devem usar.</p>
+        <div className="kpis" style={{ marginBottom: 14 }}>
+          <div className="kpi total"><div className="l">Por mês</div><div className="v">{fmt(total)}</div></div>
+          <div className="kpi"><div className="l">Por ano</div><div className="v">{fmt(total * 12)}</div></div>
+          <div className="kpi"><div className="l">Cobranças</div><div className="v">{subs.length}</div></div>
+        </div>
+        <Help title="Como são detectadas">
+          <p>Sozinhas: mesmo estabelecimento, intervalo regular e valor estável. Inclui aluguel, empréstimo e seguro, não só streaming.
+            Abra uma linha para ver o histórico e definir a categoria que os próximos imports devem usar.</p>
+        </Help>
         <div className="scroll"><table>
           <thead><tr><th>Estabelecimento</th><th className="hide-sm">Conta</th><th>Frequência</th><th className="num">Última</th><th className="num">Por mês</th><th className="hide-sm">Desde</th><th>Próxima</th><th>Situação</th></tr></thead>
           <tbody>{subs.map((s) => {

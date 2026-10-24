@@ -14,6 +14,7 @@ import { DEFAULT_INFLATION, ESTIMATED_FROM, payVsInflation, type InflationTable 
 import { monthWindow } from '../domain/period'
 import { today } from '../lib/hooks'
 import { looksLikePayslip, parsePayslipRows } from '../parsers/payslipPdf'
+import { Help } from '../components/Page'
 
 const eur = money('EUR', 2)
 const f = (n: number | null | undefined) => (n === null || n === undefined ? '' : eur(n))
@@ -30,6 +31,7 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
   const [results, setResults] = useState<FileResult[]>([])
   const [progress, setProgress] = useState<string | null>(null)
   const dirRef = useRef<HTMLInputElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   // webkitdirectory is not in React's prop types; set it on the element itself.
   useEffect(() => {
     dirRef.current?.setAttribute('webkitdirectory', '')
@@ -107,21 +109,27 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
   return (
     <div className="grid" style={{ gridTemplateColumns: '1fr' }}>
       <div className="card">
-        <h3>Holerites</h3>
-        <div className="row">
-          <select value={sel} onChange={(e) => setSel(e.target.value)} disabled={!list.length}>
-            {list.map((p) => <option key={p.id} value={p.id}>{monthLabel(p.period.slice(0, 7))} {checks.get(p.id) ? '✔' : '⚠'}</option>)}
-          </select>
-          <label className="inline"><span className="muted">Importar PDFs</span>
-            <input type="file" multiple accept=".pdf" onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} /></label>
-          <label className="inline"><span className="muted">Pasta inteira</span>
-            <input ref={dirRef} type="file" multiple onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} /></label>
-          <button onClick={() => setComparing((v) => !v)} disabled={list.length < 2}
-            title={list.length < 2 ? 'Precisa de dois holerites importados' : undefined}>{comparing ? 'Fechar comparação' : 'Comparar dois meses'}</button>
-          {cur && <button onClick={async () => { if (confirm(`Excluir o holerite de ${cur.period.slice(0, 7)}?`)) { await deletePayslip(cur.id); await load() } }}>Excluir</button>}
+        <div className="toolbar" style={{ marginBottom: 12 }}>
+          <div className="toolbar-group">
+            <label className="inline"><span className="muted">Mês</span>
+              <select value={sel} onChange={(e) => setSel(e.target.value)} disabled={!list.length}>
+                {list.map((p) => <option key={p.id} value={p.id}>{monthLabel(p.period.slice(0, 7))} {checks.get(p.id) ? '✔' : '⚠'}</option>)}
+              </select></label>
+            <button onClick={() => setComparing((v) => !v)} disabled={list.length < 2}
+              title={list.length < 2 ? 'Precisa de dois holerites importados' : undefined}>{comparing ? 'Fechar comparação' : 'Comparar dois meses'}</button>
+            {cur && <button onClick={async () => { if (confirm(`Excluir o holerite de ${cur.period.slice(0, 7)}?`)) { await deletePayslip(cur.id); await load() } }}>Excluir</button>}
+          </div>
+          <div className="toolbar-group">
+            <button className="primary" onClick={() => fileRef.current?.click()} disabled={busy}>Importar PDFs</button>
+            <button onClick={() => dirRef.current?.click()} disabled={busy}>Pasta inteira</button>
+            <input ref={fileRef} type="file" multiple accept=".pdf" hidden onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} />
+            <input ref={dirRef} type="file" multiple hidden onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} />
+          </div>
         </div>
-        <p className="muted">Selecione vários PDFs de uma vez, ou a pasta inteira (subpastas incluídas; o que não for holerite é pulado).
-          Os PDFs são lidos no navegador e nunca enviados; só valores e rótulos são guardados. Um holerite por mês: reimportar o mesmo mês substitui o anterior.</p>
+        <Help title="Como importar holerites">
+          <p>Selecione vários PDFs de uma vez, ou a pasta inteira (subpastas incluídas; o que não for holerite é pulado).
+            Os PDFs são lidos no navegador e nunca enviados; só valores e rótulos são guardados. Um holerite por mês: reimportar o mesmo mês substitui o anterior.</p>
+        </Help>
         {progress && <p className="muted">{progress}</p>}
         {counts.length > 0 && <>
           <p><strong>{results.length} arquivo(s):</strong> {counts.map(([o, n]) => `${n} ${o}`).join(' · ')}</p>

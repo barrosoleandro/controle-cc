@@ -13,6 +13,8 @@ import { CategoriesView } from './analysis/CategoriesView'
 import { MerchantsView } from './analysis/MerchantsView'
 import { DatesView } from './analysis/DatesView'
 import { RowsView } from './analysis/RowsView'
+import { Icon } from '../components/Icons'
+import { Empty } from '../components/Page'
 
 const VIEWS = [
   ['geral', 'Visão geral'], ['tendencia', 'Tendência'], ['categorias', 'Categorias'],
@@ -45,10 +47,14 @@ const rangeLabel = (r: Range) => {
   return a === b ? monthLabel(a) : `${monthLabel(a)} – ${monthLabel(b)}`
 }
 
-export function Analysis({ ctx }: { ctx: Ctx }) {
+export function Analysis({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const fmt = useFmt(ctx)
   const { data, etx } = ctx
-  const [st, setSt] = useState<State>(load)
+  const [st, setSt] = useState<State>(() => {
+    const s = load()
+    const v = VIEWS.find(([id]) => id === sub)
+    return v ? { ...s, view: v[0] } : s
+  })
   const set = (patch: Partial<State>) => setSt((s) => ({ ...s, ...patch }))
   useEffect(() => { try { sessionStorage.setItem(KEY, JSON.stringify(st)) } catch { /* private mode: filters just reset */ } }, [st])
   const [focusCat, setFocusCat] = useState('')
@@ -95,7 +101,8 @@ export function Analysis({ ctx }: { ctx: Ctx }) {
   const merchantNames = useMemo(() => [...new Set(etx.filter((t) => t.kind === st.measure).map((t) => t.merchant))].sort().slice(0, 3000), [etx, st.measure])
   const [catQ, setCatQ] = useState('')
 
-  if (!etx.length) return <div className="card"><p className="muted">Importe extratos para começar as análises.</p></div>
+  if (!etx.length) return <Empty icon="analises" title="Nada para analisar ainda" action={<button className="primary" onClick={() => ctx.go('Importar')}>Importar extratos</button>}>
+    As análises aparecem assim que houver lançamentos importados.</Empty>
 
   const unfiltered = !st.categories.length && !st.search && !st.min
   const toggleCat = (c: string) => set({ categories: st.categories.includes(c) ? st.categories.filter((x) => x !== c) : [...st.categories, c] })
@@ -124,7 +131,7 @@ export function Analysis({ ctx }: { ctx: Ctx }) {
         </div>
         <div className="stepper">
           <button aria-label="Período anterior" onClick={() => { const r = step(range, -1); set({ preset: 'custom', ...r }) }}>‹</button>
-          <Menu label={<>📅 {rangeLabel(range)}</>}>
+          <Menu label={<span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}><Icon name="calendario" size={17} />{rangeLabel(range)}</span>}>
             <div className="presets">
               {presets.map(([id, label]) => (
                 <button key={id} className={st.preset === id ? 'on' : ''} onClick={() => set({ preset: id })}>

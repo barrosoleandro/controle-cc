@@ -3,6 +3,7 @@ import type { Ctx } from '../App'
 import { billPayment, futureInstalments, matchCardPayments } from '../domain/cards'
 import { linkCardPayments, loadAll, updateAccount } from '../lib/data'
 import { money } from '../lib/format'
+import { Empty, Help } from '../components/Page'
 
 const dateBR = (iso: string) => iso.split('-').reverse().join('/')
 
@@ -81,9 +82,9 @@ export function Cards({ ctx }: { ctx: Ctx }) {
   }
 
   if (!card) {
-    return <div className="card"><h3>Cartões</h3>
-      <p className="muted">Nenhum cartão ainda. Importe a fatura do cartão Itaú em Excel (.xlsx) na aba Importar — o cartão é criado e vinculado à conta Itaú automaticamente.</p>
-    </div>
+    return <Empty icon="cartoes" title="Nenhum cartão ainda" action={<button className="primary" onClick={() => ctx.go('Importar')}>Importar fatura</button>}>
+      Importe a fatura do cartão Itaú (PDF ou Excel): o cartão é criado e vinculado à conta Itaú automaticamente.
+    </Empty>
   }
 
   const f = money(card.currency, 2)
@@ -105,13 +106,14 @@ export function Cards({ ctx }: { ctx: Ctx }) {
             </select>
           </label>
         </div>
-        <p className="muted">
-          As compras entram como despesa no cartão. Cada pagamento que aparece numa fatura importada é casado com o débito em
-          {' '}{parent?.name ?? 'a conta vinculada'} (mesmo valor, até 5 dias), que vira transferência — assim nada é contado duas vezes.
-          Pagamentos de faturas não importadas continuam como “Cartão Itaú”.
-        </p>
-        {!card.parent_account_id && <p className="warn">Vincule a conta que paga este cartão para evitar contar a fatura duas vezes.</p>}
-        {msg && <p className="pos">{msg}</p>}
+        {!card.parent_account_id && <div className="alert warn">Vincule a conta que paga este cartão para não contar a fatura duas vezes.</div>}
+        {msg && <div className="alert ok">{msg}</div>}
+        <Help title="Como o cartão é contado">
+          <p>As compras entram como despesa no cartão. Cada pagamento que aparece numa fatura importada é casado com o débito em
+            {' '}{parent?.name ?? 'a conta vinculada'} (mesmo valor, até 5 dias), que vira transferência — assim nada é contado duas vezes.
+            Pagamentos de faturas não importadas continuam como “Cartão Itaú”.</p>
+          <p>Clique numa fatura para ver o detalhe. ⚠ na coluna de pagamento = pagamento sem o débito na conta (extrato não importado ou conta não vinculada).</p>
+        </Help>
       </div>
 
       <div className="cards3">
@@ -131,7 +133,6 @@ export function Cards({ ctx }: { ctx: Ctx }) {
               </tr>
             ))}</tbody>
           </table></div>
-          <p className="muted" style={{ fontSize: 12 }}>Clique numa fatura para ver o detalhe. ⚠ = pagamento sem o débito na conta (extrato não importado ou conta não vinculada).</p>
         </div>
 
         {/* 2 — Selected bill: by category, then line by line */}

@@ -5,6 +5,7 @@ import { ALOCACAO, CLASSE_NOME, VEICULOS, projetar, reservaRecomendada, retornoR
 import { monthly } from '../domain/analytics'
 import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
 import { last3, useBalances, useFmt } from '../lib/hooks'
+import { Help } from '../components/Page'
 
 const PERFIS: { id: Risco; nome: string; descricao: string }[] = [
   { id: 'conservador', nome: 'Conservador', descricao: 'Prioriza não perder. Aceita render pouco acima da inflação.' },
@@ -59,13 +60,12 @@ export function Investments({ ctx }: { ctx: Ctx }) {
   return (
     <div className="grid">
       <div className="card" style={{ gridColumn: '1/-1' }}>
-        <h3>Investimentos — a partir dos seus números</h3>
-        <p className="muted">
-          Esta tela é material de estudo, não recomendação de investimento. Ela organiza os <strong>tipos</strong> de
-          investimento disponíveis no Brasil e na França e projeta cenários com premissas que você mesmo edita.
-          Nenhum ativo, corretora ou papel específico é indicado. Antes de decidir, confirme as regras tributárias
-          atuais e a sua situação de residência fiscal — morando na França com conta no Brasil, isso muda o resultado.
-        </p>
+        <h3>Seus números</h3>
+        <Help title="Material de estudo, não recomendação">
+          <p>Esta tela organiza os <strong>tipos</strong> de investimento disponíveis no Brasil e na França e projeta cenários com premissas que você mesmo edita.
+            Nenhum ativo, corretora ou papel específico é indicado. Antes de decidir, confirme as regras tributárias
+            atuais e a sua situação de residência fiscal — morando na França com conta no Brasil, isso muda o resultado.</p>
+        </Help>
         <div className="kpis">
           <div className="kpi"><div className="l">Receita média (3 meses)</div><div>{fmt(base.receita)}</div></div>
           <div className="kpi"><div className="l">Despesa média</div><div>{fmt(base.despesa)}</div></div>

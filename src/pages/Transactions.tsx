@@ -11,6 +11,7 @@ import type { CategoryKind } from '../domain/types'
 import { byName, isTithe } from '../domain/categorize'
 import { countryOf, flowsByCountry, type Country } from '../domain/countries'
 import { purchaseDate } from '../domain/simplify'
+import { Tabs } from '../components/Page'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 const NEW = '__new' // select option that opens the new-category form
@@ -18,10 +19,10 @@ const NEW = '__new' // select option that opens the new-category form
 const VIEWS = ['1 mês', '6 meses', '12 meses', '24 meses', 'Por país', 'Lista'] as const
 const MONTHS: Record<string, number> = { '1 mês': 1, '6 meses': 6, '12 meses': 12, '24 meses': 24 }
 
-export function Transactions({ ctx }: { ctx: Ctx }) {
+export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   // Opens on the current month: the question on this screen is almost always "what happened
   // now"; the longer windows are one click away on the same control.
-  const [view, setView] = useState<(typeof VIEWS)[number]>('1 mês')
+  const [view, setView] = useState<(typeof VIEWS)[number]>(() => VIEWS.find((v) => v === sub) ?? '1 mês')
   const [merchant, setMerchant] = useState('') // set from a month view: the list shows only this merchant
   // Opens on the main account (BCP checking, the joint account); the others are one click away.
   // Card accounts are left out here: their detail lives on the Cartões page, and the
@@ -45,11 +46,11 @@ export function Transactions({ ctx }: { ctx: Ctx }) {
   const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
 
   return <>
-    <div className="card" style={{ marginBottom: 16 }}>
+    <div className="card" style={{ marginBottom: 20 }}>
       <div className="card-head">
         <h3>Saldo hoje</h3>
         <span className="muted" style={{ fontSize: 12 }}>
-          {nShown} de {accounts.length} conta(s) marcadas · total convertido em {ctx.currency}
+          {nShown} de {accounts.length} conta(s) · total em {ctx.currency}
         </span>
       </div>
       <div className="kpis">
@@ -68,13 +69,8 @@ export function Transactions({ ctx }: { ctx: Ctx }) {
       </div>
     </div>
 
-    <div className="toolbar">
-      <div className="seg" role="tablist" aria-label="Como ver os lançamentos">
-        {VIEWS.map((v) => (
-          <button key={v} role="tab" aria-selected={v === view} className={v === view ? 'on' : ''}
-            onClick={() => { setView(v); setMerchant('') }}>{v}</button>
-        ))}
-      </div>
+    <div className="toolbar" style={{ borderBottom: '1px solid var(--line)', marginBottom: 20 }}>
+      <Tabs label="Como ver os lançamentos" items={VIEWS} value={view} onChange={(v) => { setView(v); setMerchant('') }} />
       {/* The account tickboxes used to be a wall of checkboxes above every view; they live in
           one menu now, with the country shortcuts, and the button says what is ticked. */}
       <Menu align="right" active={nShown < accounts.length}

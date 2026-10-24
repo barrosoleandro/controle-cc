@@ -15,13 +15,14 @@ import { planMerges } from '../domain/simplify'
 import { loadTheme, saveTheme, type Mode, type Theme } from '../lib/theme'
 import { DEFAULT_OLLAMA, listModels, loadOllama, normalizeUrl, ollamaReady, saveOllama, type OllamaConfig, type OllamaModel } from '../lib/ollama'
 import { chooseDevice, deleteDevice, DEVICE_EVENT, deviceState, saveThisDevice, syncDevice } from '../lib/device'
+import { Help, Tabs } from '../components/Page'
 
 const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações', 'IA local', 'Aparência'] as const
 
-export function SettingsPage({ ctx }: { ctx: Ctx }) {
-  const [sec, setSec] = useState<(typeof SECTIONS)[number]>('Contas')
+export function SettingsPage({ ctx, sub }: { ctx: Ctx; sub?: string }) {
+  const [sec, setSec] = useState<(typeof SECTIONS)[number]>(() => SECTIONS.find((s) => s === sub) ?? 'Contas')
   return <>
-    <div className="row">{SECTIONS.map((s) => <button key={s} className={s === sec ? 'active' : ''} onClick={() => setSec(s)}>{s}</button>)}</div>
+    <Tabs label="Seções dos ajustes" items={SECTIONS} value={sec} onChange={setSec} />
     {sec === 'Contas' && <Accounts ctx={ctx} />}
     {sec === 'IA local' && <><ThisComputer /><LocalAi /></>}
     {sec === 'Aparência' && <Appearance />}
@@ -150,10 +151,8 @@ function LocalAi() {
   return <div className="card">
     <h3>IA local (Ollama)</h3>
     <p className="muted">
-      Com o Ollama rodando nesta máquina, a identificação de lançamentos e a explicação da comparação de holerites
-      acontecem <strong>sem nada sair do computador</strong> — nem estabelecimento, nem valor, nem holerite.
-      Em troca, um modelo local acerta menos que um modelo grande hospedado: as sugestões continuam vindo
-      desmarcadas para você conferir.
+      Com o Ollama rodando nesta máquina, a identificação de lançamentos e a explicação dos holerites
+      acontecem <strong>sem nada sair do computador</strong>. As sugestões vêm desmarcadas para você conferir.
     </p>
 
     <div className="row">
@@ -186,8 +185,8 @@ function LocalAi() {
     {erro && <p className="err" style={{ whiteSpace: 'pre-wrap' }}>{erro}</p>}
     {cfg.enabled && !ollamaReady(cfg) && !erro && <p className="warn">Falta escolher o modelo: a IA local só é chamada quando endereço e modelo estão definidos.</p>}
 
-    <details style={{ marginTop: 10 }}>
-      <summary>Como deixar o Ollama acessível para esta página</summary>
+    <div style={{ marginTop: 12 }} />
+    <Help title="Como deixar o Ollama acessível para esta página">
       <p className="muted">
         Esta página é servida pela Vercel, em outro domínio. O Ollama só aceita chamadas de origens que você autorizar,
         então defina a variável abaixo <strong>no ambiente do Ollama</strong> e reinicie o serviço:
@@ -207,7 +206,7 @@ function LocalAi() {
         Se o Ollama estiver em <em>outra</em> máquina da sua rede, o endereço dela precisa ser liberado na CSP do site
         (<code>vercel.json</code>): a CSP aceita <code>localhost</code> e <code>127.0.0.1</code>, mas não uma faixa de IPs.
       </p>
-    </details>
+    </Help>
   </div>
 }
 
@@ -218,11 +217,11 @@ function Appearance() {
   return <div className="card">
     <h3>Modo</h3>
     <div className="seg" role="group" aria-label="Modo claro ou escuro">
-      {([['auto', 'Automático'], ['light', 'Claro'], ['dark', 'Escuro']] as [Mode, string][]).map(([m, l]) => (
+      {([['light', 'Claro'], ['dark', 'Escuro'], ['auto', 'Igual ao aparelho']] as [Mode, string][]).map(([m, l]) => (
         <button key={m} className={t.mode === m ? 'on' : ''} aria-pressed={t.mode === m} onClick={() => set({ mode: m })}>{l}</button>
       ))}
     </div>
-    <p className="muted" style={{ fontSize: 13 }}>Automático segue o aparelho. A escolha fica guardada neste aparelho.</p>
+    <p className="muted" style={{ fontSize: 13 }}>A escolha fica guardada neste aparelho. O botão de sol/lua no topo troca o modo a qualquer momento.</p>
   </div>
 }
 
@@ -325,10 +324,16 @@ function Budgets({ ctx }: { ctx: Ctx }) {
   }) // eslint-disable-line react-hooks/exhaustive-deps
 
   return <><Salary ctx={ctx} budgetTotal={total} quarter={quarter} />
-  <div className="card"><h3>Orçamento mensal (EUR) — total {eur(total)}</h3>
-    <p className="muted">A média considera {months[0]} a {months.at(-1)}, todas as contas convertidas para euro, meses sem gasto contando como zero
-      (uma conta anual fica dividida pelos 12 meses), arredondada para cima de 10 em 10. Total das médias: {eur(totalAvg)} em 12 meses,
-      {' '}{eur(totalAvg3)} no último trimestre ({quarter[0]} a {quarter.at(-1)}).</p>
+  <div className="card"><h3>Orçamento mensal por categoria (EUR)</h3>
+    <div className="kpis" style={{ marginBottom: 14 }}>
+      <div className="kpi total"><div className="l">Orçamento total</div><div className="v">{eur(total)}</div></div>
+      <div className="kpi"><div className="l">Média 12 meses</div><div className="v">{eur(totalAvg)}</div></div>
+      <div className="kpi"><div className="l">Média do trimestre</div><div className="v">{eur(totalAvg3)}</div></div>
+    </div>
+    <Help title="Como a média é calculada">
+      <p>A média considera {months[0]} a {months.at(-1)} (trimestre: {quarter[0]} a {quarter.at(-1)}), todas as contas convertidas para euro, meses sem gasto contando como zero
+        (uma conta anual fica dividida pelos 12 meses), arredondada para cima de 10 em 10.</p>
+    </Help>
     <div className="row">
       <button onClick={() => fill(false)} disabled={busy}>Preencher vazios com a média</button>
       <button onClick={() => { if (confirm('Substituir todos os orçamentos pela média dos últimos 12 meses?')) fill(true) }} disabled={busy}>Substituir todos pela média de 12 meses</button>
@@ -533,8 +538,11 @@ function Rules({ ctx }: { ctx: Ctx }) {
   }
   return <div className="grid">
     <div className="card" style={{ gridColumn: '1/-1' }}><h3>Regras por estabelecimento</h3>
-      <p className="muted">Conferidas de cima para baixo (menor número de prioridade primeiro); a primeira que casar vence. O texto casa no início de uma palavra, ignorando acento e caixa. As regras rodam antes do mapa de categorias do banco.</p>
-      <p className="muted">Toda mudança aqui recategoriza a base inteira na hora. As linhas que você mudou à mão continuam como estão, exceto as que tinham a categoria antiga da regra alterada.</p>
+      <p className="muted">Quando a descrição de um lançamento contém o texto da regra, ele vai para a categoria escolhida.</p>
+      <Help title="Como as regras funcionam">
+        <p>Conferidas de cima para baixo (menor número de prioridade primeiro); a primeira que casar vence. O texto casa no início de uma palavra, ignorando acento e caixa. As regras rodam antes do mapa de categorias do banco.</p>
+        <p>Toda mudança aqui recategoriza a base inteira na hora. As linhas que você mudou à mão continuam como estão, exceto as que tinham a categoria antiga da regra alterada.</p>
+      </Help>
       <div className="row">
         <button onClick={() => run(async () => { /* só atualizar */ })} disabled={busy}>Atualizar categorias agora</button>
         {busy && <span className="muted">Atualizando…</span>}

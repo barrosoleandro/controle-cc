@@ -10,6 +10,7 @@ import { marketPrompt, marketResearchPrompt } from '../domain/localAi'
 import { ExplicarIA } from '../components/ExplicarIA'
 import { axis, compact, grid, SERIES, tooltipStyle } from '../components/charts'
 import { money } from '../lib/format'
+import { Help } from '../components/Page'
 
 const eur = money('EUR', 0)
 const SCOPES: BenchmarkRole['scope'][] = ['regional', 'global', 'nacional', 'local']
@@ -53,12 +54,12 @@ export function Market() {
   return (
     <div className="grid" style={{ gridTemplateColumns: '1fr' }}>
       <div className="card">
-        <h3>Mercado — comparação com a sua remuneração</h3>
-        <p className="muted">
-          Todo número de mercado aqui vem de uma fonte que <strong>você</strong> registrou, ou da API de estatística
-          oficial do Eurostat. O app faz a comparação; a IA local, quando acionada, só põe em palavras ou propõe um
-          plano de pesquisa — ela não tem dados de mercado e está instruída a nunca citar um valor que não esteja na tela.
-        </p>
+        <h3>Sua remuneração</h3>
+        <Help title="De onde vêm os números">
+          <p>Todo número de mercado aqui vem de uma fonte que <strong>você</strong> registrou, ou da API de estatística
+            oficial do Eurostat. O app faz a comparação; a IA local, quando acionada, só põe em palavras ou propõe um
+            plano de pesquisa — ela não tem dados de mercado e está instruída a nunca citar um valor que não esteja na tela.</p>
+        </Help>
         <div className="kpis">
           <div className="kpi">
             <div className="l">Seu bruto anual</div>
@@ -139,13 +140,13 @@ function Europa({ roles, busy, setBusy, onDone, onError, onLoaded, oficial }: {
   return (
     <div className="card">
       <h3>Europa — estatística oficial, lida da web</h3>
-      <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-        Eurostat, inquérito de estrutura dos salários ({SES_DATASET}): ganho mensal bruto <strong>médio</strong> por
-        ocupação e porte de empresa. Oficial, sem chave, lido direto do navegador sempre que você estiver conectado.
-        <br /><strong>Leia com cuidado:</strong> a ocupação mais fina que esse inquérito publica é o grande grupo ISCO —
-        “Diretores e gerentes” cobre um CIO e um gerente de loja igualmente. Serve de âncora, não de grupo de pares.
-        E é uma <em>média</em>, não uma mediana, então não entra nas faixas p25/p75.
-      </p>
+      <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>Eurostat: ganho mensal bruto médio por ocupação e porte de empresa.</p>
+      <Help title="Leia com cuidado">
+        <p>Eurostat, inquérito de estrutura dos salários ({SES_DATASET}). Oficial, sem chave, lido direto do navegador sempre que você estiver conectado.</p>
+        <p>A ocupação mais fina que esse inquérito publica é o grande grupo ISCO —
+          “Diretores e gerentes” cobre um CIO e um gerente de loja igualmente. Serve de âncora, não de grupo de pares.
+          E é uma <em>média</em>, não uma mediana, então não entra nas faixas p25/p75.</p>
+      </Help>
       <div className="row">
         <label className="inline">Ocupação
           <select value={isco} onChange={(e) => setIsco(e.target.value)} disabled={busy}>
@@ -320,9 +321,8 @@ function Plano({ roles, entries, oficial, mine }: {
     <div className="card">
       <h3>Propor uma análise de mercado</h3>
       <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-        Aqui a IA local é usada para o que ela de fato consegue fazer sobre este assunto: montar o <strong>plano</strong> —
-        que tipo de fonte consultar por país, que lacunas existem no que você já registrou e como tornar as leituras
-        comparáveis entre países. Ela não tem dados salariais e está proibida de citar valor que não esteja na tela.
+        A IA local monta o <strong>plano</strong>: que fontes consultar por país, que lacunas existem e como comparar as leituras.
+        Ela não tem dados salariais e não cita valor que não esteja na tela.
       </p>
       <ExplicarIA build={build} label="Propor plano de pesquisa"
         signature={`plano|${roles.length}|${entries.length}|${oficial?.year ?? 0}`}

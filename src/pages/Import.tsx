@@ -8,6 +8,8 @@ import { LearnedRules } from '../components/LearnedRules'
 import { AiSuggestions } from '../components/AiSuggestions'
 import { ImportCategories } from '../components/ImportCategories'
 import { ImportHistory } from '../components/ImportHistory'
+import { Icon } from '../components/Icons'
+import { Help } from '../components/Page'
 
 const SUPPORTED = /\.(csv|pdf|xlsx)$/i
 
@@ -32,6 +34,8 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   const [dupDecision, setDupDecision] = useState<'skip' | 'import' | 'pick'>('skip')
   const [keepDups, setKeepDups] = useState<Set<string>>(() => new Set())
   const dirRef = useRef<HTMLInputElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [over, setOver] = useState(false)
   const doneRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { if (done) doneRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }, [done])
@@ -154,26 +158,31 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   return (
     <div className="grid">
       <div className="card" style={{ gridColumn: '1/-1' }}>
-        <h3>Importar arquivos do banco</h3>
-        <p className="muted">
-          Aceita o CSV do Banque BCP, o relevé mensal do BCP em PDF, os relevés do CCF em PDF, o extrato de conta do Itaú em PDF (do app ou o Extrato Mensal),
-          a fatura do cartão Itaú em PDF ou Excel (.xlsx) e o extrato combinado do Millennium bcp em PDF.
-          Pode selecionar tudo de uma vez. Se alguma linha já existir (mesma conta, data, valor e estabelecimento, de qualquer arquivo), o app pergunta o que fazer antes de gravar.
-        </p>
-        <div className="row">
-          <label className="inline">Arquivos
-            <input type="file" multiple accept=".csv,.pdf,.xlsx" onChange={(e) => onFiles(e.target.files)} disabled={busy} />
-          </label>
-          <label className="inline">Pasta inteira
-            <input ref={dirRef} type="file" multiple onChange={(e) => onFiles(e.target.files)} disabled={busy} />
-          </label>
+        <div className={`drop ${over ? 'over' : ''}`}
+          onDragOver={(e) => { e.preventDefault(); if (!busy) setOver(true) }}
+          onDragLeave={() => setOver(false)}
+          onDrop={(e) => { e.preventDefault(); setOver(false); if (!busy) onFiles(e.dataTransfer.files) }}>
+          <span className="empty-icon"><Icon name="importar" size={28} /></span>
+          <strong>Arraste os extratos para cá</strong>
+          <span className="muted">ou escolha no computador — pode ser vários de uma vez</span>
+          <div className="row">
+            <button className="primary" onClick={() => fileRef.current?.click()} disabled={busy}><Icon name="importar" size={16} /> Escolher arquivos</button>
+            <button onClick={() => dirRef.current?.click()} disabled={busy}><Icon name="pasta" size={16} /> Escolher uma pasta</button>
+          </div>
+          <input ref={fileRef} type="file" multiple accept=".csv,.pdf,.xlsx" onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} />
+          <input ref={dirRef} type="file" multiple onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} />
+          <div className="formats">
+            {['BCP · CSV e PDF', 'CCF · PDF', 'Itaú conta · PDF', 'Itaú cartão · PDF e Excel', 'Millennium · PDF'].map((f) => <span key={f} className="badge">{f}</span>)}
+          </div>
         </div>
-        <p className="muted" style={{ fontSize: 12 }}>
-          A opção de pasta varre todas as subpastas e ignora o que não for CSV, PDF ou XLSX. No iPhone/iPad o Safari não permite
-          selecionar pastas — use a seleção de arquivos, ou faça a importação em massa no computador.
-        </p>
-        {progress && <p className="muted">{progress}</p>}
-        {busy && !progress && <p className="muted">Processando…</p>}
+        <div style={{ marginTop: 12 }} />
+        <Help title="Detalhes sobre a importação">
+          <p>Os arquivos são lidos no navegador; só as linhas extraídas vão para a base — os PDFs e CSVs nunca saem do aparelho.</p>
+          <p>Itaú conta: extrato do app ou o Extrato Mensal. Millennium: extrato combinado. Se alguma linha já existir (mesma conta, data, valor e estabelecimento, de qualquer arquivo), o app pergunta o que fazer antes de gravar.</p>
+          <p>A opção de pasta varre todas as subpastas e ignora o que não for CSV, PDF ou XLSX. No iPhone/iPad o Safari não permite
+            selecionar pastas — use a seleção de arquivos, ou faça a importação em massa no computador.</p>
+        </Help>
+        {(progress || busy) && <div className="loading" style={{ justifyContent: 'flex-start', margin: '12px 0' }}><span className="spinner" />{progress ?? 'Processando…'}</div>}
 
         {(skipped.ignored > 0 || skipped.duplicateFiles > 0) && !busy && (
           <p className="muted">
