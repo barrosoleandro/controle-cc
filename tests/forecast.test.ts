@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { brazilTransfer, forecastNextMonth, lastDayOf, nextMonthOf, type FcTx } from '../src/domain/forecast'
+import { brazilCard, brazilTransfer, forecastNextMonth, lastDayOf, nextMonthOf, type FcTx } from '../src/domain/forecast'
 
 const tx = (booking_date: string, value: number, merchant: string, categoryName = 'Outros'): FcTx =>
   ({ booking_date, month: booking_date.slice(0, 7), value, kind: 'expense', categoryName, merchant })
@@ -40,9 +40,9 @@ describe('forecastNextMonth', () => {
 
 describe('brazilTransfer', () => {
   it('sends the estimate less the balance, rounded up to ten', () => {
-    const f = { month: '2026-11', total: 4003, usual: 0, monthly: 0, periodic: [] }
-    expect(brazilTransfer(f, 1500, '2026-10-24')).toMatchObject({ transfer: 2510, by: '2026-10-31' })
-    expect(brazilTransfer(f, 9000, '2026-10-24').transfer).toBe(0)
+    const f = { month: '2026-11', total: 0, usual: 900, monthly: 1000, periodic: [{ label: 'EAU', amount: 3, date: '2026-11-10' }] }
+    expect(brazilTransfer(f, 3000, 1500, '2026-10-24')).toMatchObject({ card: 3000, recurring: 1003, transfer: 2510, by: '2026-10-31' })
+    expect(brazilTransfer(f, 3000, 9000, '2026-10-24').transfer).toBe(0)
   })
   it('month helpers', () => {
     expect(nextMonthOf('2026-12-10')).toBe('2027-01')
@@ -57,5 +57,15 @@ describe('sentToBrazil', () => {
     expect(sentToBrazil([r('2026-10-03', 3000, 'OP REC EXT WISE'), r('2026-10-08', 500, 'RESGATE CDB'), r('2026-09-30', 900, 'OP REC EXT')], '2026-10'))
       .toEqual({ amount: 3000, date: '2026-10-03' })
     expect(sentToBrazil([r('2026-09-30', 900, 'OP REC EXT')], '2026-10')).toBeNull()
+  })
+})
+
+describe('brazilCard', () => {
+  const bill = (due_date: string, status: 'paga' | 'aberta', total = 1000) => ({ account_id: 'c', due_date, total, status })
+  it('knows what is open and whether this month was paid', () => {
+    const ids = new Set(['c'])
+    expect(brazilCard([bill('2026-10-10', 'paga'), bill('2026-11-10', 'aberta', 700)], ids, '2026-10')).toEqual({ open: 700, paidThisMonth: true })
+    expect(brazilCard([bill('2026-10-10', 'paga')], ids, '2026-10')).toEqual({ open: 0, paidThisMonth: true })
+    expect(brazilCard([bill('2026-10-10', 'aberta', 500)], ids, '2026-10')).toEqual({ open: 500, paidThisMonth: false })
   })
 })

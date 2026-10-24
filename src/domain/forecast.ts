@@ -80,15 +80,33 @@ export function forecastNextMonth(txs: FcTx[], today: string, skip: (categoryNam
 
 export interface BrazilTransfer {
   month: string
-  expected: number // BRL spending estimated for the month
+  card: number // card bill(s) still to pay
+  recurring: number // recurring payments of the month (monthly and the non-monthly ones that fall in it)
+  expected: number // card + recurring, in BRL
   balance: number // BRL on the Brazilian checking accounts today
   transfer: number // BRL to send before the month starts (0 when the balance covers it)
   by: string // last day to send it: the end of the current month
 }
 
-/** What to send to Brazil before the month starts: the estimated spending there, less what is already there. */
-export function brazilTransfer(f: Forecast, balanceBrl: number, today: string): BrazilTransfer {
-  return { month: f.month, expected: f.total, balance: balanceBrl, transfer: Math.max(0, Math.ceil((f.total - balanceBrl) / 10) * 10), by: lastDayOf(today.slice(0, 7)) }
+/**
+ * What to send to Brazil before the month starts: the card bill still to pay plus the recurring
+ * payments there (rent-like, utilities, bimonthly bills), less what is already in the account.
+ * Day-to-day purchases are not in it: they go on the card and reach the next bill.
+ */
+export function brazilTransfer(f: Forecast, cardOpen: number, balanceBrl: number, today: string): BrazilTransfer {
+  const recurring = f.monthly + f.periodic.reduce((a, l) => a + l.amount, 0)
+  const expected = cardOpen + recurring
+  return { month: f.month, card: cardOpen, recurring, expected, balance: balanceBrl, transfer: Math.max(0, Math.ceil((expected - balanceBrl) / 10) * 10), by: lastDayOf(today.slice(0, 7)) }
+}
+
+export interface CardBill { account_id: string; due_date: string; total: number; status: 'paga' | 'aberta' }
+
+/** Brazilian card bills: what is still to pay, and whether this month's bill was already paid. */
+export function brazilCard(bills: CardBill[], cardIds: Set<string>, month: string) {
+  const mine = bills.filter((b) => cardIds.has(b.account_id) && b.due_date >= `${month}-01`)
+  const open = mine.filter((b) => b.status === 'aberta').reduce((s, b) => s + b.total, 0)
+  const thisMonth = mine.filter((b) => b.due_date.slice(0, 7) === month)
+  return { open, paidThisMonth: thisMonth.length > 0 && thisMonth.every((b) => b.status === 'paga') }
 }
 
 /** Money that arrived from abroad in the Brazilian accounts: what a transfer from the French account looks like there. */

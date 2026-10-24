@@ -12,7 +12,7 @@ import { countryOf } from '../domain/countries'
 import { monthWindow } from '../domain/period'
 import { isTithe } from '../domain/categorize'
 import { findSalaryCategory, salaryAt } from '../domain/budget'
-import { brazilTransfer, forecastNextMonth, sentToBrazil } from '../domain/forecast'
+import { brazilCard, brazilTransfer, forecastNextMonth, sentToBrazil } from '../domain/forecast'
 import { Menu } from './analysis/shared'
 import { VERSION, versionLabel } from '../lib/version'
 import { Icon } from '../components/Icons'
@@ -99,16 +99,18 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     const mine = forecastNextMonth(txs, now, skip)
     const brIds = new Set(data.accounts.filter((a) => countryOf(a.bank) === 'Brasil').map((a) => a.id))
     const brTx = ctx.etx.filter((t) => brIds.has(t.account_id)).map((t) => ({ ...t, value: fx.convert(t.amount, t.currency, 'BRL', t.booking_date) }))
-    const br = forecastNextMonth(brTx, now, skip)
+    // The card payment in the checking account is the bill itself, counted apart: not a recurring charge.
+    const br = forecastNextMonth(brTx, now, (n) => skip(n) || n === 'Cartão Itaú')
+    const cards = brazilCard(data.cardStatements, new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type === 'card').map((a) => a.id)), now.slice(0, 7))
     const balance = balances.filter((b) => brIds.has(b.account.id) && b.account.type === 'checking').reduce((s, b) => s + fx.convert(b.native, b.account.currency, 'BRL', now), 0)
-    return { mine, br, send: brIds.size ? { ...brazilTransfer(br, balance, now), sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
-  }, [txs, ctx.etx, data.accounts, balances, fx])
+    return { mine, br, send: brIds.size ? { ...brazilTransfer(br, cards.open, balance, now), paid: cards.paidThisMonth, sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
+  }, [txs, ctx.etx, data.accounts, data.cardStatements, balances, fx])
   const brl = money('BRL')
   const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
   const send = nextMonth.send
   const sendEur = send ? money('EUR')(send.transfer / fx.latest()) : ''
   // A transfer already made this month settles it: the alert only asks for one when none went yet.
-  const open = !!send && send.transfer > 0 && !send.sent
+  const open = !!send && send.transfer > 0 && !send.sent && !send.paid
   const sendLine = send && (send.sent
     ? <>Transferência para o Brasil já feita em {monthLabel(today().slice(0, 7))}: {brl(send.sent.amount)} (último envio em {dayMonth(send.sent.date)}).</>
     : send.transfer > 0
@@ -161,12 +163,12 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
               sub={(cur?.income ?? 0) > 0 ? `${Math.round((net / cur.income) * 100)}% das receitas` : period} />
           </div>)
       }
-      case 'transfer': return !send ? (
+      case 'transfer': return send?.paid ? null : !send ? (
         <div className="alert" style={{ display: 'block', gridColumn: '1/-1' }}>Transferência para o Brasil: ainda não há conta do Itaú no app. Importe um extrato do Itaú para eu estimar quanto enviar do BCP.</div>
       ) : (
         <div className={`alert ${open ? 'warn' : 'ok'}`} role="status" style={{ display: 'block', fontSize: 15, gridColumn: '1/-1' }}>
           {open ? '⚠ ' : '✔ '}{sendLine}
-          <div className="muted" style={{ fontSize: 13 }}>Gasto estimado no Brasil: {brl(send.expected)} · saldo hoje no Itaú: {brl(send.balance)}.</div>
+          <div className="muted" style={{ fontSize: 13 }}>Fatura do cartão a pagar: {brl(send.card)} · recorrentes do mês: {brl(send.recurring)} · saldo hoje no Itaú: {brl(send.balance)}.</div>
         </div>)
       case 'nextMonth': {
         const { mine } = nextMonth
