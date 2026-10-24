@@ -86,12 +86,58 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
         </div>
       </Menu>
     </div>
+    <RecurringQuestions ctx={ctx} />
     {view === 'Lista'
       ? <Lista ctx={ctx} shown={inScope} merchant={merchant} onClearMerchant={() => setMerchant('')} />
       : view === 'Por país'
         ? <PorPais ctx={ctx} shown={inScope} />
         : <Periodo ctx={ctx} shown={inScope} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
   </>
+}
+
+/**
+ * Recurring expenses. The flag is per merchant and one click marks its whole history; the latest
+ * mark decides from then on. Unmarked merchants of the Brazilian checking account start as the
+ * automatic guess (they feed the transfer estimate); the rest start as not recurring.
+ */
+function useRecurring(ctx: Ctx) {
+  const { data, etx } = ctx
+  const brChecking = useMemo(() => new Set(data.accounts.filter((a) => countryOf(a.bank) === 'Brasil' && a.type !== 'card').map((a) => a.id)), [data.accounts])
+  const marks = useMemo(() => data.settings.dashboard?.billMarks ?? {}, [data.settings.dashboard?.billMarks])
+  const autoBills = useMemo(() => new Set(monthlyBills(
+    etx.filter((t) => brChecking.has(t.account_id)).map((t) => ({ ...t, value: ctx.fx.convert(t.amount, t.currency, 'BRL', t.booking_date) })),
+    today(), skipRecurring).map((l) => l.label)), [etx, brChecking, ctx.fx])
+  const isBill = (t: { merchant: string }) => billEffective(t.merchant, marks, autoBills.has(t.merchant))
+  async function setRecurring(merchant: string, on: boolean) {
+    const months = [...etx.filter((t) => t.merchant === merchant).map((t) => t.month), currentMonth()]
+    await ctx.patchSettings({ dashboard: { ...data.settings.dashboard, billMarks: markHistory(marks, merchant, months, on) } })
+  }
+  return { marks, isBill, setRecurring }
+}
+const skipRecurring = (n: string) => isTithe(n) || n === 'Cartão Itaú'
+
+/** Spent in 3 of the last 6 months at similar values (±20%), not answered yet: asked once, on every view. */
+function RecurringQuestions({ ctx }: { ctx: Ctx }) {
+  const { marks, setRecurring } = useRecurring(ctx)
+  const fmt = useFmt(ctx)
+  const [asked, setAsked] = useState(5)
+  const toAsk = useMemo(() => recurrenceCandidates(ctx.etx, marks, today(), skipRecurring), [ctx.etx, marks])
+  if (!toAsk.length) return null
+  return (
+    <div className="alert" style={{ display: 'block' }}>
+      <strong>{toAsk.length} despesa(s) apareceram em 3 meses com valor parecido (até 20%). São recorrentes?</strong>
+      {toAsk.slice(0, asked).map((c) => (
+        <div key={c.merchant} className="row" style={{ marginTop: 6, justifyContent: 'space-between' }}>
+          <span>{c.merchant} <span className="muted">· ≈ {fmt(c.avg)} em {c.months.map((m) => monthLabel(m).split(' ')[0]).join(', ')}</span></span>
+          <span className="row" style={{ margin: 0 }}>
+            <button className="primary" onClick={() => setRecurring(c.merchant, true)}>É recorrente</button>
+            <button onClick={() => setRecurring(c.merchant, false)}>Não</button>
+          </span>
+        </div>
+      ))}
+      {toAsk.length > asked && <button style={{ marginTop: 6 }} onClick={() => setAsked(asked + 5)}>Mostrar mais</button>}
+    </div>
+  )
 }
 
 function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (accountId: string) => boolean; merchant: string; onClearMerchant: () => void }) {
@@ -131,23 +177,7 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
       .sort((a, b) => (ordem === 'valor' ? a.value - b.value : b.booking_date.localeCompare(a.booking_date)))
   }, [etx, q, month, cat, shown, de, ate, merchant, ordem])
   const total = rows.reduce((s, t) => s + t.value, 0)
-  // Recurring expenses. The flag is per merchant and one click marks its whole history; the
-  // latest mark decides from then on. Unmarked merchants of the Brazilian checking account start as
-  // the automatic guess (they feed the transfer estimate); the rest start as not recurring.
-  const brChecking = useMemo(() => new Set(data.accounts.filter((a) => countryOf(a.bank) === 'Brasil' && a.type !== 'card').map((a) => a.id)), [data.accounts])
-  const marks = useMemo(() => data.settings.dashboard?.billMarks ?? {}, [data.settings.dashboard?.billMarks])
-  const skipAsk = (n: string) => isTithe(n) || n === 'Cartão Itaú'
-  const autoBills = useMemo(() => new Set(monthlyBills(
-    etx.filter((t) => brChecking.has(t.account_id)).map((t) => ({ ...t, value: ctx.fx.convert(t.amount, t.currency, 'BRL', t.booking_date) })),
-    today(), skipAsk).map((l) => l.label)), [etx, brChecking, ctx.fx])
-  const isBill = (t: { merchant: string }) => billEffective(t.merchant, marks, autoBills.has(t.merchant))
-  const [asked, setAsked] = useState(5)
-  // Spent in 3 of the last 6 months at similar values (±20%), not answered yet: ask once.
-  const toAsk = useMemo(() => recurrenceCandidates(etx, marks, today(), skipAsk), [etx, marks])
-  async function setRecurring(merchant: string, on: boolean) {
-    const months = [...etx.filter((t) => t.merchant === merchant).map((t) => t.month), currentMonth()]
-    await ctx.patchSettings({ dashboard: { ...data.settings.dashboard, billMarks: markHistory(marks, merchant, months, on) } })
-  }
+  const { isBill, setRecurring } = useRecurring(ctx)
   // The real balance of each ticked account (own currency): at the end of the filtered month, or today.
   const balances = useMemo(() => {
     const until = month ? `${month}-31` : '9999-12-31'
@@ -279,21 +309,6 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
           <button onClick={() => setNova(null)} disabled={busy}>Cancelar</button>
         </div>
       )}
-      {toAsk.length > 0 && (
-        <div className="alert" style={{ display: 'block' }}>
-          <strong>{toAsk.length} despesa(s) apareceram em 3 meses com valor parecido (até 20%). São recorrentes?</strong>
-          {toAsk.slice(0, asked).map((c) => (
-            <div key={c.merchant} className="row" style={{ marginTop: 6, justifyContent: 'space-between' }}>
-              <span>{c.merchant} <span className="muted">· ≈ {fmt(c.avg)} em {c.months.map((m) => monthLabel(m).split(' ')[0]).join(', ')}</span></span>
-              <span className="row" style={{ margin: 0 }}>
-                <button className="primary" onClick={() => setRecurring(c.merchant, true)}>É recorrente</button>
-                <button onClick={() => setRecurring(c.merchant, false)}>Não</button>
-              </span>
-            </div>
-          ))}
-          {toAsk.length > asked && <button style={{ marginTop: 6 }} onClick={() => setAsked(asked + 5)}>Mostrar mais</button>}
-        </div>
-      )}
       <div className="scroll"><table>
         <thead><tr><th><input type="checkbox" checked={allSelected} aria-label="Selecionar todas as linhas visíveis"
           onChange={() => setSel(allSelected ? new Set() : new Set(visible.map((t) => t.id)))} /></th><th>Data</th><th>Descrição</th><th className="hide-sm">Conta</th><th>Categoria</th><th title="Despesa recorrente: marcar vale para todo o histórico do estabelecimento">Recorrente</th><th className="num">Valor</th></tr></thead>
@@ -328,6 +343,7 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
  * coming) are marked for review.
  */
 function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: string) => boolean; n: number; onOpen: (merchant: string) => void }) {
+  const { isBill, setRecurring } = useRecurring(ctx)
   const fmt = useFmt(ctx)
   const { data, etx } = ctx
   const subs = useSubscriptions(ctx)
@@ -570,6 +586,8 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
                         {m.flagged && <span className="neg" title="Algum mês fora da média"> ⚑</span>}
                         {sub?.reason && <span className="warn" title={sub.reason}> revisar: {sub.reason}</span>}
                         {' '}<button className="link" style={{ fontWeight: 400, fontSize: 12 }} onClick={() => onOpen(m.key)}>ver lançamentos</button>
+                        {' '}<label className="inline" style={{ fontWeight: 400, fontSize: 12 }} title="Recorrente: vale para todo o histórico deste estabelecimento">
+                          <input type="checkbox" checked={isBill({ merchant: m.key })} onChange={() => setRecurring(m.key, !isBill({ merchant: m.key }))} /> recorrente</label>
                       </td>
                       <td style={{ minWidth: 170 }}>
                         <CategorySelect ctx={ctx} value={catIdByName.get(g.key) ?? ''} empty="—" disabled={saving === m.key}
