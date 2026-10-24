@@ -46,12 +46,15 @@ function dueIn(s: Subscription, month: string): string[] {
  *  - what is already dated in the month (card instalments) counts at least as much as the usual.
  * Transfers and the categories named in `skip` (tithe) are not spending here.
  */
-export function forecastNextMonth(txs: FcTx[], today: string, skip: (categoryName: string) => boolean = () => false, window = 3): Forecast {
+export function forecastNextMonth(txs: FcTx[], today: string, skip: (categoryName: string) => boolean = () => false, window = 3, marks: BillMarks = {}): Forecast {
   const month = nextMonthOf(today)
   const spent = txs.filter((t) => t.kind === 'expense' && !skip(t.categoryName))
   const subs = detectSubscriptions(spent.map((t) => ({ booking_date: t.booking_date, amount: t.value, merchant: t.merchant, kind: t.kind })), today)
-    .filter((s) => s.status !== 'possibly_cancelled')
-  const recurring = new Set(subs.map((s) => s.merchant))
+    .filter((s) => s.status !== 'possibly_cancelled' && billEffective(s.merchant, marks, true))
+  // Merchants the user marked as recurring that the detection did not find: monthly, at the learned amount.
+  const found = new Set(subs.map((s) => s.merchant))
+  const marked = applyBillMarks([], spent, marks).filter((l) => !found.has(l.label))
+  const recurring = new Set([...found, ...marked.map((l) => l.label)])
 
   const [y, m] = today.split('-').map(Number)
   const base = new Set(Array.from({ length: window }, (_, i) => new Date(Date.UTC(y, m - 1 - (window - i), 1)).toISOString().slice(0, 7)))
@@ -76,6 +79,11 @@ export function forecastNextMonth(txs: FcTx[], today: string, skip: (categoryNam
     const amount = known + dates.length * s.lastAmount
     if (s.cadence === 'monthly' || s.cadence === 'weekly') { monthly += amount; if (amount > 0) monthlyLines.push({ label: s.merchant, amount, date: dates[0] ?? charged[0]?.booking_date ?? '' }) }
     else if (amount > 0) periodic.push({ label: s.merchant, amount, date: charged.length ? charged[0].booking_date : dates[0] })
+  }
+  for (const l of marked) {
+    const charged = -spent.filter((t) => t.merchant === l.label && t.month === month).reduce((a, t) => a + t.value, 0)
+    const amount = charged > 0 ? charged : l.amount
+    monthly += amount; monthlyLines.push({ label: l.label, amount, date: '' })
   }
   periodic.sort((a, b) => a.date.localeCompare(b.date))
   monthlyLines.sort((a, b) => b.amount - a.amount)
@@ -179,4 +187,37 @@ export function applyBillMarks(auto: ForecastLine[], txs: FcTx[], marks: BillMar
   const added = Object.keys(marks).filter((m) => !names.has(m) && billEffective(m, marks, false))
     .map((m) => ({ label: m, amount: learned(m) ?? 0, date: '' })).filter((l) => l.amount > 0)
   return [...kept, ...added].sort((a, b) => b.amount - a.amount)
+}
+
+export interface Candidate { merchant: string; months: string[]; amounts: number[]; avg: number }
+
+/**
+ * Merchants worth asking about: spent in three months of the last six (the three most recent
+ * ones) with monthly totals within `tolerance` of their median, and never answered (`marks`).
+ */
+export function recurrenceCandidates(txs: FcTx[], marks: BillMarks, today: string, skip: (categoryName: string) => boolean = () => false, tolerance = 0.2, window = 6): Candidate[] {
+  const [y, m] = today.split('-').map(Number)
+  const months = new Set(Array.from({ length: window }, (_, i) => new Date(Date.UTC(y, m - 1 - (window - 1 - i), 1)).toISOString().slice(0, 7)))
+  const by = new Map<string, Map<string, number>>()
+  for (const t of txs) {
+    if (t.kind !== 'expense' || skip(t.categoryName) || !t.merchant || marks[t.merchant] || !months.has(t.month)) continue
+    const per = by.get(t.merchant) ?? new Map<string, number>()
+    per.set(t.month, (per.get(t.month) ?? 0) - t.value)
+    by.set(t.merchant, per)
+  }
+  const out: Candidate[] = []
+  for (const [merchant, per] of by) {
+    const seen = [...per].filter(([, v]) => v > 0).sort(([a], [b]) => a.localeCompare(b)).slice(-3)
+    if (seen.length < 3) continue
+    const amounts = seen.map(([, v]) => v)
+    const med = [...amounts].sort((a, b) => a - b)[1]
+    if (amounts.some((v) => Math.abs(v - med) > med * tolerance)) continue
+    out.push({ merchant, months: seen.map(([mo]) => mo), amounts, avg: amounts.reduce((a, b) => a + b, 0) / 3 })
+  }
+  return out.sort((a, b) => b.avg - a.avg)
+}
+
+/** Marks (or unmarks) a merchant for its whole history, so one click settles every month. */
+export function markHistory(marks: BillMarks, merchant: string, months: Iterable<string>, on: boolean): BillMarks {
+  return { ...marks, [merchant]: Object.fromEntries([...new Set(months)].map((mo) => [mo, on])) }
 }

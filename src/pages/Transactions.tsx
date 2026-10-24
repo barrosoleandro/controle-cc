@@ -11,7 +11,7 @@ import type { CategoryKind } from '../domain/types'
 import { byName, isTithe } from '../domain/categorize'
 import { countryOf, flowsByCountry, type Country } from '../domain/countries'
 import { purchaseDate } from '../domain/simplify'
-import { billEffective, monthlyBills } from '../domain/forecast'
+import { billEffective, markHistory, monthlyBills, recurrenceCandidates } from '../domain/forecast'
 import { AsOf, Tabs } from '../components/Page'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
@@ -131,18 +131,22 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
       .sort((a, b) => (ordem === 'valor' ? a.value - b.value : b.booking_date.localeCompare(a.booking_date)))
   }, [etx, q, month, cat, shown, de, ate, merchant, ordem])
   const total = rows.reduce((s, t) => s + t.value, 0)
-  // Bills paid from the Brazilian checking account: the flag says whether each counts in the
-  // monthly transfer estimate. Unmarked merchants start as the automatic guess; a mark in any
-  // month is remembered for that merchant from then on (and sets the amount, see applyBillMarks).
+  // Recurring expenses. The flag is per merchant and one click marks its whole history; the
+  // latest mark decides from then on. Unmarked merchants of the Brazilian checking account start as
+  // the automatic guess (they feed the transfer estimate); the rest start as not recurring.
   const brChecking = useMemo(() => new Set(data.accounts.filter((a) => countryOf(a.bank) === 'Brasil' && a.type !== 'card').map((a) => a.id)), [data.accounts])
-  const marks = data.settings.dashboard?.billMarks ?? {}
+  const marks = useMemo(() => data.settings.dashboard?.billMarks ?? {}, [data.settings.dashboard?.billMarks])
+  const skipAsk = (n: string) => isTithe(n) || n === 'Cartão Itaú'
   const autoBills = useMemo(() => new Set(monthlyBills(
     etx.filter((t) => brChecking.has(t.account_id)).map((t) => ({ ...t, value: ctx.fx.convert(t.amount, t.currency, 'BRL', t.booking_date) })),
-    today(), (n) => isTithe(n) || n === 'Cartão Itaú').map((l) => l.label)), [etx, brChecking, ctx.fx])
+    today(), skipAsk).map((l) => l.label)), [etx, brChecking, ctx.fx])
   const isBill = (t: { merchant: string }) => billEffective(t.merchant, marks, autoBills.has(t.merchant))
-  async function toggleBill(t: { merchant: string; month: string }) {
-    const next = { ...marks, [t.merchant]: { ...marks[t.merchant], [t.month]: !isBill(t) } }
-    await saveSettings({ dashboard: { ...data.settings.dashboard, billMarks: next } })
+  const [asked, setAsked] = useState(5)
+  // Spent in 3 of the last 6 months at similar values (±20%), not answered yet: ask once.
+  const toAsk = useMemo(() => recurrenceCandidates(etx, marks, today(), skipAsk), [etx, marks])
+  async function setRecurring(merchant: string, on: boolean) {
+    const months = [...etx.filter((t) => t.merchant === merchant).map((t) => t.month), currentMonth()]
+    await saveSettings({ dashboard: { ...data.settings.dashboard, billMarks: markHistory(marks, merchant, months, on) } })
     await ctx.reload()
   }
   // The real balance of each ticked account (own currency): at the end of the filtered month, or today.
@@ -276,9 +280,24 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
           <button onClick={() => setNova(null)} disabled={busy}>Cancelar</button>
         </div>
       )}
+      {toAsk.length > 0 && (
+        <div className="alert" style={{ display: 'block' }}>
+          <strong>{toAsk.length} despesa(s) apareceram em 3 meses com valor parecido (até 20%). São recorrentes?</strong>
+          {toAsk.slice(0, asked).map((c) => (
+            <div key={c.merchant} className="row" style={{ marginTop: 6, justifyContent: 'space-between' }}>
+              <span>{c.merchant} <span className="muted">· ≈ {fmt(c.avg)} em {c.months.map((m) => monthLabel(m).split(' ')[0]).join(', ')}</span></span>
+              <span className="row" style={{ margin: 0 }}>
+                <button className="primary" onClick={() => setRecurring(c.merchant, true)}>É recorrente</button>
+                <button onClick={() => setRecurring(c.merchant, false)}>Não</button>
+              </span>
+            </div>
+          ))}
+          {toAsk.length > asked && <button style={{ marginTop: 6 }} onClick={() => setAsked(asked + 5)}>Mostrar mais</button>}
+        </div>
+      )}
       <div className="scroll"><table>
         <thead><tr><th><input type="checkbox" checked={allSelected} aria-label="Selecionar todas as linhas visíveis"
-          onChange={() => setSel(allSelected ? new Set() : new Set(visible.map((t) => t.id)))} /></th><th>Data</th><th>Descrição</th><th className="hide-sm">Conta</th><th>Categoria</th><th title="Conta fixa no Brasil: entra na estimativa de transferência do painel">Fixa</th><th className="num">Valor</th></tr></thead>
+          onChange={() => setSel(allSelected ? new Set() : new Set(visible.map((t) => t.id)))} /></th><th>Data</th><th>Descrição</th><th className="hide-sm">Conta</th><th>Categoria</th><th title="Despesa recorrente: marcar vale para todo o histórico do estabelecimento">Recorrente</th><th className="num">Valor</th></tr></thead>
         <tbody>
           {visible.map((t) => (
             <tr key={t.id}>
@@ -291,8 +310,8 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
               <td><select value={t.category_id ?? ''} onChange={(e) => (e.target.value === NEW ? openNova({ target: 'row', id: t.id, merchant: t.merchant }) : changeCategory(t, e.target.value))} style={{ maxWidth: 160, fontWeight: t.category_locked ? 600 : 400 }}>
                 <option value="">—</option>{sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 <option value={NEW}>+ Nova categoria…</option></select></td>
-              <td>{brChecking.has(t.account_id) && t.kind === 'expense' && <input type="checkbox" checked={isBill(t)} onChange={() => toggleBill(t)}
-                title="Conta fixa: entra na estimativa de quanto transferir ao Brasil" aria-label={`Conta fixa: ${t.merchant}`} />}</td>
+              <td>{t.kind === 'expense' && <input type="checkbox" checked={isBill(t)} onChange={() => setRecurring(t.merchant, !isBill(t))}
+                title="Recorrente: vale para todo o histórico deste estabelecimento e entra nas estimativas do painel" aria-label={`Recorrente: ${t.merchant}`} />}</td>
               <td className={`num ${t.amount < 0 ? 'neg' : 'pos'}`}>{money(t.currency, 2)(t.amount)}</td>
             </tr>
           ))}

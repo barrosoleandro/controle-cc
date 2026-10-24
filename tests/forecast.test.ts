@@ -103,3 +103,27 @@ describe('bill marks', () => {
     expect(billEffective('X', { X: { '2026-08': true, '2026-09': false } }, true)).toBe(false)
   })
 })
+
+import { markHistory, recurrenceCandidates } from '../src/domain/forecast'
+describe('recurrenceCandidates', () => {
+  const today = '2026-10-24'
+  it('asks about 3 months with values within 20%, once', () => {
+    const rows = [tx('2026-07-03', -100, 'NETFLIX'), tx('2026-08-03', -110, 'NETFLIX'), tx('2026-09-03', -95, 'NETFLIX'),
+      tx('2026-07-09', -100, 'POSTO'), tx('2026-08-09', -160, 'POSTO'), tx('2026-09-09', -100, 'POSTO'), // too far apart
+      tx('2026-08-20', -30, 'CAFE'), tx('2026-09-20', -30, 'CAFE')] // only two months
+    expect(recurrenceCandidates(rows, {}, today).map((c) => c.merchant)).toEqual(['NETFLIX'])
+    expect(recurrenceCandidates(rows, { NETFLIX: { '2026-09': false } }, today)).toEqual([])
+  })
+  it('marks the whole history at once', () => {
+    expect(markHistory({}, 'X', ['2026-07', '2026-08', '2026-07'], true)).toEqual({ X: { '2026-07': true, '2026-08': true } })
+  })
+})
+describe('marked recurring in the forecast', () => {
+  it('adds a marked merchant as monthly and keeps it out of the usual', () => {
+    const rows = [tx('2026-07-03', -100, 'NETFLIX', 'Lazer'), tx('2026-08-03', -300, 'NETFLIX', 'Lazer'), tx('2026-09-03', -100, 'NETFLIX', 'Lazer')]
+    const marks = { NETFLIX: { '2026-07': true, '2026-08': true, '2026-09': true } }
+    const f = forecastNextMonth(rows, '2026-10-24', () => false, 3, marks)
+    expect(f.monthly).toBeCloseTo(166.67, 1) // (100+300+100)/3
+    expect(f.usual).toBe(0)
+  })
+})

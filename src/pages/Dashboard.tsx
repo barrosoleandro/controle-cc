@@ -12,7 +12,7 @@ import { countryOf } from '../domain/countries'
 import { monthWindow } from '../domain/period'
 import { CARD_PAYMENT, isTithe } from '../domain/categorize'
 import { findSalaryCategory, salaryAt } from '../domain/budget'
-import { applyBillMarks, brazilCard, brazilTransfer, forecastNextMonth, monthlyBills, nextMonthOf, sentToBrazil } from '../domain/forecast'
+import { applyBillMarks, brazilCard, recurrenceCandidates, brazilTransfer, forecastNextMonth, monthlyBills, nextMonthOf, sentToBrazil } from '../domain/forecast'
 import { Menu } from './analysis/shared'
 import { VERSION, versionLabel } from '../lib/version'
 import { Icon } from '../components/Icons'
@@ -96,7 +96,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   const nextMonth = useMemo(() => {
     const now = today()
     const skip = (n: string) => isTithe(n)
-    const mine = forecastNextMonth(txs, now, skip)
+    const mine = forecastNextMonth(txs, now, skip, 3, data.settings.dashboard?.billMarks ?? {})
     const brIds = new Set(data.accounts.filter((a) => countryOf(a.bank) === 'Brasil').map((a) => a.id))
     const brTx = ctx.etx.filter((t) => brIds.has(t.account_id)).map((t) => ({ ...t, value: fx.convert(t.amount, t.currency, 'BRL', t.booking_date) }))
     // The card payment in the checking account is the bill itself, counted apart: not a recurring charge.
@@ -123,6 +123,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     return { mine, br, send: brIds.size ? { ...brazilTransfer(br, cardNext, balance, now), lines: [{ label: 'Fatura do cartão Itaú', amount: cardNext, date: '' }, ...br.monthlyLines, ...br.periodic], sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
   }, [txs, ctx.etx, data.accounts, data.cardStatements, data.settings.dashboard?.billMarks, balances, fx])
   const brl = money('BRL')
+  const toAsk = useMemo(() => recurrenceCandidates(ctx.etx, data.settings.dashboard?.billMarks ?? {}, today(), (n) => isTithe(n) || n === 'Cartão Itaú').length, [ctx.etx, data.settings.dashboard?.billMarks])
   const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
   const send = nextMonth.send
   const sendEur = send ? money('EUR')(send.transfer / fx.latest()) : ''
@@ -204,7 +205,9 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
       }
       case 'alerts': return (
         <div className="card"><h3>Alertas</h3>
-          {alerts.length === 0 && <p className="muted">Nenhum alerta.</p>}
+          {toAsk > 0 && <div className="alert"><span>ℹ {toAsk} despesa(s) apareceram em 3 meses com valor parecido: são recorrentes?</span>
+            <button onClick={() => ctx.go('Lançamentos', 'Lista')}>Responder</button></div>}
+          {alerts.length === 0 && toAsk === 0 && <p className="muted">Nenhum alerta.</p>}
           {alerts.map((a) => (
             <div key={a.key} className={`alert ${a.level}`}><span>{a.level === 'warn' ? '⚠ ' : 'ℹ '}{a.text}</span>
               <button onClick={async () => { await saveSettings({ dismissed_alerts: [...data.settings.dismissed_alerts, a.key] }); ctx.reload() }}>Dispensar</button></div>
