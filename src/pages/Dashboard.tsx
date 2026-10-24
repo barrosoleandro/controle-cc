@@ -105,7 +105,9 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     // Only the Itaú checking account counts here: card purchases already are in the bill, so a
     // yearly charge on the card would be counted twice.
     const checkingIds = new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type !== 'card').map((a) => a.id))
-    const brChecking = brTx.filter((t) => checkingIds.has(t.account_id))
+    // The bill payment itself is left out (the bill is counted apart); the account's own fees stay.
+    const isBillPayment = (t: { bank_category: string | null; description: string }) => t.bank_category === CARD_PAYMENT || /FATURA|ITAUCARD|PAG(TO|AMENTO)? CART/i.test(t.description)
+    const brChecking = brTx.filter((t) => checkingIds.has(t.account_id) && !isBillPayment(t))
     const marksBr = data.settings.dashboard?.billMarks ?? {}
     const br0 = forecastNextMonth(brChecking, now, skipBr, 3, marksBr)
     // Monthly bills come from the checking account (health plan, power, phone, condo…), whatever
