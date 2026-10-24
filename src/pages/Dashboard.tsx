@@ -12,13 +12,14 @@ import { countryOf } from '../domain/countries'
 import { monthWindow } from '../domain/period'
 import { CARD_PAYMENT, isTithe } from '../domain/categorize'
 import { findSalaryCategory, salaryAt } from '../domain/budget'
-import { applyBillMarks, brazilCard, recurrenceCandidates, brazilTransfer, forecastNextMonth, monthlyBills, nextMonthOf, sentToBrazil } from '../domain/forecast'
+import { applyBillMarks, brazilCard, markHistory, recurrenceCandidates, brazilTransfer, forecastNextMonth, monthlyBills, nextMonthOf, sentToBrazil } from '../domain/forecast'
 import { Menu } from './analysis/shared'
 import { VERSION, versionLabel } from '../lib/version'
 import { Icon } from '../components/Icons'
 import { AsOf, Stat } from '../components/Page'
 
 // A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
+const CARD_LINE = 'Fatura do cartão Itaú'
 export const WIDGETS = [
   { id: 'transfer', label: 'Alerta: transferir do BCP para o Itaú' },
   { id: 'kpis', label: 'Saldos e totais do mês' },
@@ -101,13 +102,16 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     const brTx = ctx.etx.filter((t) => brIds.has(t.account_id)).map((t) => ({ ...t, value: fx.convert(t.amount, t.currency, 'BRL', t.booking_date) }))
     // The card payment in the checking account is the bill itself, counted apart: not a recurring charge.
     const skipBr = (n: string) => skip(n) || n === 'Cartão Itaú'
-    const br0 = forecastNextMonth(brTx, now, skipBr)
+    // Only the Itaú checking account counts here: card purchases already are in the bill, so a
+    // yearly charge on the card would be counted twice.
+    const checkingIds = new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type !== 'card').map((a) => a.id))
+    const brChecking = brTx.filter((t) => checkingIds.has(t.account_id))
+    const marksBr = data.settings.dashboard?.billMarks ?? {}
+    const br0 = forecastNextMonth(brChecking, now, skipBr, 3, marksBr)
     // Monthly bills come from the checking account (health plan, power, phone, condo…), whatever
     // the amount does from month to month; the non-monthly ones stay as detected.
-    const checkingIds = new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type !== 'card').map((a) => a.id))
     const periodicNames = new Set(br0.periodic.map((l) => l.label))
-    const brChecking = brTx.filter((t) => checkingIds.has(t.account_id))
-    const bills = applyBillMarks(monthlyBills(brChecking, now, skipBr).filter((l) => !periodicNames.has(l.label)), brChecking, data.settings.dashboard?.billMarks ?? {})
+    const bills = applyBillMarks(monthlyBills(brChecking, now, skipBr).filter((l) => !periodicNames.has(l.label)), brChecking, marksBr)
     const br = { ...br0, monthly: bills.reduce((a, l) => a + l.amount, 0), monthlyLines: bills }
     // The card bill that falls in the coming month: the imported open bills, or, while none is
     // imported, the card purchases already assigned to that month's bill (statement_due) or, failing
@@ -120,9 +124,15 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     const cardNext = openBills > 0 ? openBills
       : -(dueNext.length ? dueNext : cardBuys.filter((t) => t.month === now.slice(0, 7))).reduce((a, t) => a + t.value, 0)
     const balance = balances.filter((b) => brIds.has(b.account.id) && b.account.type === 'checking').reduce((s, b) => s + fx.convert(b.native, b.account.currency, 'BRL', now), 0)
-    return { mine, br, send: brIds.size ? { ...brazilTransfer(br, cardNext, balance, now), lines: [{ label: 'Fatura do cartão Itaú', amount: cardNext, date: '' }, ...br.monthlyLines, ...br.periodic], sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
+    return { mine, br, send: brIds.size ? { ...brazilTransfer(br, cardNext, balance, now), lines: [{ label: CARD_LINE, amount: cardNext, date: '' }, ...br.monthlyLines, ...br.periodic], sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
   }, [txs, ctx.etx, data.accounts, data.cardStatements, data.settings.dashboard?.billMarks, balances, fx])
   const brl = money('BRL')
+  // Takes a wrong line out of the estimate for good: the merchant is marked as not recurring in its whole history.
+  const notRecurring = async (merchant: string) => {
+    const months = [...ctx.etx.filter((t) => t.merchant === merchant).map((t) => t.month), currentMonth()]
+    await saveSettings({ dashboard: { ...data.settings.dashboard, billMarks: markHistory(data.settings.dashboard?.billMarks ?? {}, merchant, months, false) } })
+    await ctx.reload()
+  }
   const toAsk = useMemo(() => recurrenceCandidates(ctx.etx, data.settings.dashboard?.billMarks ?? {}, today(), (n) => isTithe(n) || n === 'Cartão Itaú').length, [ctx.etx, data.settings.dashboard?.billMarks])
   const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
   const send = nextMonth.send
@@ -188,7 +198,9 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
           {open ? '⚠ ' : '✔ '}{sendLine}
           <div className="muted" style={{ fontSize: 13 }}>Fatura do cartão a pagar: {brl(send.card)} · recorrentes do mês: {brl(send.recurring)} · saldo hoje no Itaú: {brl(send.balance)}.</div>
           {send.lines.length > 0 && <details><summary className="muted" style={{ fontSize: 13 }}>Ver a fatura e os recorrentes que entram na conta (marque em Lançamentos)</summary>
-            {send.lines.map((l) => <div key={l.label + l.date} className="muted" style={{ fontSize: 13 }}>{l.label} · {brl(l.amount)}</div>)}</details>}
+            {send.lines.map((l) => <div key={l.label + l.date} className="row muted" style={{ fontSize: 13, margin: '2px 0', justifyContent: 'space-between' }}>
+              <span>{l.label} · {brl(l.amount)}{l.note && <span className="warn"> · {l.note}</span>}</span>
+              {l.label !== CARD_LINE && <button style={{ fontSize: 12, padding: '2px 8px' }} onClick={() => notRecurring(l.label)}>Não é recorrente</button>}</div>)}</details>}
         </div>)
       case 'nextMonth': {
         const { mine } = nextMonth

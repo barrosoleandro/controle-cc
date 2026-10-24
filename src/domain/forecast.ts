@@ -3,7 +3,7 @@ import { detectSubscriptions, nextDate, type Subscription } from './subscription
 /** What the forecast needs from an enriched transaction (value signed, in the display currency). */
 export interface FcTx { booking_date: string; month: string; value: number; kind: string; categoryName: string; merchant: string }
 
-export interface ForecastLine { label: string; amount: number; date: string }
+export interface ForecastLine { label: string; amount: number; date: string; /** Worth a second look, e.g. several charges a month under one name. */ note?: string }
 
 export interface Forecast {
   month: string // the month being estimated, yyyy-mm
@@ -143,18 +143,22 @@ export function monthlyBills(txs: FcTx[], today: string, skip: (categoryName: st
   const [y, m] = today.split('-').map(Number)
   const months = Array.from({ length: window }, (_, i) => new Date(Date.UTC(y, m - 1 - (window - i), 1)).toISOString().slice(0, 7))
   const by = new Map<string, Map<string, number>>()
+  const count = new Map<string, number>()
   for (const t of txs) {
     if (t.kind !== 'expense' || skip(t.categoryName) || !t.merchant || !months.includes(t.month)) continue
     const per = by.get(t.merchant) ?? new Map<string, number>()
     per.set(t.month, (per.get(t.month) ?? 0) - t.value)
     by.set(t.merchant, per)
+    count.set(t.merchant, (count.get(t.merchant) ?? 0) + 1)
   }
   const out: ForecastLine[] = []
   for (const [merchant, per] of by) {
     const seen = months.filter((mm) => (per.get(mm) ?? 0) > 0)
     if (seen.length < minMonths || !seen.some((mm) => mm >= months[window - 2])) continue
     const last = seen.slice(-3)
-    out.push({ label: merchant, amount: last.reduce((s, mm) => s + per.get(mm)!, 0) / last.length, date: '' })
+    const perMonth = count.get(merchant)! / seen.length
+    out.push({ label: merchant, amount: last.reduce((s, mm) => s + per.get(mm)!, 0) / last.length, date: '',
+      note: perMonth > 1.5 ? `≈ ${Math.round(perMonth)} lançamentos por mês com este nome — pode juntar vários pagamentos` : undefined })
   }
   return out.sort((a, b) => b.amount - a.amount)
 }
