@@ -124,3 +124,29 @@ export function sentToBrazil(txs: { booking_date: string; month: string; value: 
   if (!hits.length) return null
   return { amount: hits.reduce((s, t) => s + t.value, 0), date: hits.map((t) => t.booking_date).sort().at(-1)! }
 }
+
+/**
+ * Bills that come every month with a changing amount (health plan, power, phone, condo fee):
+ * charged in at least `minMonths` of the last `window` complete months and still in the last two.
+ * The amount is the average of the last three months it was charged. Looser than
+ * detectSubscriptions on purpose: a power bill never repeats within ±25%.
+ */
+export function monthlyBills(txs: FcTx[], today: string, skip: (categoryName: string) => boolean = () => false, window = 6, minMonths = 4): ForecastLine[] {
+  const [y, m] = today.split('-').map(Number)
+  const months = Array.from({ length: window }, (_, i) => new Date(Date.UTC(y, m - 1 - (window - i), 1)).toISOString().slice(0, 7))
+  const by = new Map<string, Map<string, number>>()
+  for (const t of txs) {
+    if (t.kind !== 'expense' || skip(t.categoryName) || !t.merchant || !months.includes(t.month)) continue
+    const per = by.get(t.merchant) ?? new Map<string, number>()
+    per.set(t.month, (per.get(t.month) ?? 0) - t.value)
+    by.set(t.merchant, per)
+  }
+  const out: ForecastLine[] = []
+  for (const [merchant, per] of by) {
+    const seen = months.filter((mm) => (per.get(mm) ?? 0) > 0)
+    if (seen.length < minMonths || !seen.some((mm) => mm >= months[window - 2])) continue
+    const last = seen.slice(-3)
+    out.push({ label: merchant, amount: last.reduce((s, mm) => s + per.get(mm)!, 0) / last.length, date: '' })
+  }
+  return out.sort((a, b) => b.amount - a.amount)
+}

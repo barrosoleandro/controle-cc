@@ -69,3 +69,20 @@ describe('brazilCard', () => {
     expect(brazilCard([bill('2026-10-10', 'aberta', 500)], ids, '2026-10')).toEqual({ open: 500, paidThisMonth: false })
   })
 })
+
+import { monthlyBills } from '../src/domain/forecast'
+describe('monthlyBills', () => {
+  it('keeps bills that come every month even when the amount moves', () => {
+    const t = (month: string, value: number, merchant: string) => tx(`${month}-10`, value, merchant)
+    const ms = ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09']
+    const rows = [
+      ...ms.map((m, i) => t(m, -(100 + i * 40), 'CEMIG')), // power: varies a lot
+      ...ms.map((m) => t(m, -800, 'CONDOMINIO')),
+      t('2026-06', -50, 'PADARIA'), t('2026-09', -50, 'PADARIA'), // not monthly
+      ...ms.slice(0, 3).map((m) => t(m, -300, 'CANCELADO')), // stopped
+    ]
+    const out = monthlyBills(rows, '2026-10-24')
+    expect(out.map((l) => l.label)).toEqual(['CONDOMINIO', 'CEMIG'])
+    expect(out[1].amount).toBe(260) // (220+260+300)/3
+  })
+})
