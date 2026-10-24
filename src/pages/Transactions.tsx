@@ -70,11 +70,12 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
       <Tabs label="Como ver os lançamentos" items={VIEWS} value={view} onChange={(v) => { setView(v); setMerchant('') }} />
       {/* The account tickboxes used to be a wall of checkboxes above every view; they live in
           one menu now, with the country shortcuts, and the button says what is ticked. */}
-      <select value={rec} onChange={(e) => setRec(e.target.value as Rec)} aria-label="Filtrar por recorrência" style={{ marginLeft: 'auto' }}>
+      {/* Por país shows totals only, so the recurring filter has nothing to act on there. */}
+      {view !== 'Por país' && <select value={rec} onChange={(e) => setRec(e.target.value as Rec)} aria-label="Filtrar por recorrência" style={{ marginLeft: 'auto' }}>
         <option value="all">Recorrentes e não recorrentes</option>
         <option value="yes">Só recorrentes</option>
         <option value="no">Só não recorrentes</option>
-      </select>
+      </select>}
       <Menu align="right" active={nShown < accounts.length}
         label={nShown === accounts.length ? 'Todas as contas' : nShown === 1 ? accounts.find((a) => shown(a.id))?.name ?? '1 conta' : `${nShown} de ${accounts.length} contas`}>
         <div className="row" style={{ marginBottom: 8 }}>
@@ -360,7 +361,8 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
   const subs = useSubscriptions(ctx)
   const [end, setEnd] = useState('') // último mês da janela; vazio = o mais recente com dados
   const [onlyAlerts, setOnlyAlerts] = useState(false)
-  const [open, setOpen] = useState<Set<string>>(() => new Set())
+  // Groups open by default (the detail is what this screen is for); this holds the ones closed.
+  const [closed, setClosed] = useState<Set<string>>(() => new Set())
   const [sortBy, setSortBy] = useState<number | null>(null) // month column to sort by; null = total over the window
 
   const allMonths = useMemo(() => [...new Set([...etx.map((t) => t.month), currentMonth()])].sort(), [etx])
@@ -463,8 +465,10 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
 
   // The "change category" column only has controls on expanded merchant rows: while nothing
   // is expanded it is an empty column, so it stays out of the table altogether.
-  const catCol = open.size > 0 || onlyAlerts
-  const toggle = (k: string) => setOpen((prev) => { const next = new Set(prev); if (next.has(k)) next.delete(k); else next.add(k); return next })
+  const allKeys = [...receitas.map((g) => g.key), ...groups.map((g) => g.key), ...(transfers.group ? [transfers.group.key] : [])]
+  const anyOpen = allKeys.some((k) => !closed.has(k))
+  const catCol = anyOpen || onlyAlerts
+  const toggle = (k: string) => setClosed((prev) => { const next = new Set(prev); if (next.has(k)) next.delete(k); else next.add(k); return next })
   const sticky = { position: 'sticky' as const, left: 0, background: 'var(--card)' }
 
   const cells = (r: PeriodRow) => <>
@@ -489,7 +493,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
           </select>
         </label>
         <label className="inline"><input type="checkbox" checked={onlyAlerts} onChange={(e) => setOnlyAlerts(e.target.checked)} /> só o que precisa de atenção</label>
-        <button onClick={() => setOpen(open.size ? new Set() : new Set([...receitas.map((g) => g.key), ...groups.map((g) => g.key), ...(transfers.group ? [transfers.group.key] : [])]))}>{open.size ? 'Recolher tudo' : 'Expandir tudo'}</button>
+        <button onClick={() => setClosed(anyOpen ? new Set(allKeys) : new Set())}>{anyOpen ? 'Recolher tudo' : 'Expandir tudo'}</button>
         <span className="muted" style={{ fontSize: 12, marginLeft: 'auto' }}>
           {n === 1 ? monthLabel(months[0]) : `${monthLabel(months[0])} a ${monthLabel(months.at(-1)!)}`}
         </span>
@@ -547,7 +551,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
           {receitas.length > 0 && !onlyAlerts && <>
             <tr className="section"><th style={sticky} colSpan={months.length + (catCol ? 4 : 3)}>Receitas</th></tr>
             {receitas.map((g) => {
-              const isOpen = open.has(g.key)
+              const isOpen = !closed.has(g.key)
               return (
                 <Fragment key={`receita/${g.key}`}>
                   <tr className="receita-row">
@@ -576,7 +580,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
             <tr className="section"><th style={sticky} colSpan={months.length + (catCol ? 4 : 3)}>Despesas</th></tr>
           </>}
           {groups.map((g) => {
-            const isOpen = open.has(g.key) || onlyAlerts
+            const isOpen = !closed.has(g.key) || onlyAlerts
             const reviews = g.merchants.filter((m) => subOf.get(m.key)?.reason).length
             return (
               <Fragment key={g.key}>
@@ -614,7 +618,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
           })}
           {transfers.group && !onlyAlerts && (() => {
             const g = transfers.group
-            const isOpen = open.has(g.key)
+            const isOpen = !closed.has(g.key)
             return (
               <Fragment key="transfers">
                 <tr className="transfer-row">
