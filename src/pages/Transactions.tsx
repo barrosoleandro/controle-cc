@@ -93,12 +93,12 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
         </div>
       </Menu>
     </div>
-    <RecurringQuestions ctx={ctx} />
     {view === 'Lista'
       ? <Lista ctx={ctx} shown={inScope} rec={rec} merchant={merchant} onClearMerchant={() => setMerchant('')} />
       : view === 'Por país'
         ? <PorPais ctx={ctx} shown={inScope} />
         : <Periodo ctx={ctx} shown={inScope} rec={rec} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
+    <RecurringQuestions ctx={ctx} />
   </>
 }
 
@@ -127,7 +127,7 @@ const recPasses = (rec: Rec, isBill: (t: { merchant: string }) => boolean) => (t
   rec === 'all' || (t.kind === 'expense' && isBill(t) === (rec === 'yes'))
 const skipRecurring = (n: string) => isTithe(n) || n === 'Cartão Itaú'
 
-/** Spent in 3 of the last 6 months at similar values (±20%), not answered yet: asked once, on every view. */
+/** Spent in 3 of the last 6 months at similar values (±20%), not answered yet: asked under every view, closed until opened. */
 function RecurringQuestions({ ctx }: { ctx: Ctx }) {
   const { marks, setRecurring } = useRecurring(ctx)
   const fmt = useFmt(ctx)
@@ -135,8 +135,8 @@ function RecurringQuestions({ ctx }: { ctx: Ctx }) {
   const toAsk = useMemo(() => recurrenceCandidates(ctx.etx, marks, today(), skipRecurring), [ctx.etx, marks])
   if (!toAsk.length) return null
   return (
-    <div className="alert" style={{ display: 'block' }}>
-      <strong>{toAsk.length} despesa(s) apareceram em 3 meses com valor parecido (até 20%). São recorrentes?</strong>
+    <details className="alert" style={{ display: 'block', marginTop: 20 }}>
+      <summary><strong>{toAsk.length} despesa(s) apareceram em 3 meses com valor parecido (até 20%). São recorrentes?</strong></summary>
       {toAsk.slice(0, asked).map((c) => (
         <div key={c.merchant} className="row" style={{ marginTop: 6, justifyContent: 'space-between' }}>
           <span>{c.merchant} <span className="muted">· ≈ {fmt(c.avg)} em {c.months.map((m) => monthLabel(m).split(' ')[0]).join(', ')}</span></span>
@@ -147,7 +147,7 @@ function RecurringQuestions({ ctx }: { ctx: Ctx }) {
         </div>
       ))}
       {toAsk.length > asked && <button style={{ marginTop: 6 }} onClick={() => setAsked(asked + 5)}>Mostrar mais</button>}
-    </div>
+    </details>
   )
 }
 
@@ -323,7 +323,7 @@ function Lista({ ctx, shown, rec, merchant, onClearMerchant }: { ctx: Ctx; shown
       )}
       <div className="scroll"><table>
         <thead><tr><th><input type="checkbox" checked={allSelected} aria-label="Selecionar todas as linhas visíveis"
-          onChange={() => setSel(allSelected ? new Set() : new Set(visible.map((t) => t.id)))} /></th><th>Data</th><th>Descrição</th><th className="hide-sm">Conta</th><th>Categoria</th><th title="Despesa recorrente: marcar vale para todo o histórico do estabelecimento">Recorrente</th><th className="num">Valor</th></tr></thead>
+          onChange={() => setSel(allSelected ? new Set() : new Set(visible.map((t) => t.id)))} /></th><th>Data</th><th>Descrição</th><th className="hide-sm">Conta</th><th title="A caixa antes da categoria marca a despesa como recorrente (vale para todo o histórico do estabelecimento)">Recorrente · Categoria</th><th className="num">Valor</th></tr></thead>
         <tbody>
           {visible.map((t) => (
             <tr key={t.id}>
@@ -333,11 +333,11 @@ function Lista({ ctx, shown, rec, merchant, onClearMerchant }: { ctx: Ctx; shown
                 <input style={{ marginTop: 4, width: '100%', fontSize: 12, padding: '2px 6px' }} placeholder="observação" defaultValue={t.notes ?? ''}
                   onBlur={(e) => { if (e.target.value !== (t.notes ?? '')) setTransactionNote(t.id, e.target.value) }} /></td>
               <td className="hide-sm">{t.accountName}</td>
-              <td><select value={t.category_id ?? ''} onChange={(e) => (e.target.value === NEW ? openNova({ target: 'row', id: t.id, merchant: t.merchant }) : changeCategory(t, e.target.value))} style={{ maxWidth: 160, fontWeight: t.category_locked ? 600 : 400 }}>
+              <td style={{ whiteSpace: 'nowrap' }}>{t.kind === 'expense' && <><input type="checkbox" checked={isBill(t)} onChange={() => setRecurring(t.merchant, !isBill(t))}
+                title="Recorrente: vale para todo o histórico deste estabelecimento e entra nas estimativas do painel" aria-label={`Recorrente: ${t.merchant}`} />{' '}</>}
+                <select value={t.category_id ?? ''} onChange={(e) => (e.target.value === NEW ? openNova({ target: 'row', id: t.id, merchant: t.merchant }) : changeCategory(t, e.target.value))} style={{ maxWidth: 160, fontWeight: t.category_locked ? 600 : 400 }}>
                 <option value="">—</option>{sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 <option value={NEW}>+ Nova categoria…</option></select></td>
-              <td>{t.kind === 'expense' && <input type="checkbox" checked={isBill(t)} onChange={() => setRecurring(t.merchant, !isBill(t))}
-                title="Recorrente: vale para todo o histórico deste estabelecimento e entra nas estimativas do painel" aria-label={`Recorrente: ${t.merchant}`} />}</td>
               <td className={`num ${t.amount < 0 ? 'neg' : 'pos'}`}>{money(t.currency, 2)(t.amount)}</td>
             </tr>
           ))}
@@ -534,7 +534,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
       </details>
       <div className="scroll"><table>
         <thead><tr>
-          <th style={sticky}>Categoria / estabelecimento</th>{catCol && <th>Mudar categoria</th>}
+          <th style={sticky}>Categoria / estabelecimento</th>{catCol && <th title="A caixa antes da categoria marca o estabelecimento como recorrente (todo o histórico)">Recorrente · Categoria</th>}
           {months.map((m, i) => (
             <th key={m} className="num sortable" title="Ordenar por este mês" onClick={() => setSortBy(col === i ? null : i)}>
               {m.slice(2)}{col === i ? ' ▼' : ''}</th>
@@ -602,10 +602,10 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
                         {m.flagged && <span className="neg" title="Algum mês fora da média"> ⚑</span>}
                         {sub?.reason && <span className="warn" title={sub.reason}> revisar: {sub.reason}</span>}
                         {' '}<button className="link" style={{ fontWeight: 400, fontSize: 12 }} onClick={() => onOpen(m.key)}>ver lançamentos</button>
-                        {' '}<label className="inline" style={{ fontWeight: 400, fontSize: 12 }} title="Recorrente: vale para todo o histórico deste estabelecimento">
-                          <input type="checkbox" checked={isBill({ merchant: m.key })} onChange={() => setRecurring(m.key, !isBill({ merchant: m.key }))} /> recorrente</label>
                       </td>
-                      <td style={{ minWidth: 170 }}>
+                      <td style={{ minWidth: 170, whiteSpace: 'nowrap' }}>
+                        <input type="checkbox" checked={isBill({ merchant: m.key })} onChange={() => setRecurring(m.key, !isBill({ merchant: m.key }))}
+                          title="Recorrente: vale para todo o histórico deste estabelecimento" aria-label={`Recorrente: ${m.key}`} />{' '}
                         <CategorySelect ctx={ctx} value={catIdByName.get(g.key) ?? ''} empty="—" disabled={saving === m.key}
                           label={`Categoria de ${m.key}`} onChange={(id) => moveMerchant(m.key, id)} />
                       </td>
