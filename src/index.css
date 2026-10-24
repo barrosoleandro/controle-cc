@@ -346,6 +346,13 @@ details.help > div { margin-top: 8px; padding: 12px 14px; display: grid; gap: 6p
 details.help > div p { margin: 0; }
 details > summary { cursor: pointer; }
 
+/* ---------- "Posição em …": how recent the numbers on screen are ---------- */
+.asof { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: 13px; color: var(--pos); background: var(--pos-soft); white-space: nowrap; }
+.asof strong { font-weight: 700; }
+.asof.stale { color: var(--warn); background: var(--warn-soft); }
+.asof .link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.asof-n { opacity: .8; }
+
 /* ---------- Importar: drop zone ---------- */
 .drop { display: grid; justify-items: center; gap: 6px; text-align: center; padding: 32px 20px; border: 2px dashed var(--line-strong); border-radius: var(--radius); background: var(--card-2); transition: border-color .12s, background .12s; }
 .drop.over { border-color: var(--accent); background: var(--accent-soft); }

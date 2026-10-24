@@ -5,7 +5,7 @@ import { countryOf } from '../domain/countries'
 import { isTithe } from '../domain/categorize'
 import { addCategory, addRule, setCategoryForTransactions } from '../lib/data'
 import { money } from '../lib/format'
-import { today, useFmt } from '../lib/hooks'
+import { hiddenByDefault, today, useFmt } from '../lib/hooks'
 import type { CategoryKind } from '../domain/types'
 import { byName } from '../domain/categorize'
 import { Help } from '../components/Page'
@@ -20,7 +20,8 @@ export function Subscriptions({ ctx }: { ctx: Ctx }) {
   const fmt = useFmt(ctx)
   const { data, etx } = ctx
   // Account filter (cards included: many subscriptions are charged there). Unticked = hidden.
-  const [hidden, setHidden] = useState<Set<string>>(() => new Set())
+  // Opens on the BCP joint account, like the other pages.
+  const [hidden, setHidden] = useState<Set<string>>(() => hiddenByDefault(data.accounts))
   const shown = (id: string) => !hidden.has(id)
   const rows = useMemo(() => etx.filter((t) => !hidden.has(t.account_id) && !isTithe(t.categoryName)), [etx, hidden])
   const subs = useMemo(() => detectSubscriptions(

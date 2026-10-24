@@ -1,5 +1,34 @@
 import type { ReactNode } from 'react'
 import { Icon } from './Icons'
+import type { AppData } from '../lib/data'
+import { positionDates, today } from '../lib/hooks'
+
+const STALE_DAYS = 7
+const dateBR = (iso: string) => iso.split('-').reverse().join('/')
+
+/**
+ * "Posição em 22/10/2026": how recent the numbers on screen are, for the accounts shown.
+ * With several accounts it is the oldest of them (the view is only as current as that one),
+ * each account's own date in the tooltip. A week old or more, it says so and offers Importar.
+ */
+export function AsOf({ data, ids, onImport }: { data: AppData; ids: Iterable<string>; onImport?: () => void }) {
+  const each = positionDates(data, ids)
+  const known = each.filter((e) => e.date).map((e) => e.date!).sort()
+  if (!each.length) return null
+  const oldest = known[0]
+  const days = oldest ? Math.round((Date.parse(today()) - Date.parse(oldest)) / 86400000) : null
+  const stale = days === null || days >= STALE_DAYS
+  const tip = each.map((e) => `${e.account.name}: ${e.date ? dateBR(e.date) : 'sem dados'}`).join('\n')
+  return (
+    <span className={`asof ${stale ? 'stale' : ''}`} title={tip}>
+      <Icon name="calendario" size={15} />
+      {oldest ? <>Posição em <strong>{dateBR(oldest)}</strong></> : 'Sem dados'}
+      {each.length > 1 && known.length > 0 && <span className="asof-n">· {each.length} contas</span>}
+      {stale && days !== null && <span>· há {days} dias</span>}
+      {stale && onImport && <button className="link" onClick={onImport}>atualizar</button>}
+    </span>
+  )
+}
 
 /** The long "how this works" notes: one line on the screen, the text only when asked for. */
 export function Help({ title = 'Como funciona', children }: { title?: string; children: ReactNode }) {

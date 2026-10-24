@@ -14,7 +14,9 @@ import { MerchantsView } from './analysis/MerchantsView'
 import { DatesView } from './analysis/DatesView'
 import { RowsView } from './analysis/RowsView'
 import { Icon } from '../components/Icons'
-import { Empty } from '../components/Page'
+import { AsOf, Empty } from '../components/Page'
+import { hiddenByDefault } from '../lib/hooks'
+import type { Account } from '../domain/types'
 
 const VIEWS = [
   ['geral', 'Visão geral'], ['tendencia', 'Tendência'], ['categorias', 'Categorias'],
@@ -28,9 +30,13 @@ interface State {
   preset: Preset; from: string; to: string; compare: CompareMode; measure: Measure
   hidden: string[]; categories: string[]; search: string; min: number; view: View
 }
-const DEFAULTS: State = { preset: 'm6', from: '', to: '', compare: 'prev', measure: 'expense', hidden: [], categories: [], search: '', min: 0, view: 'geral' }
-const KEY = 'analysis'
-const load = (): State => { try { return { ...DEFAULTS, ...JSON.parse(sessionStorage.getItem(KEY) ?? '{}') } } catch { return DEFAULTS } }
+// Opens on the current month of the BCP joint account (the account set is filled in on first load).
+const DEFAULTS: State = { preset: 'm1', from: '', to: '', compare: 'prev', measure: 'expense', hidden: [], categories: [], search: '', min: 0, view: 'geral' }
+const KEY = 'analysis.v2'
+const load = (accounts: Account[]): State => {
+  const first = { ...DEFAULTS, hidden: [...hiddenByDefault(accounts)] }
+  try { const s = sessionStorage.getItem(KEY); return s ? { ...first, ...JSON.parse(s) } : first } catch { return first }
+}
 
 /** A range moved one step back or forward: by its months when it is whole months, else by its days. */
 function step(r: Range, dir: 1 | -1): Range {
@@ -51,7 +57,7 @@ export function Analysis({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const fmt = useFmt(ctx)
   const { data, etx } = ctx
   const [st, setSt] = useState<State>(() => {
-    const s = load()
+    const s = load(data.accounts)
     const v = VIEWS.find(([id]) => id === sub)
     return v ? { ...s, view: v[0] } : s
   })
@@ -67,7 +73,7 @@ export function Analysis({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const firstMonth = months[0] ?? lastReal
   const year = lastReal.slice(0, 4)
   const presets: [Preset, string, Range][] = [
-    ['m1', `Último mês (${monthLabel(lastReal)})`, monthRange(lastReal, lastReal)],
+    ['m1', `Mês atual (${monthLabel(thisMonth)})`, monthRange(thisMonth, thisMonth)],
     ['m3', 'Últimos 3 meses', monthRange(addMonths(lastReal, -2), lastReal)],
     ['m6', 'Últimos 6 meses', monthRange(addMonths(lastReal, -5), lastReal)],
     ['m12', 'Últimos 12 meses', monthRange(addMonths(lastReal, -11), lastReal)],
@@ -177,6 +183,7 @@ export function Analysis({ ctx, sub }: { ctx: Ctx; sub?: string }) {
       </div>
 
       <div className="chips">
+        <AsOf data={data} ids={data.accounts.filter((a) => a.type !== 'card' && inScope(a.id)).map((a) => a.id)} onImport={() => ctx.go('Importar')} />
         <span className="muted" style={{ fontSize: 13 }}>
           {st.measure === 'expense' ? 'Gastos' : 'Receitas'} · {rangeLabel(range)}{prevRange ? ` · comparado com ${rangeLabel(prevRange)}` : ''} · transferências entre contas ficam de fora
         </span>

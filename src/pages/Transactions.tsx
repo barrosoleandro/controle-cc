@@ -3,7 +3,7 @@ import type { Ctx } from '../App'
 import { addCategory, markAiNote, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote } from '../lib/data'
 import { CategorySelect } from '../components/CategorySelect'
 import { monthLabel, money } from '../lib/format'
-import { today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
+import { currentMonth, hiddenByDefault, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
 import { Menu } from './analysis/shared'
 import { balanceSeries } from '../domain/analytics'
 import { buildPeriod, monthBalances, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
@@ -11,7 +11,7 @@ import type { CategoryKind } from '../domain/types'
 import { byName, isTithe } from '../domain/categorize'
 import { countryOf, flowsByCountry, type Country } from '../domain/countries'
 import { purchaseDate } from '../domain/simplify'
-import { Tabs } from '../components/Page'
+import { AsOf, Tabs } from '../components/Page'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 const NEW = '__new' // select option that opens the new-category form
@@ -29,10 +29,7 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   // checking account already shows each bill payment.
   const accounts = useMemo(() => ctx.data.accounts.filter((a) => a.type !== 'card'), [ctx.data.accounts])
   const listed = useMemo(() => new Set(accounts.map((a) => a.id)), [accounts])
-  const [hidden, setHidden] = useState<Set<string>>(() => {
-    const main = accounts.filter((a) => a.bank === 'BCP' && a.type === 'checking')
-    return new Set(main.length ? accounts.filter((a) => !main.includes(a)).map((a) => a.id) : [])
-  })
+  const [hidden, setHidden] = useState<Set<string>>(() => hiddenByDefault(accounts))
   const shown = useCallback((id: string) => listed.has(id) && !hidden.has(id), [hidden, listed])
   // A card's purchases count with the account that pays it: ticking Itaú Conta brings the Itaú
   // card's spending into the expense lines and the list (never into balances).
@@ -49,13 +46,11 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
     <div className="card" style={{ marginBottom: 20 }}>
       <div className="card-head">
         <h3>Saldo hoje</h3>
-        <span className="muted" style={{ fontSize: 12 }}>
-          {nShown} de {accounts.length} conta(s) · total em {ctx.currency}
-        </span>
+        <AsOf data={ctx.data} ids={accounts.filter((a) => shown(a.id)).map((a) => a.id)} onImport={() => ctx.go('Importar')} />
       </div>
       <div className="kpis">
         <div className="kpi total">
-          <div className="l">Total ({ctx.currency})</div>
+          <div className="l">Total ({ctx.currency}) · {nShown} de {accounts.length} conta(s)</div>
           <div className={`v ${totalBalance < 0 ? 'neg' : ''}`}>{fmt(totalBalance)}</div>
         </div>
         {mine.map((b) => (
@@ -102,7 +97,9 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
   const fmt = useFmt(ctx)
   const { data, etx } = ctx
   const [q, setQ] = useState('')
-  const [month, setMonth] = useState('')
+  // Opens on the current month (a search across the whole history is "Todos os meses").
+  // Opened from a merchant in a month view, it shows that merchant's whole history.
+  const [month, setMonth] = useState(() => (merchant ? '' : currentMonth()))
   // Purchase-date range (the FACT date on card lines), e.g. the days of a business trip.
   const [de, setDe] = useState('')
   const [ate, setAte] = useState('')
@@ -117,7 +114,7 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
   const [nome, setNome] = useState('')
   const [tipo, setTipo] = useState<CategoryKind>('expense')
   const [busy, setBusy] = useState(false)
-  const months = useMemo(() => [...new Set(etx.map((t) => t.month))].sort().reverse(), [etx])
+  const months = useMemo(() => [...new Set([...etx.map((t) => t.month), currentMonth()])].sort().reverse(), [etx])
   const sortedCats = [...data.categories].sort(byName)
 
   const rows = useMemo(() => {
@@ -304,8 +301,9 @@ function Periodo({ ctx, shown, n, onOpen }: { ctx: Ctx; shown: (accountId: strin
   const [open, setOpen] = useState<Set<string>>(() => new Set())
   const [sortBy, setSortBy] = useState<number | null>(null) // month column to sort by; null = total over the window
 
-  const allMonths = useMemo(() => [...new Set(etx.map((t) => t.month))].sort(), [etx])
-  const lastMonth = end || allMonths.at(-1) || ''
+  const allMonths = useMemo(() => [...new Set([...etx.map((t) => t.month), currentMonth()])].sort(), [etx])
+  // Opens on the current month (the window ends there), not on a future card instalment.
+  const lastMonth = end || currentMonth()
   const months = useMemo(() => monthWindow(lastMonth, n), [lastMonth, n])
   // Ticked accounts with no rows in the window (e.g. a card whose last bill is older):
   // say so, with a shortcut to the window that ends at their last month.

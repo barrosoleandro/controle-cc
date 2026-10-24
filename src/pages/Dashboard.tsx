@@ -5,7 +5,7 @@ import { byCategory, monthly } from '../domain/analytics'
 import { savingsInsights } from '../domain/insights'
 import { subscriptionAlerts } from '../domain/subscriptions'
 import { monthLabel } from '../lib/format'
-import { last3, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
+import { currentMonth, hiddenByDefault, last3, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
 import { saveSettings } from '../lib/data'
 import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
 import { countryOf } from '../domain/countries'
@@ -15,7 +15,7 @@ import { findSalaryCategory, salaryAt } from '../domain/budget'
 import { Menu } from './analysis/shared'
 import { VERSION, versionLabel } from '../lib/version'
 import { Icon } from '../components/Icons'
-import { Stat } from '../components/Page'
+import { AsOf, Stat } from '../components/Page'
 
 // A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
 export const WIDGETS = [
@@ -31,11 +31,12 @@ export const WIDGETS = [
 export function Dashboard({ ctx }: { ctx: Ctx }) {
   const fmt = useFmt(ctx)
   const { data, etx, currency, fx } = ctx
-  const months = useMemo(() => [...new Set(etx.map((t) => t.month))].sort(), [etx])
+  // The current month is always pickable, even before its first transaction.
+  const months = useMemo(() => [...new Set([...etx.map((t) => t.month), currentMonth()])].sort(), [etx])
   // Several months can be picked; totals, categories, budget and merchants add them up,
-  // and the charts over time end at the latest picked month. Shortcuts end at the latest
-  // month that already happened (card instalments can be dated in the future).
-  const lastReal = [...months].reverse().find((m) => m <= today().slice(0, 7)) ?? months.at(-1) ?? today().slice(0, 7)
+  // and the charts over time end at the latest picked month. Opens on the current month,
+  // and the shortcuts end at it (card instalments can be dated in the future).
+  const lastReal = currentMonth()
   const [picked, setPicked] = useState<Set<string>>(() => new Set([lastReal]))
   const selMonths = useMemo(() => [...picked].sort(), [picked])
   const selSet = useMemo(() => new Set(selMonths), [selMonths])
@@ -49,8 +50,8 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     if (next.has(m)) { if (next.size > 1) next.delete(m) } else next.add(m)
     return next
   })
-  // Unticked accounts: an account created by a later import shows up ticked.
-  const [hidden, setHidden] = useState<Set<string>>(() => new Set())
+  // Unticked accounts: opens on the BCP joint account; the others are one click away.
+  const [hidden, setHidden] = useState<Set<string>>(() => hiddenByDefault(data.accounts))
   const shown = (id: string) => !hidden.has(id)
   const [editing, setEditing] = useState(false)
 
@@ -277,6 +278,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
             })} />{a.name}</label>
           ))}
         </Menu>
+        <AsOf data={data} ids={data.accounts.filter((a) => a.type !== 'card' && shown(a.id)).map((a) => a.id)} onImport={() => ctx.go('Importar')} />
         </div>
         <button className={editing ? 'primary' : ''} onClick={() => setEditing(!editing)}><Icon name="editar" size={16} /> {editing ? 'Pronto' : 'Personalizar painel'}</button>
       </div>
