@@ -12,7 +12,7 @@ import { Help } from '../components/Page'
 import { Menu } from './analysis/shared'
 
 const CADENCIA: Record<Subscription['cadence'], string> = {
-  weekly: 'semanal', monthly: 'mensal', quarterly: 'trimestral', yearly: 'anual',
+  weekly: 'semanal', monthly: 'mensal', bimonthly: 'bimestral', quarterly: 'trimestral', yearly: 'anual',
 }
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 

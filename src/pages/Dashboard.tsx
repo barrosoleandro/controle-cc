@@ -4,7 +4,7 @@ import type { Ctx } from '../App'
 import { byCategory, monthly } from '../domain/analytics'
 import { savingsInsights } from '../domain/insights'
 import { subscriptionAlerts } from '../domain/subscriptions'
-import { monthLabel } from '../lib/format'
+import { monthLabel, money } from '../lib/format'
 import { currentMonth, hiddenByDefault, last3, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
 import { saveSettings } from '../lib/data'
 import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
@@ -12,6 +12,7 @@ import { countryOf } from '../domain/countries'
 import { monthWindow } from '../domain/period'
 import { isTithe } from '../domain/categorize'
 import { findSalaryCategory, salaryAt } from '../domain/budget'
+import { brazilTransfer, forecastNextMonth, sentToBrazil } from '../domain/forecast'
 import { Menu } from './analysis/shared'
 import { VERSION, versionLabel } from '../lib/version'
 import { Icon } from '../components/Icons'
@@ -19,7 +20,9 @@ import { AsOf, Stat } from '../components/Page'
 
 // A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
 export const WIDGETS = [
+  { id: 'transfer', label: 'Alerta: transferir do BCP para o Itaú' },
   { id: 'kpis', label: 'Saldos e totais do mês' },
+  { id: 'nextMonth', label: 'Mês seguinte: gastos estimados' },
   { id: 'monthly', label: 'Receitas e despesas por mês' },
   { id: 'categories', label: 'Gastos por categoria' },
   { id: 'budget', label: 'Orçado x realizado' },
@@ -88,9 +91,39 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   const insights = useMemo(() => savingsInsights({ txs: txs.filter((t) => !isTithe(t.categoryName)), last3: last3(), current: today().slice(0, 7), budgets, subs, checkingBalance: checking, fmt }), [txs, subs, checking, fmt, budgets])
   const alerts = subscriptionAlerts(subs, today(), fmt).filter((a) => !data.settings.dismissed_alerts.includes(a.key))
 
+  // Next month: what to expect in the accounts on screen, and what to send to Brazil.
+  // The Brazil side ignores the account filter: it is about the Itaú accounts, always in reais.
+  const nextMonth = useMemo(() => {
+    const now = today()
+    const skip = (n: string) => isTithe(n)
+    const mine = forecastNextMonth(txs, now, skip)
+    const brIds = new Set(data.accounts.filter((a) => countryOf(a.bank) === 'Brasil').map((a) => a.id))
+    const brTx = ctx.etx.filter((t) => brIds.has(t.account_id)).map((t) => ({ ...t, value: fx.convert(t.amount, t.currency, 'BRL', t.booking_date) }))
+    const br = forecastNextMonth(brTx, now, skip)
+    const balance = balances.filter((b) => brIds.has(b.account.id) && b.account.type === 'checking').reduce((s, b) => s + fx.convert(b.native, b.account.currency, 'BRL', now), 0)
+    return { mine, br, send: brIds.size ? { ...brazilTransfer(br, balance, now), sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
+  }, [txs, ctx.etx, data.accounts, balances, fx])
+  const brl = money('BRL')
+  const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
+  const send = nextMonth.send
+  const sendEur = send ? money('EUR')(send.transfer / fx.latest()) : ''
+  // A transfer already made this month settles it: the alert only asks for one when none went yet.
+  const open = !!send && send.transfer > 0 && !send.sent
+  const sendLine = send && (send.sent
+    ? <>Transferência para o Brasil já feita em {monthLabel(today().slice(0, 7))}: {brl(send.sent.amount)} (último envio em {dayMonth(send.sent.date)}).</>
+    : send.transfer > 0
+      ? <><strong>Transferir do BCP para o Itaú: {sendEur}</strong> (≈ {brl(send.transfer)}) até {dayMonth(send.by)}, para cobrir {monthLabel(send.month)}.</>
+      : <>Sem transferência do BCP para o Itaú em {monthLabel(send.month)}: o saldo no Itaú cobre o gasto estimado.</>)
+
   // Widget layout (order + visibility) is stored per user in user_settings.dashboard.
   const saved = data.settings.dashboard?.widgets ?? []
-  const layout = [...saved.filter((w) => WIDGETS.some((x) => x.id === w.id)), ...WIDGETS.filter((w) => !saved.some((s) => s.id === w.id)).map((w) => ({ id: w.id, visible: true }))]
+  // A widget the saved layout does not know yet goes right after the one that precedes it by default.
+  const layout = WIDGETS.reduce((acc, w, i) => {
+    if (acc.some((x) => x.id === w.id)) return acc
+    const at = i ? acc.findIndex((x) => x.id === WIDGETS[i - 1].id) : -1
+    acc.splice(i && at < 0 ? acc.length : at + 1, 0, { id: w.id, visible: true })
+    return acc
+  }, saved.filter((w) => WIDGETS.some((x) => x.id === w.id)))
   const [widgets, setWidgets] = useState(layout)
   const persist = async (w: typeof widgets) => { setWidgets(w); await saveSettings({ dashboard: { ...data.settings.dashboard, widgets: w } }) }
   const move = (i: number, d: number) => { const w = [...widgets]; const [x] = w.splice(i, 1); w.splice(i + d, 0, x); persist(w) }
@@ -126,6 +159,26 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
             <Stat tone="neg" icon="saida" label="Despesas" value={<span className="neg">{fmt(cur?.expense ?? 0)}</span>} sub={period} />
             <Stat tone="neutral" icon="resultado" label="Sobrou" value={<span className={net >= 0 ? 'pos' : 'neg'}>{fmt(net)}</span>}
               sub={(cur?.income ?? 0) > 0 ? `${Math.round((net / cur.income) * 100)}% das receitas` : period} />
+          </div>)
+      }
+      case 'transfer': return !send ? (
+        <div className="alert" style={{ display: 'block', gridColumn: '1/-1' }}>Transferência para o Brasil: ainda não há conta do Itaú no app. Importe um extrato do Itaú para eu estimar quanto enviar do BCP.</div>
+      ) : (
+        <div className={`alert ${open ? 'warn' : 'ok'}`} role="status" style={{ display: 'block', fontSize: 15, gridColumn: '1/-1' }}>
+          {open ? '⚠ ' : '✔ '}{sendLine}
+          <div className="muted" style={{ fontSize: 13 }}>Gasto estimado no Brasil: {brl(send.expected)} · saldo hoje no Itaú: {brl(send.balance)}.</div>
+        </div>)
+      case 'nextMonth': {
+        const { mine } = nextMonth
+        return (
+          <div className="card"><h3>Mês seguinte — {monthLabel(mine.month)}</h3>
+            <p><strong>Gasto estimado nas contas em tela: {fmt(mine.total)}</strong></p>
+            <table><tbody>
+              <tr><td>Dia a dia (média dos 3 últimos meses)</td><td className="num">{fmt(mine.usual)}</td></tr>
+              <tr><td>Recorrentes mensais</td><td className="num">{fmt(mine.monthly)}</td></tr>
+              {mine.periodic.map((l) => <tr key={l.label + l.date}><td>{l.label} <span className="muted">· dia {dayMonth(l.date)} (não é mensal)</span></td><td className="num">{fmt(l.amount)}</td></tr>)}
+            </tbody></table>
+            <p className="muted" style={{ fontSize: 12 }}>Cobranças bimestrais, trimestrais e anuais entram só no mês em que caem. Parcelas de cartão já lançadas contam pelo menos o que já está datado no mês.</p>
           </div>)
       }
       case 'alerts': return (

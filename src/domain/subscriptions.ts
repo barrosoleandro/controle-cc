@@ -2,7 +2,7 @@ export interface SubTx { booking_date: string; amount: number; merchant: string;
 
 export interface Subscription {
   merchant: string
-  cadence: 'weekly' | 'monthly' | 'quarterly' | 'yearly'
+  cadence: 'weekly' | 'monthly' | 'bimonthly' | 'quarterly' | 'yearly'
   intervalDays: number
   lastAmount: number
   avgAmount: number
@@ -22,9 +22,9 @@ const median = (xs: number[]) => {
   return s.length % 2 ? s[(s.length - 1) >> 1] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2
 }
 /** Calendar-aware next charge: same day next month/quarter/year, otherwise median gap. */
-function nextDate(last: string, cadence: string, gap: number): string {
+export function nextDate(last: string, cadence: string, gap: number): string {
   const d = new Date(`${last}T00:00:00Z`)
-  const months = cadence === 'monthly' ? 1 : cadence === 'quarterly' ? 3 : cadence === 'yearly' ? 12 : 0
+  const months = cadence === 'monthly' ? 1 : cadence === 'bimonthly' ? 2 : cadence === 'quarterly' ? 3 : cadence === 'yearly' ? 12 : 0
   if (!months) return new Date(d.getTime() + gap * DAY).toISOString().slice(0, 10)
   const day = d.getUTCDate()
   d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + months)
@@ -36,6 +36,7 @@ function nextDate(last: string, cadence: string, gap: number): string {
 const CADENCES = [
   { cadence: 'weekly', min: 6, max: 8, perMonth: 52 / 12 },
   { cadence: 'monthly', min: 26, max: 35, perMonth: 1 },
+  { cadence: 'bimonthly', min: 56, max: 68, perMonth: 1 / 2 },
   { cadence: 'quarterly', min: 85, max: 97, perMonth: 1 / 3 },
   { cadence: 'yearly', min: 350, max: 380, perMonth: 1 / 12 },
 ] as const

@@ -16,6 +16,22 @@ const SUPPORTED = /\.(csv|pdf|xlsx)$/i
 /** Category picked for a merchant before importing (by hand or pre-filled by the AI). */
 export interface Choice { categoryId: string; description?: string; confidence?: number; source: 'ai' | 'manual' }
 
+/** A file picked through a folder the app may write to, so it can be moved once imported. */
+interface Origin { dir: FileSystemDirectoryHandle; name: string }
+
+/** Subfolder that receives the files already imported. */
+const DONE_DIR = 'processado'
+
+/** Moves a file into the `processado` subfolder of its folder (copy, then remove: works in every Chromium). */
+async function moveToDone({ dir, name }: Origin, file: File) {
+  const dest = await dir.getDirectoryHandle(DONE_DIR, { create: true })
+  let target = name
+  try { await dest.getFileHandle(target); target = `${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}-${name}` } catch { /* name is free */ }
+  const out = await (await dest.getFileHandle(target, { create: true })).createWritable()
+  await file.stream().pipeTo(out)
+  await dir.removeEntry(name)
+}
+
 /**
  * Files are parsed in the browser; only the extracted rows go to the database.
  * The original PDFs/CSVs never leave the device.
@@ -37,6 +53,10 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [over, setOver] = useState(false)
   const doneRef = useRef<HTMLDivElement>(null)
+  // Files that came from a folder opened with write access, by name (only those can be moved).
+  const origins = useRef(new Map<string, Origin & { file: File }>())
+  // Files skipped because an earlier import already has them: they are done too.
+  const [seenNames, setSeenNames] = useState<string[]>([])
 
   useEffect(() => { if (done) doneRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }, [done])
 
@@ -46,12 +66,44 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
     dirRef.current?.setAttribute('directory', '')
   }, [])
 
-  async function onFiles(files: FileList | null) {
+  /** Opens a folder with write access (Chrome/Edge), so imported files can go to `processado`. */
+  async function pickWritableFolder() {
+    const pick = (window as unknown as { showDirectoryPicker?: (o: { mode: 'readwrite' }) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker
+    if (!pick) { setErrors(['Este navegador não deixa o app mover arquivos. Use o Chrome ou o Edge no computador.']); return }
+    try {
+      const dir = await pick.call(window, { mode: 'readwrite' })
+      const files: File[] = [], found = new Map<string, Origin & { file: File }>()
+      for await (const [name, h] of (dir as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries()) {
+        if (h.kind !== 'file' || !SUPPORTED.test(name)) continue
+        const file = await (h as FileSystemFileHandle).getFile()
+        files.push(file); found.set(name, { dir, name, file })
+      }
+      await onFiles(files, found)
+    } catch (e) { if ((e as Error).name !== 'AbortError') setErrors([(e as Error).message]) }
+  }
+
+  /** Sends the imported files to `processado`; returns a sentence about it (or nothing). */
+  async function archive(names: string[]) {
+    const movable = names.filter((n) => origins.current.has(n))
+    if (!movable.length) return ''
+    let moved = 0
+    const failed: string[] = []
+    for (const n of movable) {
+      const o = origins.current.get(n)!
+      try { await moveToDone(o, o.file); origins.current.delete(n); moved++ }
+      catch (e) { failed.push(`${n} (${(e as Error).message})`) }
+    }
+    return `${moved} arquivo(s) movido(s) para a subpasta “${DONE_DIR}”.${failed.length ? ` Não consegui mover: ${failed.join('; ')}.` : ''}`
+  }
+
+  async function onFiles(files: FileList | File[] | null, from?: Map<string, Origin & { file: File }>) {
     if (!files?.length) return
+    origins.current = from ?? new Map(); setSeenNames([])
     setBusy(true); setDone(null); setErrors([]); setPlans([]); setChoices({}); setDupDecision('skip'); setKeepDups(new Set())
     const ps: ImportPlan[] = [], errs: string[] = []
     const pending: Pending[] = [] // rows of the files planned so far
     let ignored = 0, duplicateFiles = 0
+    const already: string[] = []
     // A folder brings everything in it, including files that are not statements.
     const candidates = [...files].filter((f) => {
       if (SUPPORTED.test(f.name)) return true
@@ -72,7 +124,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
       try {
         const bytes = new Uint8Array(await f.arrayBuffer())
         const hash = await sha256(bytes)
-        if (seen.has(hash)) { duplicateFiles++; continue }
+        if (seen.has(hash)) { duplicateFiles++; already.push(f.name); continue }
         seen.add(hash)
         const { loadPdf } = await import('../lib/pdf') // pdf.js is loaded only when importing
         const res = await parseStatement(f.name, bytes, loadPdf)
@@ -81,7 +133,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         pending.push(...pendingOf(plan))
       } catch (e) { errs.push(`${f.name}: ${(e as Error).message}`) }
     }
-    setPlans(ps); setErrors(errs); setSkipped({ ignored, duplicateFiles })
+    setPlans(ps); setErrors(errs); setSkipped({ ignored, duplicateFiles }); setSeenNames(already)
     setProgress(null); setBusy(false)
   }
 
@@ -105,6 +157,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
       let data = await loadAll()
       let total = 0
       let okFiles = 0
+      const okNames: string[] = []
       const falhas: string[] = []
       // Re-plan against freshly loaded data between files, so dedupe sees the rows the
       // previous file just inserted. One bad file no longer discards the whole run: it is
@@ -116,7 +169,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
           const fresh = planImport(p.fileName, p.sha256, p.result, data)
           const forced = new Set(dupDecision === 'import' ? p.duplicates.map((d) => d.id) : dupDecision === 'pick' ? p.duplicates.filter((d) => keepDups.has(d.id)).map((d) => d.id) : [])
           total += await executeImport({ ...fresh, duplicates: p.duplicates }, data, forced)
-          okFiles++
+          okFiles++; okNames.push(p.fileName)
           data = await loadAll()
         } catch (e) { falhas.push(`${p.fileName}: ${(e as Error).message}`) }
       }
@@ -135,9 +188,15 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
       try { linked = await linkCardPayments(await loadAll()) }
       catch (e) { avisos.push(`os pagamentos de fatura não foram marcados como transferência (${(e as Error).message})`) }
 
+      // Only after everything is written: files that failed stay where they are.
+      let archived = ''
+      try { archived = await archive([...okNames, ...seenNames]) } catch (e) { avisos.push(`os arquivos não foram movidos (${(e as Error).message})`) }
+      setSeenNames([])
+
       setDone([
         `${total} ${total === 1 ? 'lançamento novo importado' : 'lançamentos novos importados'} de ${okFiles} de ${plans.length} arquivo(s).`,
         chosen.length ? `${chosen.length} regra(s) criada(s) para os próximos imports.` : '',
+        archived,
         linked ? `${linked} pagamento(s) de fatura marcados como transferência.` : '',
         falhas.length ? `${falhas.length} arquivo(s) falharam e não entraram — veja a lista acima.` : '',
         avisos.length ? `Atenção: ${avisos.join('; ')}.` : 'Saldos iniciais recalculados — confira a conciliação em Ajustes → Contas.',
@@ -168,6 +227,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
           <div className="row">
             <button className="primary" onClick={() => fileRef.current?.click()} disabled={busy}><Icon name="importar" size={16} /> Escolher arquivos</button>
             <button onClick={() => dirRef.current?.click()} disabled={busy}><Icon name="pasta" size={16} /> Escolher uma pasta</button>
+            {'showDirectoryPicker' in window && <button onClick={pickWritableFolder} disabled={busy} title={`Depois de importar, os arquivos vão para a subpasta “${DONE_DIR}”`}><Icon name="pasta" size={16} /> Pasta com “{DONE_DIR}”</button>}
           </div>
           <input ref={fileRef} type="file" multiple accept=".csv,.pdf,.xlsx" onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} />
           <input ref={dirRef} type="file" multiple onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} />
@@ -179,6 +239,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         <Help title="Detalhes sobre a importação">
           <p>Os arquivos são lidos no navegador; só as linhas extraídas vão para a base — os PDFs e CSVs nunca saem do aparelho.</p>
           <p>Itaú conta: extrato do app ou o Extrato Mensal. Millennium: extrato combinado. Se alguma linha já existir (mesma conta, data, valor e estabelecimento, de qualquer arquivo), o app pergunta o que fazer antes de gravar.</p>
+          <p>“Pasta com {DONE_DIR}” (Chrome e Edge) lê os extratos da pasta escolhida e, terminada a importação, move para a subpasta “{DONE_DIR}” os que entraram — e os que já tinham sido importados antes. Os que deram erro ficam onde estão. O navegador pede permissão de escrita na pasta.</p>
           <p>A opção de pasta varre todas as subpastas e ignora o que não for CSV, PDF ou XLSX. No iPhone/iPad o Safari não permite
             selecionar pastas — use a seleção de arquivos, ou faça a importação em massa no computador.</p>
         </Help>
