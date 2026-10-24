@@ -10,6 +10,8 @@ import type { ContractItem } from '../domain/payroll'
 export interface DashboardPrefs {
   widgets: { id: string; visible: boolean }[]
   /** Payslips: country the salary is paid in, and the inflation table used per country. */
+  /** Brazilian bills the user marked as counted in the transfer: merchant → month → on/off (domain/forecast). */
+  billMarks?: Record<string, Record<string, boolean>>
   payroll?: { country?: string; inflation?: Record<string, Record<string, number>> }
 }
 export interface Settings { display_currency: Currency; dashboard: DashboardPrefs; dismissed_alerts: string[]; payroll_contract?: ContractItem[] | null }

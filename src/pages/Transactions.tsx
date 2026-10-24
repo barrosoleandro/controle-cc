@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { addCategory, markAiNote, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote } from '../lib/data'
+import { addCategory, markAiNote, saveSettings, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote } from '../lib/data'
 import { CategorySelect } from '../components/CategorySelect'
 import { monthLabel, money } from '../lib/format'
 import { currentMonth, hiddenByDefault, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
@@ -11,6 +11,7 @@ import type { CategoryKind } from '../domain/types'
 import { byName, isTithe } from '../domain/categorize'
 import { countryOf, flowsByCountry, type Country } from '../domain/countries'
 import { purchaseDate } from '../domain/simplify'
+import { billEffective, monthlyBills } from '../domain/forecast'
 import { AsOf, Tabs } from '../components/Page'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
@@ -130,6 +131,20 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
       .sort((a, b) => (ordem === 'valor' ? a.value - b.value : b.booking_date.localeCompare(a.booking_date)))
   }, [etx, q, month, cat, shown, de, ate, merchant, ordem])
   const total = rows.reduce((s, t) => s + t.value, 0)
+  // Bills paid from the Brazilian checking account: the flag says whether each counts in the
+  // monthly transfer estimate. Unmarked merchants start as the automatic guess; a mark in any
+  // month is remembered for that merchant from then on (and sets the amount, see applyBillMarks).
+  const brChecking = useMemo(() => new Set(data.accounts.filter((a) => countryOf(a.bank) === 'Brasil' && a.type !== 'card').map((a) => a.id)), [data.accounts])
+  const marks = data.settings.dashboard?.billMarks ?? {}
+  const autoBills = useMemo(() => new Set(monthlyBills(
+    etx.filter((t) => brChecking.has(t.account_id)).map((t) => ({ ...t, value: ctx.fx.convert(t.amount, t.currency, 'BRL', t.booking_date) })),
+    today(), (n) => isTithe(n) || n === 'Cartão Itaú').map((l) => l.label)), [etx, brChecking, ctx.fx])
+  const isBill = (t: { merchant: string }) => billEffective(t.merchant, marks, autoBills.has(t.merchant))
+  async function toggleBill(t: { merchant: string; month: string }) {
+    const next = { ...marks, [t.merchant]: { ...marks[t.merchant], [t.month]: !isBill(t) } }
+    await saveSettings({ dashboard: { ...data.settings.dashboard, billMarks: next } })
+    await ctx.reload()
+  }
   // The real balance of each ticked account (own currency): at the end of the filtered month, or today.
   const balances = useMemo(() => {
     const until = month ? `${month}-31` : '9999-12-31'
@@ -263,7 +278,7 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
       )}
       <div className="scroll"><table>
         <thead><tr><th><input type="checkbox" checked={allSelected} aria-label="Selecionar todas as linhas visíveis"
-          onChange={() => setSel(allSelected ? new Set() : new Set(visible.map((t) => t.id)))} /></th><th>Data</th><th>Descrição</th><th className="hide-sm">Conta</th><th>Categoria</th><th className="num">Valor</th></tr></thead>
+          onChange={() => setSel(allSelected ? new Set() : new Set(visible.map((t) => t.id)))} /></th><th>Data</th><th>Descrição</th><th className="hide-sm">Conta</th><th>Categoria</th><th title="Conta fixa no Brasil: entra na estimativa de transferência do painel">Fixa</th><th className="num">Valor</th></tr></thead>
         <tbody>
           {visible.map((t) => (
             <tr key={t.id}>
@@ -276,6 +291,8 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
               <td><select value={t.category_id ?? ''} onChange={(e) => (e.target.value === NEW ? openNova({ target: 'row', id: t.id, merchant: t.merchant }) : changeCategory(t, e.target.value))} style={{ maxWidth: 160, fontWeight: t.category_locked ? 600 : 400 }}>
                 <option value="">—</option>{sortedCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 <option value={NEW}>+ Nova categoria…</option></select></td>
+              <td>{brChecking.has(t.account_id) && t.kind === 'expense' && <input type="checkbox" checked={isBill(t)} onChange={() => toggleBill(t)}
+                title="Conta fixa: entra na estimativa de quanto transferir ao Brasil" aria-label={`Conta fixa: ${t.merchant}`} />}</td>
               <td className={`num ${t.amount < 0 ? 'neg' : 'pos'}`}>{money(t.currency, 2)(t.amount)}</td>
             </tr>
           ))}

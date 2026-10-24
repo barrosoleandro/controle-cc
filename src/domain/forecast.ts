@@ -150,3 +150,33 @@ export function monthlyBills(txs: FcTx[], today: string, skip: (categoryName: st
   }
   return out.sort((a, b) => b.amount - a.amount)
 }
+
+/** The user's marks on Brazilian bills: merchant → month (yyyy-mm) → counted in the transfer or not. */
+export type BillMarks = Record<string, Record<string, boolean>>
+
+/** Is the merchant a recurring bill? The latest month marked decides; with no mark, the automatic guess. */
+export function billEffective(merchant: string, marks: BillMarks, auto: boolean): boolean {
+  const m = marks[merchant]
+  const last = m && Object.keys(m).sort().at(-1)
+  return last ? m[last] : auto
+}
+
+/**
+ * Lays the user's marks over the automatic list. A merchant marked in the latest month is kept
+ * (or added); one unmarked is dropped. Its amount is learned from the months marked as a bill
+ * (average of the last three, taken from the statements); with none, the automatic amount.
+ */
+export function applyBillMarks(auto: ForecastLine[], txs: FcTx[], marks: BillMarks): ForecastLine[] {
+  const spentIn = (merchant: string, month: string) =>
+    -txs.filter((t) => t.kind === 'expense' && t.merchant === merchant && t.month === month).reduce((s, t) => s + t.value, 0)
+  const learned = (merchant: string): number | null => {
+    const months = Object.entries(marks[merchant] ?? {}).filter(([, on]) => on).map(([mo]) => mo).sort().slice(-3)
+    const sums = months.map((mo) => spentIn(merchant, mo)).filter((v) => v > 0)
+    return sums.length ? sums.reduce((a, b) => a + b, 0) / sums.length : null
+  }
+  const names = new Set(auto.map((l) => l.label))
+  const kept = auto.filter((l) => billEffective(l.label, marks, true)).map((l) => ({ ...l, amount: learned(l.label) ?? l.amount }))
+  const added = Object.keys(marks).filter((m) => !names.has(m) && billEffective(m, marks, false))
+    .map((m) => ({ label: m, amount: learned(m) ?? 0, date: '' })).filter((l) => l.amount > 0)
+  return [...kept, ...added].sort((a, b) => b.amount - a.amount)
+}

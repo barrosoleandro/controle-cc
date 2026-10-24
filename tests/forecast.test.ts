@@ -86,3 +86,20 @@ describe('monthlyBills', () => {
     expect(out[1].amount).toBe(260) // (220+260+300)/3
   })
 })
+
+import { applyBillMarks, billEffective } from '../src/domain/forecast'
+describe('bill marks', () => {
+  const auto = [{ label: 'CEMIG', amount: 200, date: '' }, { label: 'PADARIA', amount: 50, date: '' }]
+  const rows = [tx('2026-08-10', -400, 'UNIMED'), tx('2026-09-10', -420, 'UNIMED'), tx('2026-09-12', -90, 'CEMIG')]
+  it('follows the latest mark and learns the amount from marked months', () => {
+    const marks = { UNIMED: { '2026-08': true, '2026-09': true }, PADARIA: { '2026-09': false }, CEMIG: { '2026-09': true } }
+    const out = applyBillMarks(auto, rows, marks)
+    expect(out.map((l) => l.label)).toEqual(['UNIMED', 'CEMIG'])
+    expect(out[0].amount).toBe(410)
+    expect(out[1].amount).toBe(90)
+  })
+  it('falls back to the automatic guess without marks', () => {
+    expect(billEffective('X', {}, true)).toBe(true)
+    expect(billEffective('X', { X: { '2026-08': true, '2026-09': false } }, true)).toBe(false)
+  })
+})

@@ -12,7 +12,7 @@ import { countryOf } from '../domain/countries'
 import { monthWindow } from '../domain/period'
 import { CARD_PAYMENT, isTithe } from '../domain/categorize'
 import { findSalaryCategory, salaryAt } from '../domain/budget'
-import { brazilCard, brazilTransfer, forecastNextMonth, monthlyBills, nextMonthOf, sentToBrazil } from '../domain/forecast'
+import { applyBillMarks, brazilCard, brazilTransfer, forecastNextMonth, monthlyBills, nextMonthOf, sentToBrazil } from '../domain/forecast'
 import { Menu } from './analysis/shared'
 import { VERSION, versionLabel } from '../lib/version'
 import { Icon } from '../components/Icons'
@@ -106,7 +106,8 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     // the amount does from month to month; the non-monthly ones stay as detected.
     const checkingIds = new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type !== 'card').map((a) => a.id))
     const periodicNames = new Set(br0.periodic.map((l) => l.label))
-    const bills = monthlyBills(brTx.filter((t) => checkingIds.has(t.account_id)), now, skipBr).filter((l) => !periodicNames.has(l.label))
+    const brChecking = brTx.filter((t) => checkingIds.has(t.account_id))
+    const bills = applyBillMarks(monthlyBills(brChecking, now, skipBr).filter((l) => !periodicNames.has(l.label)), brChecking, data.settings.dashboard?.billMarks ?? {})
     const br = { ...br0, monthly: bills.reduce((a, l) => a + l.amount, 0), monthlyLines: bills }
     // The card bill that falls in the coming month: the imported open bills, or, while none is
     // imported, the card purchases already assigned to that month's bill (statement_due) or, failing
@@ -120,7 +121,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
       : -(dueNext.length ? dueNext : cardBuys.filter((t) => t.month === now.slice(0, 7))).reduce((a, t) => a + t.value, 0)
     const balance = balances.filter((b) => brIds.has(b.account.id) && b.account.type === 'checking').reduce((s, b) => s + fx.convert(b.native, b.account.currency, 'BRL', now), 0)
     return { mine, br, send: brIds.size ? { ...brazilTransfer(br, cardNext, balance, now), lines: [{ label: 'Fatura do cartão Itaú', amount: cardNext, date: '' }, ...br.monthlyLines, ...br.periodic], sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
-  }, [txs, ctx.etx, data.accounts, data.cardStatements, balances, fx])
+  }, [txs, ctx.etx, data.accounts, data.cardStatements, data.settings.dashboard?.billMarks, balances, fx])
   const brl = money('BRL')
   const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
   const send = nextMonth.send
@@ -185,7 +186,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
         <div className={`alert ${open ? 'warn' : 'ok'}`} role="status" style={{ display: 'block', fontSize: 15, gridColumn: '1/-1' }}>
           {open ? '⚠ ' : '✔ '}{sendLine}
           <div className="muted" style={{ fontSize: 13 }}>Fatura do cartão a pagar: {brl(send.card)} · recorrentes do mês: {brl(send.recurring)} · saldo hoje no Itaú: {brl(send.balance)}.</div>
-          {send.lines.length > 0 && <details><summary className="muted" style={{ fontSize: 13 }}>Ver a fatura e os recorrentes que entram na conta</summary>
+          {send.lines.length > 0 && <details><summary className="muted" style={{ fontSize: 13 }}>Ver a fatura e os recorrentes que entram na conta (marque em Lançamentos)</summary>
             {send.lines.map((l) => <div key={l.label + l.date} className="muted" style={{ fontSize: 13 }}>{l.label} · {brl(l.amount)}</div>)}</details>}
         </div>)
       case 'nextMonth': {
