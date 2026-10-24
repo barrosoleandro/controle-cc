@@ -10,7 +10,7 @@ import { saveSettings } from '../lib/data'
 import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
 import { countryOf } from '../domain/countries'
 import { monthWindow } from '../domain/period'
-import { isTithe } from '../domain/categorize'
+import { CARD_PAYMENT, isTithe } from '../domain/categorize'
 import { findSalaryCategory, salaryAt } from '../domain/budget'
 import { brazilCard, brazilTransfer, forecastNextMonth, sentToBrazil } from '../domain/forecast'
 import { Menu } from './analysis/shared'
@@ -101,9 +101,15 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     const brTx = ctx.etx.filter((t) => brIds.has(t.account_id)).map((t) => ({ ...t, value: fx.convert(t.amount, t.currency, 'BRL', t.booking_date) }))
     // The card payment in the checking account is the bill itself, counted apart: not a recurring charge.
     const br = forecastNextMonth(brTx, now, (n) => skip(n) || n === 'Cartão Itaú')
+    // The bill may not be imported as a statement yet, but its payment is in the data: on the card,
+    // or as the debit in the checking account.
+    const cardIds = new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type === 'card').map((a) => a.id))
+    const cardPaidSeen = ctx.etx.some((t) => t.month === now.slice(0, 7) && (
+      (cardIds.has(t.account_id) && t.bank_category === CARD_PAYMENT && t.amount > 0)
+      || (brIds.has(t.account_id) && !cardIds.has(t.account_id) && t.amount < 0 && (t.categoryName === 'Cartão Itaú' || (t.kind === 'transfer' && /FATURA|ITAUCARD|CART[AÃ]O/i.test(t.description))))))
     const cards = brazilCard(data.cardStatements, new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type === 'card').map((a) => a.id)), now.slice(0, 7))
     const balance = balances.filter((b) => brIds.has(b.account.id) && b.account.type === 'checking').reduce((s, b) => s + fx.convert(b.native, b.account.currency, 'BRL', now), 0)
-    return { mine, br, send: brIds.size ? { ...brazilTransfer(br, cards.open, balance, now), paid: cards.paidThisMonth, sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
+    return { mine, br, send: brIds.size ? { ...brazilTransfer(br, cards.open, balance, now), paid: cards.paidThisMonth || cardPaidSeen, lines: br.monthlyLines.concat(br.periodic), sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
   }, [txs, ctx.etx, data.accounts, data.cardStatements, balances, fx])
   const brl = money('BRL')
   const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
@@ -169,6 +175,8 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
         <div className={`alert ${open ? 'warn' : 'ok'}`} role="status" style={{ display: 'block', fontSize: 15, gridColumn: '1/-1' }}>
           {open ? '⚠ ' : '✔ '}{sendLine}
           <div className="muted" style={{ fontSize: 13 }}>Fatura do cartão a pagar: {brl(send.card)} · recorrentes do mês: {brl(send.recurring)} · saldo hoje no Itaú: {brl(send.balance)}.</div>
+          {send.lines.length > 0 && <details><summary className="muted" style={{ fontSize: 13 }}>Ver os recorrentes que entram na conta</summary>
+            {send.lines.map((l) => <div key={l.label + l.date} className="muted" style={{ fontSize: 13 }}>{l.label} · {brl(l.amount)}</div>)}</details>}
         </div>)
       case 'nextMonth': {
         const { mine } = nextMonth

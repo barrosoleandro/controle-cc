@@ -12,6 +12,8 @@ export interface Forecast {
   usual: number
   /** Monthly recurring charges. */
   monthly: number
+  /** The monthly recurring charges behind `monthly`, so the figure can be checked. */
+  monthlyLines: ForecastLine[]
   /** Charges that are not monthly (bimonthly, quarterly, yearly) and fall in the month. */
   periodic: ForecastLine[]
 }
@@ -65,17 +67,19 @@ export function forecastNextMonth(txs: FcTx[], today: string, skip: (categoryNam
     usual += Math.max((usualBy.get(k) ?? 0) / window, knownBy.get(k) ?? 0, 0)
 
   let monthly = 0
+  const monthlyLines: ForecastLine[] = []
   const periodic: ForecastLine[] = []
   for (const s of subs) {
     const charged = spent.filter((t) => t.merchant === s.merchant && t.month === month)
     const known = -charged.reduce((a, t) => a + t.value, 0)
     const dates = charged.length ? [] : dueIn(s, month)
     const amount = known + dates.length * s.lastAmount
-    if (s.cadence === 'monthly' || s.cadence === 'weekly') monthly += amount
+    if (s.cadence === 'monthly' || s.cadence === 'weekly') { monthly += amount; if (amount > 0) monthlyLines.push({ label: s.merchant, amount, date: dates[0] ?? charged[0]?.booking_date ?? '' }) }
     else if (amount > 0) periodic.push({ label: s.merchant, amount, date: charged.length ? charged[0].booking_date : dates[0] })
   }
   periodic.sort((a, b) => a.date.localeCompare(b.date))
-  return { month, usual, monthly, periodic, total: usual + monthly + periodic.reduce((a, l) => a + l.amount, 0) }
+  monthlyLines.sort((a, b) => b.amount - a.amount)
+  return { month, usual, monthly, monthlyLines, periodic, total: usual + monthly + periodic.reduce((a, l) => a + l.amount, 0) }
 }
 
 export interface BrazilTransfer {

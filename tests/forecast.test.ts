@@ -40,7 +40,7 @@ describe('forecastNextMonth', () => {
 
 describe('brazilTransfer', () => {
   it('sends the estimate less the balance, rounded up to ten', () => {
-    const f = { month: '2026-11', total: 0, usual: 900, monthly: 1000, periodic: [{ label: 'EAU', amount: 3, date: '2026-11-10' }] }
+    const f = { month: '2026-11', total: 0, usual: 900, monthly: 1000, monthlyLines: [], periodic: [{ label: 'EAU', amount: 3, date: '2026-11-10' }] }
     expect(brazilTransfer(f, 3000, 1500, '2026-10-24')).toMatchObject({ card: 3000, recurring: 1003, transfer: 2510, by: '2026-10-31' })
     expect(brazilTransfer(f, 3000, 9000, '2026-10-24').transfer).toBe(0)
   })
