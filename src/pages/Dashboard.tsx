@@ -132,8 +132,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   // Takes a wrong line out of the estimate for good: the merchant is marked as not recurring in its whole history.
   const notRecurring = async (merchant: string) => {
     const months = [...ctx.etx.filter((t) => t.merchant === merchant).map((t) => t.month), currentMonth()]
-    await saveSettings({ dashboard: { ...data.settings.dashboard, billMarks: markHistory(data.settings.dashboard?.billMarks ?? {}, merchant, months, false) } })
-    await ctx.reload()
+    await ctx.patchSettings({ dashboard: { ...data.settings.dashboard, billMarks: markHistory(data.settings.dashboard?.billMarks ?? {}, merchant, months, false) } })
   }
   const toAsk = useMemo(() => recurrenceCandidates(ctx.etx, data.settings.dashboard?.billMarks ?? {}, today(), (n) => isTithe(n) || n === 'Cartão Itaú').length, [ctx.etx, data.settings.dashboard?.billMarks])
   const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`

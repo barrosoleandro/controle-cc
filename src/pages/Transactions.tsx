@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { addCategory, markAiNote, saveSettings, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote } from '../lib/data'
+import { addCategory, markAiNote, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote } from '../lib/data'
 import { CategorySelect } from '../components/CategorySelect'
 import { monthLabel, money } from '../lib/format'
 import { currentMonth, hiddenByDefault, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
@@ -146,8 +146,7 @@ function Lista({ ctx, shown, merchant, onClearMerchant }: { ctx: Ctx; shown: (ac
   const toAsk = useMemo(() => recurrenceCandidates(etx, marks, today(), skipAsk), [etx, marks])
   async function setRecurring(merchant: string, on: boolean) {
     const months = [...etx.filter((t) => t.merchant === merchant).map((t) => t.month), currentMonth()]
-    await saveSettings({ dashboard: { ...data.settings.dashboard, billMarks: markHistory(marks, merchant, months, on) } })
-    await ctx.reload()
+    await ctx.patchSettings({ dashboard: { ...data.settings.dashboard, billMarks: markHistory(marks, merchant, months, on) } })
   }
   // The real balance of each ticked account (own currency): at the end of the filtered month, or today.
   const balances = useMemo(() => {

@@ -72,8 +72,10 @@ export function forecastNextMonth(txs: FcTx[], today: string, skip: (categoryNam
   let monthly = 0
   const monthlyLines: ForecastLine[] = []
   const periodic: ForecastLine[] = []
+  const inMonth = new Map<string, FcTx[]>()
+  for (const t of spent) if (t.month === month) inMonth.set(t.merchant, [...(inMonth.get(t.merchant) ?? []), t])
   for (const s of subs) {
-    const charged = spent.filter((t) => t.merchant === s.merchant && t.month === month)
+    const charged = inMonth.get(s.merchant) ?? []
     const known = -charged.reduce((a, t) => a + t.value, 0)
     const dates = charged.length ? [] : dueIn(s, month)
     const amount = known + dates.length * s.lastAmount
@@ -81,7 +83,7 @@ export function forecastNextMonth(txs: FcTx[], today: string, skip: (categoryNam
     else if (amount > 0) periodic.push({ label: s.merchant, amount, date: charged.length ? charged[0].booking_date : dates[0] })
   }
   for (const l of marked) {
-    const charged = -spent.filter((t) => t.merchant === l.label && t.month === month).reduce((a, t) => a + t.value, 0)
+    const charged = -(inMonth.get(l.label) ?? []).reduce((a, t) => a + t.value, 0)
     const amount = charged > 0 ? charged : l.amount
     monthly += amount; monthlyLines.push({ label: l.label, amount, date: '' })
   }
@@ -179,8 +181,10 @@ export function billEffective(merchant: string, marks: BillMarks, auto: boolean)
  * (average of the last three, taken from the statements); with none, the automatic amount.
  */
 export function applyBillMarks(auto: ForecastLine[], txs: FcTx[], marks: BillMarks): ForecastLine[] {
-  const spentIn = (merchant: string, month: string) =>
-    -txs.filter((t) => t.kind === 'expense' && t.merchant === merchant && t.month === month).reduce((s, t) => s + t.value, 0)
+  // One pass over the transactions, only for the marked merchants: the marks may cover hundreds.
+  const sums = new Map<string, number>()
+  for (const t of txs) if (t.kind === 'expense' && marks[t.merchant]) sums.set(`${t.merchant}|${t.month}`, (sums.get(`${t.merchant}|${t.month}`) ?? 0) - t.value)
+  const spentIn = (merchant: string, month: string) => sums.get(`${merchant}|${month}`) ?? 0
   const learned = (merchant: string): number | null => {
     const months = Object.entries(marks[merchant] ?? {}).filter(([, on]) => on).map(([mo]) => mo).sort().slice(-3)
     const sums = months.map((mo) => spentIn(merchant, mo)).filter((v) => v > 0)

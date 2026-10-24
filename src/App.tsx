@@ -3,7 +3,7 @@ import { APP_NAME, AuthGate, ReauthLock } from './components/Auth'
 import { trustedDevice } from './lib/trust'
 import { syncDevice } from './lib/device'
 import { configError, configured, supabase } from './lib/supabase'
-import { loadAll, saveFx, saveSettings, seedDefaults, type AppData } from './lib/data'
+import { loadAll, saveFx, saveSettings, seedDefaults, type AppData, type Settings } from './lib/data'
 import { FxTable, fetchEurBrl } from './domain/fx'
 import { enrich } from './domain/analytics'
 import type { Currency } from './domain/types'
@@ -41,6 +41,7 @@ export interface Ctx {
   etx: ReturnType<typeof enrich>
   /** Opens a page, optionally at one of its sections (see SECTIONS in lib/nav). */
   go: (tab: Tab, sub?: string) => void
+  patchSettings: (patch: Partial<Settings>) => Promise<void>
 }
 
 interface Where { tab: Tab; sub?: string; n: number }
@@ -113,12 +114,19 @@ function Shell() {
     return () => { clearTimeout(lock); evs.forEach((e) => window.removeEventListener(e, reset)) }
   }, [locked])
 
-  const fx = useMemo(() => new FxTable(data?.fx ?? new Map()), [data])
-  const etx = useMemo(() => (data ? enrich(data.transactions, data.categories, data.accounts, fx, currency) : []), [data, fx, currency])
+  // Keyed on the pieces each one reads: a settings change must not re-enrich every transaction.
+  const fx = useMemo(() => new FxTable(data?.fx ?? new Map()), [data?.fx])
+  const etx = useMemo(() => (data ? enrich(data.transactions, data.categories, data.accounts, fx, currency) : []), [data?.transactions, data?.categories, data?.accounts, fx, currency]) // eslint-disable-line react-hooks/exhaustive-deps
+  /** Saves settings and applies them on screen at once, without reloading everything. */
+  const patchSettings = useCallback(async (patch: Partial<Settings>) => {
+    setData((d) => (d ? { ...d, settings: { ...d.settings, ...patch } } : d))
+    await saveSettings(patch)
+  }, [])
+  // One ctx per change, so the pages' memos (balances, subscriptions…) are not recomputed on every render.
+  const ctx = useMemo<Ctx | null>(() => (data ? { data, reload, currency, fx, etx, go, patchSettings } : null), [data, reload, currency, fx, etx, go, patchSettings])
 
   if (error) return <main className="solo"><div className="card err">{error}</div></main>
-  if (!data) return <main className="solo"><div className="loading"><span className="spinner" />Carregando suas finanças…</div></main>
-  const ctx: Ctx = { data, reload, currency, fx, etx, go }
+  if (!data || !ctx) return <main className="solo"><div className="loading"><span className="spinner" />Carregando suas finanças…</div></main>
   const key = `${tab}:${where.n}`
 
   return (
