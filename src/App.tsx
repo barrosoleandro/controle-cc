@@ -27,6 +27,7 @@ import { Cards } from './pages/Cards'
 // autenticador. Aos 60 minutos parados, sai de verdade.
 const LOCK_MS = 15 * 60 * 1000
 const SIGNOUT_MS = 60 * 60 * 1000
+let fxFetchedThisOpen = false // reset only by a fresh page load, i.e. opening the app
 
 export default function App() {
   if (!configured) return <main className="solo"><div className="card"><h3>Configuração pendente</h3><p className="err">{configError}</p><p>Ajuste em Vercel → Project → Settings → Environment Variables e depois em Deployments → ⋯ → Redeploy.</p></div></main>
@@ -74,10 +75,12 @@ function Shell() {
     try {
       let d = await loadAll()
       if (d.categories.length === 0) { await seedDefaults(); d = await loadAll() }
-      // Mantém as cotações EUR→BRL em dia (uma vez por dia basta; falha não bloqueia).
+      // Atualiza as cotações EUR→BRL a cada abertura do app (não a cada recarga de dados;
+      // falha não bloqueia).
       const lastFx = [...d.fx.keys()].sort().at(-1)
       const todayIso = new Date().toISOString().slice(0, 10)
-      if (d.transactions.length && (!lastFx || Date.parse(todayIso) - Date.parse(lastFx) > 3 * 86400000)) {
+      if (!fxFetchedThisOpen && d.transactions.length && (!lastFx || lastFx < todayIso)) {
+        fxFetchedThisOpen = true
         try {
           const from = lastFx ?? d.transactions[0].booking_date
           await saveFx(await fetchEurBrl(from, todayIso))

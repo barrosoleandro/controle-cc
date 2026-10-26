@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { setTrust, trustUntil, trustedDevice } from '../lib/trust'
 
-type Step = 'loading' | 'login' | 'code' | 'enroll' | 'verify' | 'ok'
+type Step = 'loading' | 'login' | 'code' | 'reset' | 'enroll' | 'verify' | 'newpass' | 'ok'
 type Metodo = 'senha' | 'email'
 
 export const APP_NAME = 'Finanças Pessoais'
+const RECOVERY_PARAM = 'recuperar' // marks the return from the reset e-mail link
 
 /**
  * Entrada por senha ou por código enviado no e-mail, sempre seguida de TOTP.
@@ -26,6 +27,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [lembrar, setLembrar] = useState(true)
+  // Back from the reset link: the link only signs in (aal1); the new password is asked after the TOTP.
+  const [recuperando] = useState(() => new URLSearchParams(window.location.search).has(RECOVERY_PARAM))
+  const [novaSenha, setNovaSenha] = useState('')
+  const [confirmaSenha, setConfirmaSenha] = useState('')
 
   async function evaluate() {
     const { data: { session } } = await supabase.auth.getSession()
@@ -33,7 +38,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     // Os 30 dias acabaram: pede o login completo de novo.
     if (trustUntil() && !trustedDevice()) { await supabase.auth.signOut(); return }
     const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
-    if (aal?.currentLevel === 'aal2') return setStep('ok')
+    if (aal?.currentLevel === 'aal2') return setStep(recuperando ? 'newpass' : 'ok')
     const { data: factors } = await supabase.auth.mfa.listFactors()
     const totp = factors?.totp.find((f) => f.status === 'verified')
     if (totp) { setFactorId(totp.id); return setStep('verify') }
@@ -78,6 +83,27 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     await evaluate()
   }
 
+  async function pedirReset(e: React.FormEvent) {
+    e.preventDefault(); setBusy(true); setError(null); setInfo(null)
+    const redirectTo = `${window.location.origin}${window.location.pathname}?${RECOVERY_PARAM}=1`
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo })
+    setBusy(false)
+    if (error) return setError('Não foi possível enviar o link.')
+    // Same message whether or not the e-mail exists, on purpose.
+    setInfo(`Se ${email} tiver conta, enviamos um link para criar uma senha nova. Abra-o neste navegador.`)
+  }
+
+  async function salvarSenha(e: React.FormEvent) {
+    e.preventDefault(); setError(null)
+    if (novaSenha !== confirmaSenha) return setError('As senhas não conferem.')
+    setBusy(true)
+    const { error } = await supabase.auth.updateUser({ password: novaSenha })
+    setBusy(false); setNovaSenha(''); setConfirmaSenha('')
+    if (error) return setError(`Não foi possível trocar a senha: ${error.message}`)
+    window.history.replaceState(null, '', window.location.pathname)
+    setStep('ok')
+  }
+
   async function verificarTotp(e: React.FormEvent) {
     e.preventDefault(); if (!factorId) return
     setBusy(true); setError(null)
@@ -85,7 +111,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     setBusy(false); setCode('')
     if (error) return setError('Código inválido.')
     setTrust(lembrar)
-    setStep('ok')
+    setStep(recuperando ? 'newpass' : 'ok')
   }
 
   if (step === 'ok') return <>{children}</>
@@ -105,6 +131,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               <input type="email" name="email" id="email" autoComplete="username" placeholder="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} required />
               <input type="password" name="password" id="password" autoComplete="current-password" placeholder="Senha" value={password} onChange={(e) => setPassword(e.target.value)} required />
               <button type="submit" className="primary" disabled={busy}>Entrar</button>
+              <button type="button" className="link" onClick={() => { setStep('reset'); setError(null); setInfo(null) }}>Esqueci minha senha</button>
             </form>
           ) : (
             <form onSubmit={pedirCodigo} className="auth">
@@ -121,6 +148,26 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             <input inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" placeholder="Código do e-mail" value={emailCode} onChange={(e) => setEmailCode(e.target.value)} required />
             <button className="primary" disabled={busy}>Confirmar</button>
             <button type="button" onClick={() => { setStep('login'); setError(null); setInfo(null) }}>Voltar</button>
+          </form>
+        )}
+
+        {step === 'reset' && (
+          <form onSubmit={pedirReset} className="auth">
+            <p className="muted">Enviamos um link para o seu e-mail. Depois de abrir o link, o app pede o código do autenticador e a senha nova.</p>
+            <input type="email" autoComplete="username" placeholder="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <button className="primary" disabled={busy}>Enviar link</button>
+            {info && <p className="muted">{info}</p>}
+            <button type="button" onClick={() => { setStep('login'); setError(null); setInfo(null) }}>Voltar</button>
+          </form>
+        )}
+
+        {step === 'newpass' && (
+          <form onSubmit={salvarSenha} className="auth">
+            <p>Escolha a senha nova.</p>
+            <input type="password" autoComplete="new-password" placeholder="Senha nova" minLength={8} value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} required autoFocus />
+            <input type="password" autoComplete="new-password" placeholder="Repita a senha nova" minLength={8} value={confirmaSenha} onChange={(e) => setConfirmaSenha(e.target.value)} required />
+            <button className="primary" disabled={busy}>Salvar senha</button>
+            <button type="button" onClick={() => supabase.auth.signOut()}>Cancelar</button>
           </form>
         )}
 
