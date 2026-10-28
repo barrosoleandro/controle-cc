@@ -23,14 +23,16 @@ export function Rescisao({ ctx }: { ctx: Ctx }) {
   const num = (k: 'salario' | 'adicionais' | 'feriasVencidas' | 'adiantamento13' | 'saldoFgts' | 'baseMultaFgts' | 'dependentes' | 'outrosDescontos', step = 100) => ({
     type: 'number', min: 0, step, value: s[k] ?? 0, onChange: (e: React.ChangeEvent<HTMLInputElement>) => set(k, Number(e.target.value) || 0),
   })
-  const p = { ...novaPrevidencia(), ...s.previdencia }
+  // A simulation without its own pension data starts from the balances saved in Investimentos.
+  const salva = ctx.data.settings.dashboard?.previdencia
+  const p = { ...novaPrevidencia(), ...(salva && { suas: salva.suas, empresa: salva.empresa, plano: salva.plano }), ...s.previdencia }
   const setP = (patch: Partial<Previdencia>) => set('previdencia', { ...p, ...patch })
   const numP = (k: 'suas' | 'empresa' | 'vestingPct' | 'aportado', step = 1000) => ({
     type: 'number', min: 0, step, value: p[k], onChange: (e: React.ChangeEvent<HTMLInputElement>) => setP({ [k]: Number(e.target.value) || 0 }),
   })
   const avisos = TIPOS[s.tipo].avisos
   const pronto = Boolean(s.admissao && s.desligamento && s.admissao <= s.desligamento && s.salario > 0)
-  const r = pronto ? calcularRescisao(s) : null
+  const r = pronto ? calcularRescisao({ ...s, previdencia: p }) : null
 
   async function salvar(novo: boolean) {
     setBusy(true)

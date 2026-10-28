@@ -6,6 +6,10 @@ import { monthly } from '../domain/analytics'
 import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
 import { last3, useBalances, useFmt } from '../lib/hooks'
 import { Help } from '../components/Page'
+import { money } from '../lib/format'
+import type { PrevidenciaSaldo } from '../lib/data'
+
+const PREV_VAZIA: PrevidenciaSaldo = { suas: 0, empresa: 0, aporteSeu: 0, aporteEmpresa: 0, plano: 'PGBL', retornoReal: 3 }
 
 const PERFIS: { id: Risco; nome: string; descricao: string }[] = [
   { id: 'conservador', nome: 'Conservador', descricao: 'Prioriza não perder. Aceita render pouco acima da inflação.' },
@@ -35,6 +39,24 @@ export function Investments({ ctx }: { ctx: Ctx }) {
   }, [ctx.etx])
 
   const liquido = saldos.reduce((s, b) => s + b.display, 0)
+  const brl = money('BRL', 0)
+  const prevSalva = ctx.data.settings.dashboard?.previdencia
+  const [prev, setPrev] = useState<PrevidenciaSaldo>(() => ({ ...PREV_VAZIA, ...prevSalva }))
+  const [prevMsg, setPrevMsg] = useState<string | null>(null)
+  const prevSaldo = prev.suas + prev.empresa
+  const prevAporte = prev.aporteSeu + prev.aporteEmpresa
+  // Previdência is in BRL; shown in the display currency next to the liquid balance.
+  const hoje = new Date().toISOString().slice(0, 10)
+  const prevDisplay = ctx.fx.convert(prevSaldo, 'BRL', ctx.currency, hoje)
+  const prevFim = useMemo(() => projetar(prevAporte, anos, prev.retornoReal, prevSaldo).at(-1)!, [prevAporte, anos, prev.retornoReal, prevSaldo])
+  const prevNum = (k: 'suas' | 'empresa' | 'aporteSeu' | 'aporteEmpresa' | 'retornoReal', step = 100) => ({
+    type: 'number', step, min: k === 'retornoReal' ? undefined : 0, value: prev[k],
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setPrev({ ...prev, [k]: Number(e.target.value) || 0 }); setPrevMsg(null) },
+  })
+  async function salvarPrev() {
+    try { await ctx.patchSettings({ dashboard: { ...ctx.data.settings.dashboard, previdencia: prev } }); setPrevMsg('Salvo.') }
+    catch (e) { setPrevMsg(`Não foi possível salvar: ${(e as Error).message}`) }
+  }
   const reserva = reservaRecomendada(base.despesa)
   const faltaReserva = Math.max(0, reserva - liquido)
   const aporte = aporteManual ?? Math.max(0, Math.round(base.sobra))
@@ -71,6 +93,8 @@ export function Investments({ ctx }: { ctx: Ctx }) {
           <div className="kpi"><div className="l">Despesa média</div><div>{fmt(base.despesa)}</div></div>
           <div className="kpi"><div className="l">Sobra por mês</div><div className={base.sobra >= 0 ? 'pos' : 'neg'}>{fmt(base.sobra)}</div></div>
           <div className="kpi"><div className="l">Saldo hoje</div><div>{fmt(liquido)}</div></div>
+          {prevSaldo > 0 && <div className="kpi"><div className="l">Previdência privada</div><div>{fmt(prevDisplay)}</div></div>}
+          {prevSaldo > 0 && <div className="kpi"><div className="l">Patrimônio (saldo + previdência)</div><div>{fmt(liquido + prevDisplay)}</div></div>}
         </div>
         {base.meses < 3 && <p className="warn">Só {base.meses} mês(es) fechado(s) de dados: a média ainda é frágil. Importe mais extratos para a projeção fazer sentido.</p>}
       </div>
@@ -83,6 +107,31 @@ export function Investments({ ctx }: { ctx: Ctx }) {
             ? <> Hoje você tem {fmt(liquido)} disponível, então ainda faltam <strong className="warn">{fmt(faltaReserva)}</strong>. Enquanto isso não fechar, o destino natural da sobra é um lugar líquido e sem risco — Livret A na França, Tesouro Selic no Brasil — e não bolsa.</>
             : <> Você já tem {fmt(liquido)} disponível, o que cobre a reserva. A sobra mensal pode ir para a carteira abaixo.</>}
         </p>
+      </div>
+
+      <div className="card" style={{ gridColumn: '1/-1' }}>
+        <h3>Previdência privada (Brasil)</h3>
+        <div className="form">
+          <label>Saldo das suas contribuições (R$)<input {...prevNum('suas', 1000)} /></label>
+          <label>Saldo das contribuições da empresa (R$)<input {...prevNum('empresa', 1000)} /></label>
+          <label>Seu aporte por mês (R$)<input {...prevNum('aporteSeu')} /></label>
+          <label>Aporte da empresa por mês (R$)<input {...prevNum('aporteEmpresa')} /></label>
+          <label>Plano<select value={prev.plano} onChange={(e) => { setPrev({ ...prev, plano: e.target.value as PrevidenciaSaldo['plano'] }); setPrevMsg(null) }}>
+            <option value="PGBL">PGBL</option><option value="VGBL">VGBL</option></select></label>
+          <label>Retorno real esperado (% a.a.)<input {...prevNum('retornoReal', 0.5)} /></label>
+        </div>
+        <div className="row" style={{ marginTop: 12 }}>
+          <button className="primary" onClick={salvarPrev}>Salvar</button>
+          {prevMsg && <span className="muted">{prevMsg}</span>}
+        </div>
+        {prevSaldo > 0 && <div className="kpis" style={{ marginTop: 12 }}>
+          <div className="kpi"><div className="l">Saldo hoje</div><div>{brl(prevSaldo)}</div><div className="sub">{fmt(prevDisplay)}</div></div>
+          <div className="kpi"><div className="l">Aporte por mês</div><div>{brl(prevAporte)}</div></div>
+          <div className="kpi"><div className="l">Em {anos} anos (moeda de hoje)</div><div className="pos">{brl(prevFim.valor)}</div>
+            <div className="sub">aportado {brl(prevFim.aportado)}</div></div>
+        </div>}
+        <p className="muted">Fica fora da reserva de emergência: o dinheiro não é líquido e o resgate paga IR (no PGBL sobre tudo, no VGBL só sobre o rendimento).
+          A parte da empresa só é sua pela regra de resgate do plano. O prazo é o mesmo do cenário abaixo; a Rescisão usa estes saldos como ponto de partida.</p>
       </div>
 
       <div className="card" style={{ gridColumn: '1/-1' }}>

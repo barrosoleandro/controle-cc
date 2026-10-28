@@ -13,6 +13,16 @@ export interface DashboardPrefs {
   /** Brazilian bills the user marked as counted in the transfer: merchant → month → on/off (domain/forecast). */
   billMarks?: Record<string, Record<string, boolean>>
   payroll?: { country?: string; inflation?: Record<string, Record<string, number>> }
+  /** Previdência privada no Brasil, em BRL (Investimentos; a Rescisão parte destes saldos). */
+  previdencia?: PrevidenciaSaldo
+}
+export interface PrevidenciaSaldo {
+  suas: number // saldo das suas contribuições
+  empresa: number // saldo das contribuições da empresa
+  aporteSeu: number // por mês
+  aporteEmpresa: number // por mês
+  plano: 'PGBL' | 'VGBL'
+  retornoReal: number // % a.a. acima da inflação
 }
 export interface Settings { display_currency: Currency; dashboard: DashboardPrefs; dismissed_alerts: string[]; payroll_contract?: ContractItem[] | null }
 export interface Checkpoint { account_id: string; date: string; balance: number; source: string }
