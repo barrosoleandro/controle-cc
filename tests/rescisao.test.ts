@@ -46,6 +46,20 @@ describe('rescisão CLT', () => {
     expect(r.fgts.ficaNaConta).toBeCloseTo(conta * 0.2, 2)
   })
 
+  it('multa sobre o saldo para fins rescisórios; saque do saldo atual', () => {
+    // 30 mil já sacados durante o contrato: a conta tem 50 mil, mas os depósitos somam 80 mil
+    const r = calcularRescisao(base({ saldoFgts: 50000, baseMultaFgts: 80000 }))
+    expect(r.fgts.baseMulta).toBeCloseTo(82880, 2)
+    expect(r.fgts.multa).toBeCloseTo(0.4 * 82880, 2)
+    expect(r.fgts.sacavel).toBeCloseTo(52880 + 0.4 * 82880, 2)
+  })
+
+  it('saque-aniversário: na dispensa só a multa é sacada', () => {
+    const r = calcularRescisao(base({ saldoFgts: 50000, saqueAniversario: true }))
+    expect(r.fgts.sacavel).toBeCloseTo(r.fgts.multa, 2)
+    expect(r.fgts.ficaNaConta).toBeCloseTo(52880, 2)
+  })
+
   it('pedido de demissão sem cumprir aviso desconta um salário e não saca FGTS', () => {
     const r = calcularRescisao(base({ tipo: 'pedido', aviso: 'nao_cumprido', saldoFgts: 50000 }))
     expect(r.diasAvisoPagos).toBe(0)

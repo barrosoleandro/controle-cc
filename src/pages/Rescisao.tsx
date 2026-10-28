@@ -20,8 +20,8 @@ export function Rescisao({ ctx }: { ctx: Ctx }) {
   const [busy, setBusy] = useState(false)
 
   const set = <K extends keyof RescisaoInput>(k: K, v: RescisaoInput[K]) => { setS((x) => ({ ...x, [k]: v })); setMsg(null) }
-  const num = (k: 'salario' | 'adicionais' | 'feriasVencidas' | 'adiantamento13' | 'saldoFgts' | 'dependentes' | 'outrosDescontos', step = 100) => ({
-    type: 'number', min: 0, step, value: s[k], onChange: (e: React.ChangeEvent<HTMLInputElement>) => set(k, Number(e.target.value) || 0),
+  const num = (k: 'salario' | 'adicionais' | 'feriasVencidas' | 'adiantamento13' | 'saldoFgts' | 'baseMultaFgts' | 'dependentes' | 'outrosDescontos', step = 100) => ({
+    type: 'number', min: 0, step, value: s[k] ?? 0, onChange: (e: React.ChangeEvent<HTMLInputElement>) => set(k, Number(e.target.value) || 0),
   })
   const avisos = TIPOS[s.tipo].avisos
   const pronto = Boolean(s.admissao && s.desligamento && s.admissao <= s.desligamento && s.salario > 0)
@@ -67,7 +67,9 @@ export function Rescisao({ ctx }: { ctx: Ctx }) {
         <label>Médias de adicionais / mês (R$)<input {...num('adicionais')} /></label>
         <label>Férias vencidas não gozadas (períodos)<input {...num('feriasVencidas', 1)} /></label>
         <label>1ª parcela do 13º já paga (R$)<input {...num('adiantamento13')} /></label>
-        <label>Saldo do FGTS deste contrato (R$)<input {...num('saldoFgts', 1000)} /></label>
+        <label>Saldo atual do FGTS deste contrato (R$)<input {...num('saldoFgts', 1000)} /></label>
+        <label>Saldo para fins rescisórios (R$)<input {...num('baseMultaFgts', 1000)} title="No extrato do FGTS (app FGTS). Base da multa: soma dos depósitos com correção, sem descontar saques. Em branco ou zero, usa o saldo atual." /></label>
+        <label className="inline" style={{ alignSelf: 'end' }}><input type="checkbox" checked={!!s.saqueAniversario} onChange={(e) => set('saqueAniversario', e.target.checked)} />Optei pelo saque-aniversário</label>
         <label>Dependentes para o IR<input {...num('dependentes', 1)} /></label>
         <label>Outros descontos (R$)<input {...num('outrosDescontos')} /></label>
       </div>
@@ -113,9 +115,9 @@ export function Rescisao({ ctx }: { ctx: Ctx }) {
         <h3>FGTS</h3>
         <div className="scroll"><table>
           <tbody>
-            {linha('Saldo informado', r.fgts.saldo)}
+            {linha('Saldo atual', r.fgts.saldo)}
             {linha('Depósito da rescisão (8%)', r.fgts.deposito, 'sobre saldo de salário, aviso e 13º')}
-            {r.fgts.multaPct > 0 && linha(`Multa de ${r.fgts.multaPct * 100}%`, r.fgts.multa, 'paga pela empresa, sem IR')}
+            {r.fgts.multaPct > 0 && linha(`Multa de ${r.fgts.multaPct * 100}%`, r.fgts.multa, `sobre ${brl(r.fgts.baseMulta)} (fins rescisórios + depósito) · paga pela empresa, sem IR`)}
             {r.fgts.ficaNaConta > 0 && linha('Fica na conta (não sacável agora)', -r.fgts.ficaNaConta, undefined, 'muted')}
           </tbody>
           <tfoot><tr><th>Para sacar</th><th className="num">{brl(r.fgts.sacavel)}</th><th className="num hide-sm">{eur(r.fgts.sacavel / rate)}</th></tr></tfoot>
@@ -131,8 +133,10 @@ export function Rescisao({ ctx }: { ctx: Ctx }) {
         <p>13º e férias proporcionais: conta o mês com 15 dias ou mais trabalhados. Na justa causa, só entram o saldo de salário e as férias vencidas.</p>
         <p>Impostos: INSS e IR sobre o saldo de salário e, em separado, sobre o 13º. Férias indenizadas com 1/3, aviso indenizado e multa do FGTS não têm INSS nem IR.
           O IR já considera a isenção até R$ 5.000 por mês da Lei 15.270/2025.</p>
-        <p>FGTS: na dispensa sem justa causa, saca tudo mais 40% de multa; no acordo, 80% do saldo mais 20% de multa; no pedido de demissão e na justa causa, o saldo fica na conta.
-          Os valores em euro usam a cotação mais recente guardada ({rate.toFixed(4)}).</p>
+        <p>FGTS: a multa incide sobre o saldo para fins rescisórios (todos os depósitos do contrato com correção, sem descontar saques já feitos), mais o depósito da rescisão.
+          Na dispensa sem justa causa, saca o saldo atual mais 40% de multa; no acordo, 80% do saldo mais 20% de multa; no pedido de demissão e na justa causa, o saldo fica na conta.
+          Quem optou pelo saque-aniversário recebe só a multa: o saldo fica na conta.</p>
+        <p>Os valores em euro usam a cotação mais recente guardada ({rate.toFixed(4)}).</p>
       </Help>
     </div>
   </div>

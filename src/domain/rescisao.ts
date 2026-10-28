@@ -18,7 +18,9 @@ export interface RescisaoInput {
   adicionais: number // médias mensais que integram a remuneração (adicionais, comissões, horas extras habituais)
   feriasVencidas: number // períodos aquisitivos completos ainda não gozados
   adiantamento13: number // primeira parcela do 13º já paga no ano
-  saldoFgts: number // saldo da conta do FGTS deste contrato
+  saldoFgts: number // saldo atual da conta do FGTS deste contrato (o que pode ser sacado)
+  baseMultaFgts?: number // saldo para fins rescisórios do extrato do FGTS (base da multa); vazio = saldo atual
+  saqueAniversario?: boolean // optante do saque-aniversário: na dispensa só a multa sai, o saldo fica
   dependentes: number
   outrosDescontos: number
 }
@@ -126,7 +128,7 @@ export interface RescisaoResult {
   diasAvisoPagos: number
   avos13: number
   avosFerias: number
-  fgts: { saldo: number; deposito: number; multa: number; multaPct: number; sacavel: number; ficaNaConta: number }
+  fgts: { saldo: number; baseMulta: number; deposito: number; multa: number; multaPct: number; sacavel: number; ficaNaConta: number }
   total: number // líquido + FGTS sacável
 }
 
@@ -179,16 +181,19 @@ export function calcularRescisao(i: RescisaoInput): RescisaoResult {
   const totalDescontos = round(descontos.reduce((s, v) => s + v.valor, 0))
   const liquido = round(Math.max(0, bruto - totalDescontos))
 
-  // FGTS: 8% sobre saldo, aviso e 13º vai para a conta; a multa incide sobre o saldo com esse depósito.
+  // FGTS: 8% sobre saldo, aviso e 13º vai para a conta. A multa incide sobre todos os depósitos
+  // do contrato com correção (saldo para fins rescisórios, Lei 8.036 art. 18 §1º): saques feitos
+  // durante o contrato não a diminuem. O saque é do saldo atual mais esse depósito.
   const deposito = round(0.08 * (saldoSalario + avisoValor + decimo))
   const multaPct = i.tipo === 'sem_justa_causa' ? 0.4 : i.tipo === 'acordo' ? 0.2 : 0
+  const baseMulta = round((i.baseMultaFgts || i.saldoFgts) + deposito)
+  const multa = round(baseMulta * multaPct)
   const conta = i.saldoFgts + deposito
-  const multa = round(conta * multaPct)
-  const saquePct = i.tipo === 'sem_justa_causa' ? 1 : i.tipo === 'acordo' ? 0.8 : 0
+  const saquePct = i.saqueAniversario ? 0 : i.tipo === 'sem_justa_causa' ? 1 : i.tipo === 'acordo' ? 0.8 : 0
   const sacavel = round(conta * saquePct + multa)
   return {
     verbas, descontos, bruto, totalDescontos, liquido, fimProjetado, diasAvisoPagos, avos13: a13, avosFerias: aFer,
-    fgts: { saldo: i.saldoFgts, deposito, multa, multaPct, sacavel, ficaNaConta: round(conta * (1 - saquePct)) },
+    fgts: { saldo: i.saldoFgts, baseMulta, deposito, multa, multaPct, sacavel, ficaNaConta: round(conta * (1 - saquePct)) },
     total: round(liquido + sacavel),
   }
 }
@@ -196,7 +201,7 @@ export function calcularRescisao(i: RescisaoInput): RescisaoResult {
 export const novaRescisao = (salario = 0): RescisaoInput => ({
   kind: 'rescisao', name: 'Nova simulação', admissao: '', desligamento: new Date().toISOString().slice(0, 10),
   tipo: 'sem_justa_causa', aviso: 'indenizado', salario, adicionais: 0, feriasVencidas: 0, adiantamento13: 0,
-  saldoFgts: 0, dependentes: 0, outrosDescontos: 0,
+  saldoFgts: 0, baseMultaFgts: 0, saqueAniversario: false, dependentes: 0, outrosDescontos: 0,
 })
 
 export const isRescisao = (d: unknown): d is RescisaoInput => (d as { kind?: string } | null)?.kind === 'rescisao'
