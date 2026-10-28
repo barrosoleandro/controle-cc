@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { anosCompletos, avos13, avosFerias, calcularRescisao, diasAviso, inss, irrf, novaRescisao, type RescisaoInput } from '../src/domain/rescisao'
+import { anosCompletos, avos13, avosFerias, calcularPrevidencia, calcularRescisao, diasAviso, inss, irrf, novaPrevidencia, novaRescisao, type RescisaoInput } from '../src/domain/rescisao'
 
 const base = (o: Partial<RescisaoInput> = {}): RescisaoInput => ({
   ...novaRescisao(10000), admissao: '2020-03-10', desligamento: '2026-10-31', ...o,
@@ -58,6 +58,21 @@ describe('rescisão CLT', () => {
     const r = calcularRescisao(base({ saldoFgts: 50000, saqueAniversario: true }))
     expect(r.fgts.sacavel).toBeCloseTo(r.fgts.multa, 2)
     expect(r.fgts.ficaNaConta).toBeCloseTo(52880, 2)
+  })
+
+  it('previdência: vesting da parte da empresa, IR do PGBL e do VGBL, e entra no total só se resgatar', () => {
+    const p = { ...novaPrevidencia(), suas: 100000, empresa: 80000, vestingPct: 50 }
+    const pgbl = calcularPrevidencia(p)
+    expect(pgbl.bruto).toBe(140000)
+    expect(pgbl.perdido).toBe(40000)
+    expect(pgbl.ir).toBeCloseTo(21000, 2) // 15% na fonte sobre tudo
+    const vgbl = calcularPrevidencia({ ...p, plano: 'VGBL', aportado: 120000, regime: 'regressivo', aliquota: 0.1 })
+    expect(vgbl.base).toBe(20000)
+    expect(vgbl.ir).toBeCloseTo(2000, 2)
+    const com = calcularRescisao(base({ previdencia: p }))
+    const sem = calcularRescisao(base({ previdencia: { ...p, resgatar: false } }))
+    expect(com.total - sem.total).toBeCloseTo(pgbl.liquido, 2)
+    expect(calcularRescisao(base()).previdencia).toBeNull()
   })
 
   it('pedido de demissão sem cumprir aviso desconta um salário e não saca FGTS', () => {

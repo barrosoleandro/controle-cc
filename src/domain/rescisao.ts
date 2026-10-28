@@ -23,6 +23,38 @@ export interface RescisaoInput {
   saqueAniversario?: boolean // optante do saque-aniversário: na dispensa só a multa sai, o saldo fica
   dependentes: number
   outrosDescontos: number
+  previdencia?: Previdencia
+}
+
+/** Previdência privada da empresa: o que dá para resgatar ao sair e o IR do resgate. */
+export interface Previdencia {
+  suas: number // saldo das suas contribuições
+  empresa: number // saldo das contribuições da empresa
+  vestingPct: number // % da parte da empresa que você leva, pela regra do plano
+  plano: 'PGBL' | 'VGBL'
+  aportado: number // VGBL: quanto foi aportado na parte resgatada (o IR é só sobre o rendimento)
+  regime: 'progressivo' | 'regressivo'
+  aliquota: number // regressivo: 35% até 2 anos de plano, caindo 5 pontos a cada 2 anos até 10%
+  resgatar: boolean // false = portar para outro plano ou manter: não entra no total
+}
+export const novaPrevidencia = (): Previdencia => ({
+  suas: 0, empresa: 0, vestingPct: 100, plano: 'PGBL', aportado: 0, regime: 'progressivo', aliquota: 0.15, resgatar: true,
+})
+export const ALIQUOTAS_REGRESSIVAS: [number, string][] = [
+  [0.35, 'até 2 anos'], [0.3, '2 a 4 anos'], [0.25, '4 a 6 anos'], [0.2, '6 a 8 anos'], [0.15, '8 a 10 anos'], [0.1, 'mais de 10 anos'],
+]
+
+export interface PrevidenciaResult { bruto: number; perdido: number; base: number; aliquota: number; ir: number; liquido: number; resgatar: boolean }
+
+export function calcularPrevidencia(p: Previdencia): PrevidenciaResult {
+  const daEmpresa = round((p.empresa * Math.min(100, Math.max(0, p.vestingPct))) / 100)
+  const bruto = round(p.suas + daEmpresa)
+  // PGBL: IR sobre tudo (as contribuições foram deduzidas do IR). VGBL: só sobre o rendimento.
+  const base = p.plano === 'VGBL' ? Math.max(0, round(bruto - p.aportado)) : bruto
+  // Progressivo: 15% retidos na fonte, acertados na declaração anual (pode subir até 27,5% ou voltar).
+  const aliquota = p.regime === 'progressivo' ? 0.15 : p.aliquota
+  const ir = round(base * aliquota)
+  return { bruto, perdido: round(p.empresa - daEmpresa), base, aliquota, ir, liquido: round(bruto - ir), resgatar: p.resgatar }
 }
 
 export const TIPOS: Record<TipoRescisao, { label: string; avisos: Aviso[] }> = {
@@ -129,7 +161,8 @@ export interface RescisaoResult {
   avos13: number
   avosFerias: number
   fgts: { saldo: number; baseMulta: number; deposito: number; multa: number; multaPct: number; sacavel: number; ficaNaConta: number }
-  total: number // líquido + FGTS sacável
+  previdencia: PrevidenciaResult | null
+  total: number // líquido + FGTS sacável + previdência resgatada
 }
 
 export function calcularRescisao(i: RescisaoInput): RescisaoResult {
@@ -191,10 +224,12 @@ export function calcularRescisao(i: RescisaoInput): RescisaoResult {
   const conta = i.saldoFgts + deposito
   const saquePct = i.saqueAniversario ? 0 : i.tipo === 'sem_justa_causa' ? 1 : i.tipo === 'acordo' ? 0.8 : 0
   const sacavel = round(conta * saquePct + multa)
+  const prev = i.previdencia && (i.previdencia.suas > 0 || i.previdencia.empresa > 0) ? calcularPrevidencia(i.previdencia) : null
   return {
     verbas, descontos, bruto, totalDescontos, liquido, fimProjetado, diasAvisoPagos, avos13: a13, avosFerias: aFer,
     fgts: { saldo: i.saldoFgts, baseMulta, deposito, multa, multaPct, sacavel, ficaNaConta: round(conta * (1 - saquePct)) },
-    total: round(liquido + sacavel),
+    previdencia: prev,
+    total: round(liquido + sacavel + (prev?.resgatar ? prev.liquido : 0)),
   }
 }
 

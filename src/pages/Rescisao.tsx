@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Ctx } from '../App'
-import { AVISOS, TIPOS, calcularRescisao, isRescisao, novaRescisao, type Aviso, type RescisaoInput, type TipoRescisao } from '../domain/rescisao'
+import { ALIQUOTAS_REGRESSIVAS, AVISOS, TIPOS, calcularRescisao, novaPrevidencia, type Previdencia, isRescisao, novaRescisao, type Aviso, type RescisaoInput, type TipoRescisao } from '../domain/rescisao'
 import { deleteScenario, saveScenario } from '../lib/data'
 import { money } from '../lib/format'
 import { Help } from '../components/Page'
@@ -22,6 +22,11 @@ export function Rescisao({ ctx }: { ctx: Ctx }) {
   const set = <K extends keyof RescisaoInput>(k: K, v: RescisaoInput[K]) => { setS((x) => ({ ...x, [k]: v })); setMsg(null) }
   const num = (k: 'salario' | 'adicionais' | 'feriasVencidas' | 'adiantamento13' | 'saldoFgts' | 'baseMultaFgts' | 'dependentes' | 'outrosDescontos', step = 100) => ({
     type: 'number', min: 0, step, value: s[k] ?? 0, onChange: (e: React.ChangeEvent<HTMLInputElement>) => set(k, Number(e.target.value) || 0),
+  })
+  const p = { ...novaPrevidencia(), ...s.previdencia }
+  const setP = (patch: Partial<Previdencia>) => set('previdencia', { ...p, ...patch })
+  const numP = (k: 'suas' | 'empresa' | 'vestingPct' | 'aportado', step = 1000) => ({
+    type: 'number', min: 0, step, value: p[k], onChange: (e: React.ChangeEvent<HTMLInputElement>) => setP({ [k]: Number(e.target.value) || 0 }),
   })
   const avisos = TIPOS[s.tipo].avisos
   const pronto = Boolean(s.admissao && s.desligamento && s.admissao <= s.desligamento && s.salario > 0)
@@ -73,6 +78,19 @@ export function Rescisao({ ctx }: { ctx: Ctx }) {
         <label>Dependentes para o IR<input {...num('dependentes', 1)} /></label>
         <label>Outros descontos (R$)<input {...num('outrosDescontos')} /></label>
       </div>
+      <h4>Previdência privada</h4>
+      <div className="form">
+        <label>Saldo das suas contribuições (R$)<input {...numP('suas')} /></label>
+        <label>Saldo das contribuições da empresa (R$)<input {...numP('empresa')} /></label>
+        <label>% da parte da empresa que você leva<input {...numP('vestingPct', 5)} max={100} title="Regra de resgate (vesting) do plano: costuma crescer com o tempo de empresa" /></label>
+        <label>Plano<select value={p.plano} onChange={(e) => setP({ plano: e.target.value as Previdencia['plano'] })}>
+          <option value="PGBL">PGBL (IR sobre tudo)</option><option value="VGBL">VGBL (IR só sobre o rendimento)</option></select></label>
+        {p.plano === 'VGBL' && <label>Total aportado na parte resgatada (R$)<input {...numP('aportado')} /></label>}
+        <label>Tributação<select value={p.regime === 'progressivo' ? 'progressivo' : String(p.aliquota)} onChange={(e) => setP(e.target.value === 'progressivo' ? { regime: 'progressivo' } : { regime: 'regressivo', aliquota: Number(e.target.value) })}>
+          <option value="progressivo">Progressiva (15% na fonte, ajuste na declaração)</option>
+          {ALIQUOTAS_REGRESSIVAS.map(([a, l]) => <option key={a} value={a}>Regressiva {a * 100}% ({l})</option>)}</select></label>
+        <label className="inline" style={{ alignSelf: 'end' }}><input type="checkbox" checked={p.resgatar} onChange={(e) => setP({ resgatar: e.target.checked })} />Resgatar ao sair (senão, portar ou manter)</label>
+      </div>
       <div className="row" style={{ marginTop: 12 }}>
         <button className="primary" disabled={busy} onClick={() => salvar(!editingId)}>{editingId ? 'Salvar' : 'Salvar como nova'}</button>
         {editingId && <button disabled={busy} onClick={() => salvar(true)}>Salvar como nova</button>}
@@ -91,6 +109,7 @@ export function Rescisao({ ctx }: { ctx: Ctx }) {
         <div className="kpis">
           <div className="kpi total"><div className="l">Total a receber</div><div className="v pos">{brl(r.total)}</div><div className="sub">≈ {eur(r.total / rate)}</div></div>
           <div className="kpi"><div className="l">Líquido da rescisão</div><div className="v">{brl(r.liquido)}</div><div className="sub">≈ {eur(r.liquido / rate)}</div></div>
+          {r.previdencia?.resgatar && <div className="kpi"><div className="l">Previdência (líquido)</div><div className="v">{brl(r.previdencia.liquido)}</div><div className="sub">≈ {eur(r.previdencia.liquido / rate)}</div></div>}
           <div className="kpi"><div className="l">FGTS para sacar</div><div className="v">{brl(r.fgts.sacavel)}</div>
             <div className="sub">{r.fgts.ficaNaConta > 0 ? `${brl(r.fgts.ficaNaConta)} ficam na conta` : `≈ ${eur(r.fgts.sacavel / rate)}`}</div></div>
           <div className="kpi"><div className="l">Fim do contrato</div><div className="v">{r.fimProjetado.split('-').reverse().join('/')}</div>
@@ -123,6 +142,18 @@ export function Rescisao({ ctx }: { ctx: Ctx }) {
           <tfoot><tr><th>Para sacar</th><th className="num">{brl(r.fgts.sacavel)}</th><th className="num hide-sm">{eur(r.fgts.sacavel / rate)}</th></tr></tfoot>
         </table></div>
       </div>
+
+      {r.previdencia && <div className="card">
+        <h3>Previdência privada</h3>
+        <div className="scroll"><table>
+          <tbody>
+            {linha('Saldo que você leva', r.previdencia.bruto, r.previdencia.perdido > 0 ? `${brl(r.previdencia.perdido)} da empresa ficam no plano` : undefined)}
+            {linha(`IR do resgate (${Math.round(r.previdencia.aliquota * 100)}%)`, -r.previdencia.ir, p.regime === 'progressivo' ? 'antecipação; o acerto vem na declaração' : 'definitivo', 'neg')}
+          </tbody>
+          <tfoot><tr><th>{r.previdencia.resgatar ? 'Líquido do resgate' : 'Fica aplicado (fora do total)'}</th>
+            <th className="num">{brl(r.previdencia.liquido)}</th><th className="num hide-sm">{eur(r.previdencia.liquido / rate)}</th></tr></tfoot>
+        </table></div>
+      </div>}
     </>}
 
     <div className="card" style={{ gridColumn: '1/-1' }}>
@@ -136,6 +167,9 @@ export function Rescisao({ ctx }: { ctx: Ctx }) {
         <p>FGTS: a multa incide sobre o saldo para fins rescisórios (todos os depósitos do contrato com correção, sem descontar saques já feitos), mais o depósito da rescisão.
           Na dispensa sem justa causa, saca o saldo atual mais 40% de multa; no acordo, 80% do saldo mais 20% de multa; no pedido de demissão e na justa causa, o saldo fica na conta.
           Quem optou pelo saque-aniversário recebe só a multa: o saldo fica na conta.</p>
+        <p>Previdência privada: você leva o saldo das suas contribuições e, da parte da empresa, o percentual da regra de resgate do plano.
+          No PGBL o IR incide sobre todo o resgate; no VGBL, só sobre o rendimento. Na tabela progressiva, a fonte retém 15% e o acerto (até 27,5%) vem na declaração anual;
+          na regressiva, a alíquota é definitiva e cai com o tempo de cada aporte. Portar para outro plano não paga IR.</p>
         <p>Os valores em euro usam a cotação mais recente guardada ({rate.toFixed(4)}).</p>
       </Help>
     </div>
