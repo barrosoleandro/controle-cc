@@ -69,31 +69,35 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
     const out: FileResult[] = []
     const existing = new Map((list ?? []).map((p) => [p.period.slice(0, 7), p.file_sha256]))
     let lastPeriod = ''
-    const { loadPdf } = await import('../lib/pdf') // pdf.js is loaded only when importing
-    for (const [i, file] of pdfs.entries()) {
-      setProgress(`Lendo ${i + 1} de ${pdfs.length}: ${file.name}`)
-      try {
-        const bytes = new Uint8Array(await file.arrayBuffer())
-        const hash = await sha256(bytes)
-        const pages = await pdfToRows(bytes, loadPdf)
-        if (!looksLikePayslip(pages)) { out.push({ file: file.name, outcome: 'não é holerite', detail: '' }); continue }
-        const p = parsePayslipRows(pages)
-        const prev = existing.get(p.period)
-        if (prev === hash) { out.push({ file: file.name, outcome: 'já existia', detail: p.period }); continue }
-        await savePayslip(p, hash)
-        existing.set(p.period, hash)
-        if (p.period > lastPeriod) lastPeriod = p.period
-        out.push({
-          file: file.name, outcome: prev ? 'substituído' : 'importado',
-          detail: `${p.period}${p.warnings.length ? ` — conferir: ${p.warnings.join('; ')}` : ''}`,
-        })
-      } catch (e) { out.push({ file: file.name, outcome: 'erro', detail: (e as Error).message }) }
-    }
-    setResults(out); setProgress(null); setBusy(false)
-    const fresh = await load()
-    // Show the newest month just imported.
-    const newest = lastPeriod && fresh?.find((x) => x.period.startsWith(lastPeriod))
-    if (newest) setSel(newest.id)
+    // Anything failing outside a single file (loading pdf.js, reloading the list) must still end
+    // the import with a message instead of leaving "Lendo…" on screen.
+    try {
+      const { loadPdf } = await import('../lib/pdf') // pdf.js is loaded only when importing
+      for (const [i, file] of pdfs.entries()) {
+        setProgress(`Lendo ${i + 1} de ${pdfs.length}: ${file.name}`)
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer())
+          const hash = await sha256(bytes)
+          const pages = await pdfToRows(bytes, loadPdf)
+          if (!looksLikePayslip(pages)) { out.push({ file: file.name, outcome: 'não é holerite', detail: '' }); continue }
+          const p = parsePayslipRows(pages)
+          const prev = existing.get(p.period)
+          if (prev === hash) { out.push({ file: file.name, outcome: 'já existia', detail: p.period }); continue }
+          await savePayslip(p, hash)
+          existing.set(p.period, hash)
+          if (p.period > lastPeriod) lastPeriod = p.period
+          out.push({
+            file: file.name, outcome: prev ? 'substituído' : 'importado',
+            detail: `${p.period}${p.warnings.length ? ` — conferir: ${p.warnings.join('; ')}` : ''}`,
+          })
+        } catch (e) { out.push({ file: file.name, outcome: 'erro', detail: (e as Error).message }) }
+      }
+      const fresh = await load()
+      // Show the newest month just imported.
+      const newest = lastPeriod && fresh?.find((x) => x.period.startsWith(lastPeriod))
+      if (newest) setSel(newest.id)
+    } catch (e) { out.push({ file: 'importação', outcome: 'erro', detail: (e as Error).message }) }
+    finally { setResults(out); setProgress(null); setBusy(false) }
   }
 
   const counts = OUTCOMES.map((o) => [o, results.filter((r) => r.outcome === o).length] as const).filter(([, n]) => n > 0)
@@ -132,7 +136,9 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
         </Help>
         {progress && <p className="muted">{progress}</p>}
         {counts.length > 0 && <>
-          <p><strong>{results.length} arquivo(s):</strong> {counts.map(([o, n]) => `${n} ${o}`).join(' · ')}</p>
+          <div className={`alert ${results.some((r) => r.outcome === 'erro') ? 'warn' : 'ok'}`} style={{ display: 'block', margin: '8px 0' }}>
+            <strong>{results.some((r) => r.outcome === 'erro') ? '⚠ Importação com problema.' : '✔ Importação concluída.'}</strong>{' '}
+            {results.length} arquivo(s): {counts.map(([o, n]) => `${n} ${o}`).join(' · ')}</div>
           <details open={results.some((r) => r.outcome === 'erro' || r.detail.includes('conferir'))}>
             <summary className="muted">Detalhe por arquivo</summary>
             {results.map((r) => (

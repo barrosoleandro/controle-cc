@@ -108,45 +108,48 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   async function onFiles(files: FileList | File[] | null, from?: Map<string, Origin & { file: File }>) {
     if (!files?.length) return
     origins.current = from ?? new Map(); setSeenNames([])
-    setBusy(true); setDone(null); setErrors([]); setPlans([]); setChoices({}); setDupDecision('skip'); setKeepDups(new Set())
+    setBusy(true); setDone(null); setErrors([]); setPayslips([]); setPlans([]); setChoices({}); setDupDecision('skip'); setKeepDups(new Set())
     const ps: ImportPlan[] = [], errs: string[] = [], slips: string[] = []
-    const pending: Pending[] = [] // rows of the files planned so far
-    let ignored = 0, duplicateFiles = 0
-    const already: string[] = []
-    // A folder brings everything in it, including files that are not statements.
-    const candidates = [...files].filter((f) => {
-      if (SUPPORTED.test(f.name)) return true
-      ignored++
-      return false
-    })
-    // Three layers keep rows from doubling up:
-    //  1. this set — byte-identical files inside the same selection;
-    //  2. importedHashes() — files already imported in a previous session;
-    //  3. the transaction fingerprint + unique(user_id, fingerprint) in the database,
-    //     which also catches the same operation arriving via both the CSV and a PDF.
-    const seen = await importedHashes()
-    // CSVs first: they carry the bank's own categories.
-    const ordered = candidates.sort((a, b) => Number(/\.pdf$/i.test(a.name)) - Number(/\.pdf$/i.test(b.name)))
-    let i = 0
-    for (const f of ordered) {
-      setProgress(`Lendo ${++i} de ${ordered.length}: ${f.name}`)
-      try {
-        const bytes = new Uint8Array(await f.arrayBuffer())
-        const hash = await sha256(bytes)
-        if (seen.has(hash)) { duplicateFiles++; already.push(f.name); continue }
-        seen.add(hash)
-        const { loadPdf } = await import('../lib/pdf') // pdf.js is loaded only when importing
-        const res = await parseStatement(f.name, bytes, loadPdf)
-        if (res.payslip) { await savePayslip(res.payslip, hash); slips.push(`${f.name} (${res.payslip.period})`); already.push(f.name); continue }
-        const plan = planImport(f.name, hash, res, ctx.data, pending)
-        ps.push(plan)
-        pending.push(...pendingOf(plan))
-      } catch (e) { errs.push(`${f.name}: ${(e as Error).message}`) }
-    }
-    setPlans(ps); setErrors(errs); setPayslips(slips); setSkipped({ ignored, duplicateFiles }); setSeenNames(already)
-    // Nothing left to import (all already in, or payslips): those files are done, move them now.
-    if (!ps.length && already.length) setDone(await archive(already) || null)
-    setProgress(null); setBusy(false)
+    // Anything failing outside a single file must still end with a message, not a stuck spinner.
+    try {
+      const pending: Pending[] = [] // rows of the files planned so far
+      let ignored = 0, duplicateFiles = 0
+      const already: string[] = []
+      // A folder brings everything in it, including files that are not statements.
+      const candidates = [...files].filter((f) => {
+        if (SUPPORTED.test(f.name)) return true
+        ignored++
+        return false
+      })
+      // Three layers keep rows from doubling up:
+      //  1. this set — byte-identical files inside the same selection;
+      //  2. importedHashes() — files already imported in a previous session;
+      //  3. the transaction fingerprint + unique(user_id, fingerprint) in the database,
+      //     which also catches the same operation arriving via both the CSV and a PDF.
+      const seen = await importedHashes()
+      // CSVs first: they carry the bank's own categories.
+      const ordered = candidates.sort((a, b) => Number(/\.pdf$/i.test(a.name)) - Number(/\.pdf$/i.test(b.name)))
+      let i = 0
+      for (const f of ordered) {
+        setProgress(`Lendo ${++i} de ${ordered.length}: ${f.name}`)
+        try {
+          const bytes = new Uint8Array(await f.arrayBuffer())
+          const hash = await sha256(bytes)
+          if (seen.has(hash)) { duplicateFiles++; already.push(f.name); continue }
+          seen.add(hash)
+          const { loadPdf } = await import('../lib/pdf') // pdf.js is loaded only when importing
+          const res = await parseStatement(f.name, bytes, loadPdf)
+          if (res.payslip) { await savePayslip(res.payslip, hash); slips.push(`${f.name} (${res.payslip.period})`); already.push(f.name); continue }
+          const plan = planImport(f.name, hash, res, ctx.data, pending)
+          ps.push(plan)
+          pending.push(...pendingOf(plan))
+        } catch (e) { errs.push(`${f.name}: ${(e as Error).message}`) }
+      }
+      setPlans(ps); setSkipped({ ignored, duplicateFiles }); setSeenNames(already)
+      // Nothing left to import (all already in, or payslips): those files are done, move them now.
+      if (!ps.length && already.length) setDone(await archive(already) || null)
+    } catch (e) { errs.push((e as Error).message) }
+    finally { setErrors(errs); setPayslips(slips); setProgress(null); setBusy(false) }
   }
 
   async function run() {
@@ -264,8 +267,9 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
           </p>
         )}
         {payslips.length > 0 && !busy && (
-          <p>{payslips.length} holerite(s) salvos: {payslips.join(', ')}.{' '}
-            <button className="link" onClick={() => ctx.go('Holerites')}>Ver em Holerites</button></p>
+          <div className="alert ok" style={{ display: 'block', margin: '8px 0' }}>
+            <strong>✔ {payslips.length} holerite(s) salvo(s):</strong> {payslips.join(', ')}.{' '}
+            <button className="link" onClick={() => ctx.go('Holerites')}>Ver em Holerites</button></div>
         )}
         {errors.length > 0 && <details>
           <summary className="err">{errors.length} arquivo(s) com problema</summary>
