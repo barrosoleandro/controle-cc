@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Ctx } from '../App'
+import { savePayslip } from '../lib/payroll'
 import { addRule, deriveOpening, ensureAccounts, executeImport, importedHashes, linkCardPayments, loadAll, pendingOf, planImport, sha256, updateAccount, type ImportPlan, type Pending } from '../lib/data'
 import { money } from '../lib/format'
 import { saveMerchantProfiles } from '../lib/ai'
@@ -39,6 +40,7 @@ async function moveToDone({ dir, name }: Origin, file: File) {
 export function ImportPage({ ctx }: { ctx: Ctx }) {
   const [plans, setPlans] = useState<ImportPlan[]>([])
   const [errors, setErrors] = useState<string[]>([])
+  const [payslips, setPayslips] = useState<string[]>([]) // payslips found in the selection, already saved
   const [skipped, setSkipped] = useState<{ ignored: number; duplicateFiles: number }>({ ignored: 0, duplicateFiles: 0 })
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
@@ -55,7 +57,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   const doneRef = useRef<HTMLDivElement>(null)
   // Files that came from a folder opened with write access, by name (only those can be moved).
   const origins = useRef(new Map<string, Origin & { file: File }>())
-  // Files skipped because an earlier import already has them: they are done too.
+  // Files with nothing left to import (already imported before, or payslips just saved): they are done too.
   const [seenNames, setSeenNames] = useState<string[]>([])
 
   useEffect(() => { if (done) doneRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }, [done])
@@ -66,18 +68,25 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
     dirRef.current?.setAttribute('directory', '')
   }, [])
 
-  /** Opens a folder with write access (Chrome/Edge), so imported files can go to `processado`. */
-  async function pickWritableFolder() {
+  /**
+   * Opens a folder with write access (Chrome/Edge), so imported files can go to the `processado`
+   * subfolder of the folder each one was read from. Subfolders are read too, except `processado`.
+   * Browsers without it (Safari, Firefox, phones) get the plain folder input: nothing can be moved there.
+   */
+  async function pickFolder() {
     const pick = (window as unknown as { showDirectoryPicker?: (o: { mode: 'readwrite' }) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker
-    if (!pick) { setErrors(['Este navegador não deixa o app mover arquivos. Use o Chrome ou o Edge no computador.']); return }
+    if (!pick) { dirRef.current?.click(); return }
     try {
-      const dir = await pick.call(window, { mode: 'readwrite' })
       const files: File[] = [], found = new Map<string, Origin & { file: File }>()
-      for await (const [name, h] of (dir as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries()) {
-        if (h.kind !== 'file' || !SUPPORTED.test(name)) continue
-        const file = await (h as FileSystemFileHandle).getFile()
-        files.push(file); found.set(name, { dir, name, file })
+      const walk = async (dir: FileSystemDirectoryHandle) => {
+        for await (const [name, h] of (dir as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries()) {
+          if (h.kind === 'directory') { if (name !== DONE_DIR) await walk(h as FileSystemDirectoryHandle); continue }
+          if (!SUPPORTED.test(name) || found.has(name)) continue
+          const file = await (h as FileSystemFileHandle).getFile()
+          files.push(file); found.set(name, { dir, name, file })
+        }
       }
+      await walk(await pick.call(window, { mode: 'readwrite' }))
       await onFiles(files, found)
     } catch (e) { if ((e as Error).name !== 'AbortError') setErrors([(e as Error).message]) }
   }
@@ -100,7 +109,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
     if (!files?.length) return
     origins.current = from ?? new Map(); setSeenNames([])
     setBusy(true); setDone(null); setErrors([]); setPlans([]); setChoices({}); setDupDecision('skip'); setKeepDups(new Set())
-    const ps: ImportPlan[] = [], errs: string[] = []
+    const ps: ImportPlan[] = [], errs: string[] = [], slips: string[] = []
     const pending: Pending[] = [] // rows of the files planned so far
     let ignored = 0, duplicateFiles = 0
     const already: string[] = []
@@ -128,12 +137,15 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         seen.add(hash)
         const { loadPdf } = await import('../lib/pdf') // pdf.js is loaded only when importing
         const res = await parseStatement(f.name, bytes, loadPdf)
+        if (res.payslip) { await savePayslip(res.payslip, hash); slips.push(`${f.name} (${res.payslip.period})`); already.push(f.name); continue }
         const plan = planImport(f.name, hash, res, ctx.data, pending)
         ps.push(plan)
         pending.push(...pendingOf(plan))
       } catch (e) { errs.push(`${f.name}: ${(e as Error).message}`) }
     }
-    setPlans(ps); setErrors(errs); setSkipped({ ignored, duplicateFiles }); setSeenNames(already)
+    setPlans(ps); setErrors(errs); setPayslips(slips); setSkipped({ ignored, duplicateFiles }); setSeenNames(already)
+    // Nothing left to import (all already in, or payslips): those files are done, move them now.
+    if (!ps.length && already.length) setDone(await archive(already) || null)
     setProgress(null); setBusy(false)
   }
 
@@ -226,8 +238,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
           <span className="muted">ou escolha no computador — pode ser vários de uma vez</span>
           <div className="row">
             <button className="primary" onClick={() => fileRef.current?.click()} disabled={busy}><Icon name="importar" size={16} /> Escolher arquivos</button>
-            <button onClick={() => dirRef.current?.click()} disabled={busy}><Icon name="pasta" size={16} /> Escolher uma pasta</button>
-            {'showDirectoryPicker' in window && <button onClick={pickWritableFolder} disabled={busy} title={`Depois de importar, os arquivos vão para a subpasta “${DONE_DIR}”`}><Icon name="pasta" size={16} /> Pasta com “{DONE_DIR}”</button>}
+            <button onClick={pickFolder} disabled={busy} title={'showDirectoryPicker' in window ? `Depois de importar, os arquivos vão para a subpasta “${DONE_DIR}” da pasta onde estavam` : undefined}><Icon name="pasta" size={16} /> Escolher uma pasta</button>
           </div>
           <input ref={fileRef} type="file" multiple accept=".csv,.pdf,.xlsx" onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} />
           <input ref={dirRef} type="file" multiple onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} />
@@ -239,8 +250,9 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
         <Help title="Detalhes sobre a importação">
           <p>Os arquivos são lidos no navegador; só as linhas extraídas vão para a base — os PDFs e CSVs nunca saem do aparelho.</p>
           <p>Itaú conta: extrato do app ou o Extrato Mensal. Millennium: extrato combinado. Se alguma linha já existir (mesma conta, data, valor e estabelecimento, de qualquer arquivo), o app pergunta o que fazer antes de gravar.</p>
-          <p>“Pasta com {DONE_DIR}” (Chrome e Edge) lê os extratos da pasta escolhida e, terminada a importação, move para a subpasta “{DONE_DIR}” os que entraram — e os que já tinham sido importados antes. Os que deram erro ficam onde estão. O navegador pede permissão de escrita na pasta.</p>
-          <p>A opção de pasta varre todas as subpastas e ignora o que não for CSV, PDF ou XLSX. No iPhone/iPad o Safari não permite
+          <p>“Escolher uma pasta” (Chrome e Edge no computador) lê a pasta e as subpastas e, terminada a importação, move cada arquivo que entrou — e os que já tinham sido importados antes, e os holerites — para a subpasta “{DONE_DIR}” da pasta onde ele estava. Os que deram erro ficam onde estão. O navegador pede permissão de escrita na pasta.
+            Arquivos escolhidos um a um ou arrastados não podem ser movidos: o navegador não dá acesso à pasta deles.</p>
+          <p>A opção de pasta ignora o que não for CSV, PDF ou XLSX e a própria “{DONE_DIR}”. No iPhone/iPad o Safari não permite
             selecionar pastas — use a seleção de arquivos, ou faça a importação em massa no computador.</p>
         </Help>
         {(progress || busy) && <div className="loading" style={{ justifyContent: 'flex-start', margin: '12px 0' }}><span className="spinner" />{progress ?? 'Processando…'}</div>}
@@ -250,6 +262,10 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
             {skipped.duplicateFiles > 0 && `${skipped.duplicateFiles} arquivo(s) já importados anteriormente foram pulados. `}
             {skipped.ignored > 0 && `${skipped.ignored} arquivo(s) fora do formato CSV/PDF/XLSX foram ignorados.`}
           </p>
+        )}
+        {payslips.length > 0 && !busy && (
+          <p>{payslips.length} holerite(s) salvos: {payslips.join(', ')}.{' '}
+            <button className="link" onClick={() => ctx.go('Holerites')}>Ver em Holerites</button></p>
         )}
         {errors.length > 0 && <details>
           <summary className="err">{errors.length} arquivo(s) com problema</summary>

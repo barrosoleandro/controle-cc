@@ -1,3 +1,4 @@
+import type { ParsedPayslip } from '../parsers/payslipPdf'
 export type Currency = 'EUR' | 'BRL'
 export type CategoryKind = 'income' | 'expense' | 'transfer'
 
@@ -49,6 +50,7 @@ export interface ParseResult {
   warnings: string[]
   accounts?: AccountHint[]
   cardStatements?: CardStatement[]
+  payslip?: ParsedPayslip // a bulletin de paie dropped among the statements: saved as a payslip, not as rows
 }
 
 export interface Account {
