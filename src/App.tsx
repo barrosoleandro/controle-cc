@@ -17,6 +17,7 @@ import { Transactions } from './pages/Transactions'
 import { ImportPage } from './pages/Import'
 import { Subscriptions } from './pages/Subscriptions'
 import { Simulation } from './pages/Simulation'
+import { Rescisao } from './pages/Rescisao'
 import { SettingsPage } from './pages/Settings'
 import { Payslips } from './pages/Payslips'
 import { Investments } from './pages/Investments'
@@ -214,6 +215,7 @@ function Shell() {
         {tab === 'Cartões' && <Cards key={key} ctx={ctx} />}
         {tab === 'Recorrentes' && <Subscriptions key={key} ctx={ctx} />}
         {tab === 'Simulação' && <Simulation key={key} ctx={ctx} />}
+        {tab === 'Rescisão' && <Rescisao key={key} ctx={ctx} />}
         {tab === 'Investimentos' && <Investments key={key} ctx={ctx} />}
         {tab === 'Mercado' && <Market key={key} />}
         {tab === 'Holerites' && <Payslips key={key} ctx={ctx} />}

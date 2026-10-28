@@ -11,6 +11,7 @@ import { countryOf } from '../domain/countries'
 import { ExplicarIA } from '../components/ExplicarIA'
 import { simulationPrompt } from '../domain/localAi'
 import { isTithe } from '../domain/categorize'
+import { isRescisao } from '../domain/rescisao'
 
 /** Measurement windows offered for the real base, in complete months. */
 const WINDOWS = [3, 6, 12]
@@ -93,7 +94,7 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
     savingsReturnPct: 3, inflationPct: 2, years: 10, startingSavings: 0, fxEurBrl: Math.round(fx.latest() * 100) / 100,
   })
 
-  const saved = data.scenarios.map((s) => ({ id: s.id, s: s.data as Scenario }))
+  const saved = data.scenarios.filter((s) => !isRescisao(s.data)).map((s) => ({ id: s.id, s: s.data as Scenario }))
   const [s, setS] = useState<Scenario>(() => make('FR'))
   const [editingId, setEditingId] = useState<string | null>(null)
   const r = runScenario(s)

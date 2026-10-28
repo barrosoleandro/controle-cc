@@ -480,8 +480,9 @@ export async function saveFx(rates: Map<string, number>) {
   for (let i = 0; i < rows.length; i += 500)
     must(await supabase.from('fx_rates').upsert(rows.slice(i, i + 500), { onConflict: 'user_id,date,quote' }))
 }
-export async function saveScenario(id: string | null, name: string, payload: unknown) {
-  if (id) must(await supabase.from('scenarios').update({ name, data: payload, updated_at: new Date().toISOString() }).eq('id', id))
-  else must(await supabase.from('scenarios').insert({ name, data: payload }))
+/** Updates the scenario, or inserts it when there is no id; returns its id either way. */
+export async function saveScenario(id: string | null, name: string, payload: unknown): Promise<string> {
+  if (id) { must(await supabase.from('scenarios').update({ name, data: payload, updated_at: new Date().toISOString() }).eq('id', id)); return id }
+  return must(await supabase.from('scenarios').insert({ name, data: payload }).select('id').single<{ id: string }>()).id
 }
 export async function deleteScenario(id: string) { must(await supabase.from('scenarios').delete().eq('id', id)) }
