@@ -18,6 +18,7 @@ import { ImportPage } from './pages/Import'
 import { Subscriptions } from './pages/Subscriptions'
 import { Simulation } from './pages/Simulation'
 import { Rescisao } from './pages/Rescisao'
+import { Previsao } from './pages/Previsao'
 import { SettingsPage } from './pages/Settings'
 import { Payslips } from './pages/Payslips'
 import { Investments } from './pages/Investments'
@@ -212,6 +213,7 @@ function Shell() {
         {tab === 'Painel' && <Dashboard key={key} ctx={ctx} />}
         {tab === 'Análises' && <Analysis key={key} ctx={ctx} sub={where.sub} />}
         {tab === 'Lançamentos' && <Transactions key={key} ctx={ctx} sub={where.sub} />}
+        {tab === 'Previsão' && <Previsao key={key} ctx={ctx} />}
         {tab === 'Cartões' && <Cards key={key} ctx={ctx} />}
         {tab === 'Recorrentes' && <Subscriptions key={key} ctx={ctx} />}
         {tab === 'Simulação' && <Simulation key={key} ctx={ctx} />}

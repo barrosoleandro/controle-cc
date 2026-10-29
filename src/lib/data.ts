@@ -1,3 +1,4 @@
+import type { ManualLine } from '../domain/monthPlan'
 import { supabase } from './supabase'
 import type { Account, AccountHint, BankMapEntry, Category, Currency, ParseResult, ParsedTransaction, Rule, Transaction } from '../domain/types'
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/defaults'
@@ -15,6 +16,8 @@ export interface DashboardPrefs {
   payroll?: { country?: string; inflation?: Record<string, Record<string, number>> }
   /** Previdência privada no Brasil, em BRL (Investimentos; a Rescisão parte destes saldos). */
   previdencia?: PrevidenciaSaldo
+  /** Previsão: lines added by hand to the current or next month (domain/monthPlan). */
+  manualLines?: ManualLine[]
 }
 export interface PrevidenciaSaldo {
   suas: number // saldo das suas contribuições

@@ -9,6 +9,7 @@ export const PAGES = {
   Análises: { icon: 'analises', desc: 'Gastos e receitas por período, categoria, estabelecimento e data.' },
   Lançamentos: { icon: 'lancamentos', desc: 'Tudo o que entrou e saiu das contas, mês a mês ou em lista.' },
   Cartões: { icon: 'cartoes', desc: 'Faturas do cartão, detalhe de cada uma e parcelas que ainda vêm.' },
+  Previsão: { icon: 'calendario', desc: 'Mês atual e seguinte: o que já entrou, o que você inseriu e o que ainda falta pela média.' },
   Recorrentes: { icon: 'recorrentes', desc: 'Assinaturas e cobranças que se repetem todo mês ou todo ano.' },
   Simulação: { icon: 'simulacao', desc: 'Cenários de salário e gastos a partir da sua base real.' },
   Rescisão: { icon: 'rescisao', desc: 'Quanto você recebe ao sair de um emprego CLT no Brasil.' },
@@ -24,7 +25,7 @@ export const TABS = Object.keys(PAGES) as Tab[]
 
 export const GROUPS: { label: string; tabs: Tab[] }[] = [
   { label: 'Visão geral', tabs: ['Painel', 'Análises'] },
-  { label: 'Dia a dia', tabs: ['Lançamentos', 'Cartões', 'Recorrentes'] },
+  { label: 'Dia a dia', tabs: ['Lançamentos', 'Previsão', 'Cartões', 'Recorrentes'] },
   { label: 'Planejamento', tabs: ['Simulação', 'Rescisão', 'Investimentos', 'Mercado'] },
   { label: 'Dados', tabs: ['Importar', 'Holerites', 'Ajustes'] },
 ]
