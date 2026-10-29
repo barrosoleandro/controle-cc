@@ -11,8 +11,9 @@ import type { CategoryKind } from '../domain/types'
 import { byName, isTithe } from '../domain/categorize'
 import { countryOf, flowsByCountry, type Country } from '../domain/countries'
 import { purchaseDate } from '../domain/simplify'
-import { billEffective, markHistory, monthlyBills, recurrenceCandidates } from '../domain/forecast'
+import { recurrenceCandidates } from '../domain/forecast'
 import { AsOf, Tabs } from '../components/Page'
+import { skipRecurring, useRecurring } from '../lib/recurring'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 const NEW = '__new' // select option that opens the new-category form
@@ -102,30 +103,10 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   </>
 }
 
-/**
- * Recurring expenses. The flag is per merchant and one click marks its whole history; the latest
- * mark decides from then on. Unmarked merchants of the Brazilian checking account start as the
- * automatic guess (they feed the transfer estimate); the rest start as not recurring.
- */
-function useRecurring(ctx: Ctx) {
-  const { data, etx } = ctx
-  const brChecking = useMemo(() => new Set(data.accounts.filter((a) => countryOf(a.bank) === 'Brasil' && a.type !== 'card').map((a) => a.id)), [data.accounts])
-  const marks = useMemo(() => data.settings.dashboard?.billMarks ?? {}, [data.settings.dashboard?.billMarks])
-  const autoBills = useMemo(() => new Set(monthlyBills(
-    etx.filter((t) => brChecking.has(t.account_id)).map((t) => ({ ...t, value: ctx.fx.convert(t.amount, t.currency, 'BRL', t.booking_date) })),
-    today(), skipRecurring).map((l) => l.label)), [etx, brChecking, ctx.fx])
-  const isBill = useCallback((t: { merchant: string }) => billEffective(t.merchant, marks, autoBills.has(t.merchant)), [marks, autoBills])
-  async function setRecurring(merchant: string, on: boolean) {
-    const months = [...etx.filter((t) => t.merchant === merchant).map((t) => t.month), currentMonth()]
-    await ctx.patchSettings({ dashboard: { ...data.settings.dashboard, billMarks: markHistory(marks, merchant, months, on) } })
-  }
-  return { marks, isBill, setRecurring }
-}
 type Rec = 'all' | 'yes' | 'no'
 /** The recurring filter: with one picked, only expenses of that kind pass. */
 const recPasses = (rec: Rec, isBill: (t: { merchant: string }) => boolean) => (t: { kind: string; merchant: string }) =>
   rec === 'all' || (t.kind === 'expense' && isBill(t) === (rec === 'yes'))
-const skipRecurring = (n: string) => isTithe(n) || n === 'Cartão Itaú'
 
 /** Spent in 3 of the last 6 months at similar values (±20%), not answered yet: asked under every view, closed until opened. */
 function RecurringQuestions({ ctx }: { ctx: Ctx }) {

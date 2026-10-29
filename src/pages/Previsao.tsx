@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { buildMonthPlan, nextMonth, type ManualLine, type PlanRow } from '../domain/monthPlan'
+import { buildMonthPlan, nextMonth, recurringExpectations, type ManualLine, type PlanRow } from '../domain/monthPlan'
+import { useRecurring } from '../lib/recurring'
 import { countryOf } from '../domain/countries'
 import { monthLabel } from '../lib/format'
 import { currentMonth, hiddenByDefault, last3, today, useFmt } from '../lib/hooks'
@@ -39,17 +40,21 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
     const v = fx.convert(Math.abs(l.amount), l.currency, ctx.currency, l.date)
     return { line: l, month: l.month, kind, categoryName: c?.name ?? 'Outros', value: kind === 'income' ? v : -v }
   }), [lines, catById, fx, ctx.currency])
-  const plans = useMemo(() => months.map((m) => buildMonthPlan(txs, manual, m, avgMonths)), [txs, manual, months[0], avgMonths]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Recurring expenses (the flag of Lançamentos) not charged yet in the month show as expected lines.
+  const { isBill } = useRecurring(ctx)
+  const recurring = useMemo(() => recurringExpectations(txs, (m) => isBill({ merchant: m }), avgMonths), [txs, isBill, avgMonths])
+  const plans = useMemo(() => months.map((m) => buildMonthPlan(txs, manual, m, avgMonths, recurring)), [txs, manual, months[0], avgMonths, recurring]) // eslint-disable-line react-hooks/exhaustive-deps
   const plan = plans[months.indexOf(month as typeof months[number])] ?? plans[0]
 
   const [open, setOpen] = useState<Set<string>>(() => new Set())
   const toggle = (k: string) => setOpen((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n })
   const [erro, setErro] = useState<string | null>(null)
+  const [ok, setOk] = useState<string | null>(null)
 
-  async function saveLines(next: ManualLine[]) {
+  async function saveLines(next: ManualLine[]): Promise<boolean> {
     setErro(null)
-    try { await ctx.patchSettings({ dashboard: { ...data.settings.dashboard, manualLines: next } }) }
-    catch (e) { setErro(`Não foi possível salvar: ${(e as Error).message}`) }
+    try { await ctx.patchSettings({ dashboard: { ...data.settings.dashboard, manualLines: next } }); return true }
+    catch (e) { setErro(`Não foi possível salvar: ${(e as Error).message}`); return false }
   }
   const updateLine = (id: string, patch: Partial<ManualLine>) => saveLines(lines.map((l) => (l.id === id ? { ...l, ...patch } : l)))
   const removeLine = (id: string) => saveLines(lines.filter((l) => l.id !== id))
@@ -58,16 +63,28 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
   const firstDay = (m: string) => (m === cur ? today() : `${m}-01`)
   const [novo, setNovo] = useState({ date: firstDay(cur), description: '', category_id: '', amount: 0 })
   const novoMes = novo.date.slice(0, 7)
-  const podeCriar = novo.category_id && novo.amount > 0 && months.includes(novoMes as typeof months[number])
+  const novoCat = catById.get(novo.category_id)
+  // Why "Adicionar" is off, said next to it instead of a silent disabled button.
+  const falta = !novo.category_id ? 'escolha a categoria'
+    : novoCat?.kind === 'transfer' ? 'categoria de transferência não entra na previsão: escolha uma de receita ou despesa'
+      : !(novo.amount > 0) ? 'informe um valor maior que zero'
+        : !months.includes(novoMes as typeof months[number]) ? `a data tem que ser em ${monthLabel(months[0])} ou ${monthLabel(months[1])}` : null
   async function addLine() {
-    if (!podeCriar) return
+    if (falta || !novoCat) return
     const line: ManualLine = { id: crypto.randomUUID(), month: novoMes, date: novo.date, description: novo.description.trim() || 'Linha manual', category_id: novo.category_id, amount: novo.amount, currency: ctx.currency }
-    await saveLines([...lines, line])
+    if (!(await saveLines([...lines, line]))) return
+    // Show where it went: its month, with its category open.
+    setMonth(novoMes)
+    setOpen((prev) => new Set(prev).add(`${novoMes}/${novoCat.kind}/${novoCat.name}`))
+    setOk(`Linha “${line.description}” adicionada em ${novoCat.name}, ${monthLabel(novoMes)}.`)
     setNovo({ ...novo, description: '', amount: 0 })
   }
-  const startLineIn = (row: PlanRow) => {
+  /** "+ linha nesta categoria": the line is created right there, with what is still missing, ready to edit. */
+  async function addLineIn(row: PlanRow) {
     const c = data.categories.find((x) => x.name === row.name && x.kind === row.kind)
-    setNovo({ date: firstDay(month), description: '', category_id: c?.id ?? '', amount: Math.round(row.falta * 100) / 100 })
+    if (!c) { setErro(`“${row.name}” não é uma categoria cadastrada: use o formulário “Inserir linha” e escolha a categoria.`); return }
+    const line: ManualLine = { id: crypto.randomUUID(), month, date: firstDay(month), description: 'Linha manual', category_id: c.id, amount: Math.round(row.falta * 100) / 100, currency: ctx.currency }
+    if (await saveLines([...lines, line])) setOk(`Linha adicionada em ${c.name}: ajuste a descrição e o valor na própria linha.`)
   }
 
   const section = (kind: 'income' | 'expense') => {
@@ -88,7 +105,8 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
               <td className="num muted">{fmt(r.media)}</td>
               <td className="num">{fmt(r.realizado)}</td>
               <td className="num">{r.manual ? fmt(r.manual) : <span className="muted">·</span>}</td>
-              <td className={`num ${r.falta > 0 ? 'warn' : 'muted'}`}>{r.falta ? fmt(r.falta) : '·'}</td>
+              <td className={`num ${r.falta > 0 ? 'warn' : 'muted'}`} title={r.recorrente ? `inclui ${fmt(r.recorrente)} de recorrentes ainda não lançados` : undefined}>
+                {r.falta ? fmt(r.falta) : '·'}{r.pendentes.length > 0 && <span style={{ fontSize: 12 }}> ↻{r.pendentes.length}</span>}</td>
               <td className="num"><strong>{fmt(r.previsto)}</strong></td>
             </tr>
             {isOpen && <>
@@ -96,6 +114,12 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
                 <tr key={x.id} className="muted" style={{ fontSize: 13 }}>
                   <td style={{ paddingLeft: 24 }} title="Lançamento importado: não pode ser alterado aqui">🔒 {x.booking_date.slice(8, 10)}/{x.booking_date.slice(5, 7)} · {x.description} <span style={{ fontSize: 12 }}>· {x.accountName}</span></td>
                   <td /><td className="num">{fmt(kind === 'income' ? x.value : -x.value)}</td><td /><td /><td />
+                </tr>
+              ))}
+              {r.pendentes.map((e) => (
+                <tr key={`rec/${e.merchant}`} className="muted" style={{ fontSize: 13 }}>
+                  <td style={{ paddingLeft: 24 }} title="Recorrente ainda não lançado neste mês: valor pela média dele nos últimos meses">↻ previsto ~{String(e.day).padStart(2, '0')}/{plan.month.slice(5, 7)} · {e.merchant}</td>
+                  <td /><td /><td /><td className="num warn">{fmt(e.amount)}</td><td />
                 </tr>
               ))}
               {mine.map(({ line: l }) => (
@@ -110,13 +134,13 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
                     </div>
                   </td>
                   <td /><td />
-                  <td className="num"><input type="number" min={0} step={10} defaultValue={l.amount} style={{ width: 110 }} aria-label="Valor"
+                  <td className="num"><input type="number" min={0} step="any" inputMode="decimal" defaultValue={l.amount} style={{ width: 110 }} aria-label="Valor"
                     onBlur={(e) => { const v = Number(e.target.value) || 0; if (v !== l.amount) updateLine(l.id, { amount: v }) }} />
                     {l.currency !== ctx.currency && <span className="muted" style={{ fontSize: 12 }}> {l.currency}</span>}</td>
                   <td /><td><button onClick={() => removeLine(l.id)} aria-label="Excluir linha">✕</button></td>
                 </tr>
               ))}
-              <tr><td colSpan={6} style={{ paddingLeft: 24 }}><button className="link" style={{ fontSize: 12 }} onClick={() => startLineIn(r)}>+ linha nesta categoria</button></td></tr>
+              <tr><td colSpan={6} style={{ paddingLeft: 24 }}><button className="link" style={{ fontSize: 12 }} onClick={() => addLineIn(r)}>+ linha nesta categoria</button></td></tr>
             </>}
           </Fragment>
         )
@@ -160,16 +184,17 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
     </div>
 
     <div className="card" style={{ gridColumn: '1/-1' }}>
-      <h3>Inserir linha</h3>
+      <h3 id="nova-linha">Inserir linha</h3>
       <div className="form">
-        <label>Data<input type="date" value={novo.date} min={`${months[0]}-01`} max={`${months[1]}-31`} onChange={(e) => setNovo({ ...novo, date: e.target.value })} /></label>
-        <label>Descrição<input value={novo.description} placeholder="ex.: IPVA, conserto do carro" onChange={(e) => setNovo({ ...novo, description: e.target.value })} /></label>
-        <label>Categoria<CategorySelect ctx={ctx} value={novo.category_id} empty="Escolha…" label="Categoria da linha" onChange={(id) => setNovo({ ...novo, category_id: id })} /></label>
-        <label>Valor ({ctx.currency})<input type="number" min={0} step={10} value={novo.amount || ''} onChange={(e) => setNovo({ ...novo, amount: Number(e.target.value) || 0 })} /></label>
+        <label>Data<input type="date" value={novo.date} onChange={(e) => { setNovo((n) => ({ ...n, date: e.target.value })); setOk(null) }} /></label>
+        <label>Descrição<input value={novo.description} placeholder="ex.: IPVA, conserto do carro" onChange={(e) => { setNovo((n) => ({ ...n, description: e.target.value })); setOk(null) }} /></label>
+        <label>Categoria<CategorySelect ctx={ctx} value={novo.category_id} empty="Escolha…" label="Categoria da linha" onChange={(id) => { setNovo((n) => ({ ...n, category_id: id })); setOk(null) }} /></label>
+        <label>Valor ({ctx.currency})<input type="number" min={0} step="any" inputMode="decimal" value={novo.amount || ''} onChange={(e) => { setNovo((n) => ({ ...n, amount: Number(e.target.value) || 0 })); setOk(null) }} /></label>
       </div>
       <div className="row" style={{ marginTop: 12 }}>
-        <button className="primary" disabled={!podeCriar} onClick={addLine}>Adicionar</button>
-        {!months.includes(novoMes as typeof months[number]) && <span className="warn">A data tem que ser em {monthLabel(months[0])} ou {monthLabel(months[1])}.</span>}
+        <button className="primary" disabled={!!falta} onClick={addLine}>Adicionar</button>
+        {falta && <span className="muted">Para adicionar: {falta}.</span>}
+        {ok && <span className="pos">✔ {ok}</span>}
         {erro && <span className="err">{erro}</span>}
       </div>
     </div>
@@ -191,6 +216,8 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
           <strong> Realizado</strong>: lançamentos importados no mês (🔒, não mudam aqui). <strong>Manual</strong>: as linhas que você inseriu, que podem ser editadas e excluídas.</p>
         <p><strong>Falta</strong> = média − realizado − manual, nunca abaixo de zero: uma linha manual ocupa o lugar da média em vez de somar a ela.
           <strong> Previsto</strong> = realizado + manual + falta. Transferências entre contas ficam de fora.</p>
+        <p><strong>↻ Recorrentes</strong>: cada estabelecimento marcado como recorrente em Lançamentos que ainda não foi lançado no mês aparece como previsto, pela média dele nos meses em que cobrou.
+          Na categoria, o que falta é pelo menos a soma desses recorrentes, mesmo que a média da categoria seja menor.</p>
         <p>As linhas manuais valem para qualquer conta marcada. Quando o lançamento de verdade for importado, exclua a linha manual correspondente.</p>
       </Help>
     </div>

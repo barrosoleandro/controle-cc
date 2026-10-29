@@ -16,7 +16,9 @@ export interface ManualLine {
   currency: 'EUR' | 'BRL'
 }
 
-export interface PlanTx { month: string; value: number; kind: 'income' | 'expense' | 'transfer'; categoryName: string }
+export interface PlanTx { month: string; value: number; kind: 'income' | 'expense' | 'transfer'; categoryName: string; merchant?: string; booking_date?: string }
+/** A recurring expense expected every month, until its charge shows up in the month. */
+export interface RecurringExpect { merchant: string; categoryName: string; amount: number; day: number }
 export interface PlanManual { month: string; value: number; kind: 'income' | 'expense' | 'transfer'; categoryName: string }
 
 export interface PlanRow {
@@ -25,23 +27,29 @@ export interface PlanRow {
   media: number
   realizado: number
   manual: number
+  recorrente: number // recurring expenses still to come this month
+  pendentes: RecurringExpect[]
   falta: number
   previsto: number
 }
-export interface PlanTotals { media: number; realizado: number; manual: number; falta: number; previsto: number }
+export interface PlanTotals { media: number; realizado: number; manual: number; recorrente: number; falta: number; previsto: number }
 export interface MonthPlan { month: string; income: PlanRow[]; expense: PlanRow[]; totals: { income: PlanTotals; expense: PlanTotals }; resultado: number }
 
 /** Sign that makes a value positive for its kind: income counts up, expense counts down (refunds reduce it). */
 const signed = (kind: 'income' | 'expense', v: number) => (kind === 'income' ? v : -v)
 
-export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: string, avgMonths: string[]): MonthPlan {
+/**
+ * `recurring`: expected recurring expenses; one still missing from the month counts in its
+ * category, so falta = max(0, max(recorrentes pendentes, média − realizado) − manual).
+ */
+export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: string, avgMonths: string[], recurring: RecurringExpect[] = []): MonthPlan {
   const avgSet = new Set(avgMonths)
   const n = Math.max(1, avgMonths.length)
   const rows = new Map<string, PlanRow>()
   const row = (name: string, kind: 'income' | 'expense') => {
     const key = `${kind}/${name}`
     let r = rows.get(key)
-    if (!r) { r = { name, kind, media: 0, realizado: 0, manual: 0, falta: 0, previsto: 0 }; rows.set(key, r) }
+    if (!r) { r = { name, kind, media: 0, realizado: 0, manual: 0, recorrente: 0, pendentes: [], falta: 0, previsto: 0 }; rows.set(key, r) }
     return r
   }
   for (const t of txs) {
@@ -53,17 +61,46 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
     if (m.kind === 'transfer' || m.month !== month) continue
     row(m.categoryName, m.kind).manual += signed(m.kind, m.value)
   }
+  const paid = new Set(txs.filter((t) => t.month === month && t.kind === 'expense' && t.merchant).map((t) => t.merchant))
+  for (const e of recurring) {
+    if (paid.has(e.merchant)) continue
+    const r = row(e.categoryName, 'expense')
+    r.recorrente += e.amount
+    r.pendentes.push(e)
+  }
   const all = [...rows.values()].map((r) => {
-    const falta = Math.max(0, r.media - r.realizado - r.manual)
-    return { ...r, falta, previsto: r.realizado + r.manual + falta }
-  }).filter((r) => Math.abs(r.media) > 0.005 || Math.abs(r.realizado) > 0.005 || Math.abs(r.manual) > 0.005)
+    const falta = Math.max(0, Math.max(r.recorrente, r.media - r.realizado) - r.manual)
+    return { ...r, falta, previsto: r.realizado + r.manual + falta, pendentes: r.pendentes.sort((a, b) => a.day - b.day) }
+  }).filter((r) => Math.abs(r.media) > 0.005 || Math.abs(r.realizado) > 0.005 || Math.abs(r.manual) > 0.005 || r.recorrente > 0.005)
   const pick = (kind: 'income' | 'expense') => all.filter((r) => r.kind === kind).sort((a, b) => b.previsto - a.previsto)
   const sum = (list: PlanRow[]): PlanTotals => list.reduce((s, r) => ({
-    media: s.media + r.media, realizado: s.realizado + r.realizado, manual: s.manual + r.manual, falta: s.falta + r.falta, previsto: s.previsto + r.previsto,
-  }), { media: 0, realizado: 0, manual: 0, falta: 0, previsto: 0 })
+    media: s.media + r.media, realizado: s.realizado + r.realizado, manual: s.manual + r.manual, recorrente: s.recorrente + r.recorrente,
+    falta: s.falta + r.falta, previsto: s.previsto + r.previsto,
+  }), { media: 0, realizado: 0, manual: 0, recorrente: 0, falta: 0, previsto: 0 })
   const income = pick('income'), expense = pick('expense')
   const totals = { income: sum(income), expense: sum(expense) }
   return { month, income, expense, totals, resultado: totals.income.previsto - totals.expense.previsto }
+}
+
+/**
+ * What each recurring merchant is expected to charge: its average over the months it charged in
+ * `avgMonths`, in the category and on the day of its latest charge. Merchants with no charge in
+ * those months are left out (nothing to base the value on).
+ */
+export function recurringExpectations(txs: PlanTx[], isRecurring: (merchant: string) => boolean, avgMonths: string[]): RecurringExpect[] {
+  const set = new Set(avgMonths)
+  const by = new Map<string, { perMonth: Map<string, number>; last: PlanTx }>()
+  for (const t of txs) {
+    if (t.kind !== 'expense' || !t.merchant || !set.has(t.month) || !isRecurring(t.merchant)) continue
+    const m = by.get(t.merchant) ?? { perMonth: new Map(), last: t }
+    m.perMonth.set(t.month, (m.perMonth.get(t.month) ?? 0) - t.value)
+    if ((t.booking_date ?? '') >= (m.last.booking_date ?? '')) m.last = t
+    by.set(t.merchant, m)
+  }
+  return [...by].map(([merchant, m]) => {
+    const vals = [...m.perMonth.values()]
+    return { merchant, categoryName: m.last.categoryName, amount: vals.reduce((s, v) => s + v, 0) / vals.length, day: Number((m.last.booking_date ?? '').slice(8, 10)) || 1 }
+  }).filter((e) => e.amount > 0.005)
 }
 
 /** The month after `month` (yyyy-mm). */
