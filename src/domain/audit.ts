@@ -68,3 +68,37 @@ export function unpairedTransfers(txs: PairTx[], convert: (amount: number, from:
   }
   return out
 }
+
+/** An import as the log keeps it; `skipped` only exists for imports logged with migration 007. */
+export interface LogRecord {
+  id: string; file_name: string; source: string; created_at: string; rows_total: number; rows_inserted: number
+  skipped?: { date: string; account_ref: string; description: string; amount: number; currency: 'EUR' | 'BRL'; reason: string; matches?: string }[]
+}
+export interface LogAudit {
+  record: LogRecord
+  inBase: number // rows of this import in the database now
+  notWritten: number // rows of the file the import did not write (taken for duplicates, or no account)
+  lost: number // written according to the log but not in the database: dropped by it, or deleted since
+  rows: (AuditRow & { reason: string; matches?: string })[] // the logged skipped rows, checked again
+}
+
+/**
+ * Audit from the import log alone, without the files: per import, how many rows the file had,
+ * how many were written and how many are in the database now; and, where the log keeps them,
+ * each skipped row checked again against the database with the strict rule of auditRows.
+ */
+export function auditImportLog(records: LogRecord[], stored: (AuditStored & { importId?: string | null })[], knownRefs: Set<string>): LogAudit[] {
+  const count = new Map<string, number>()
+  for (const s of stored) if (s.importId) count.set(s.importId, (count.get(s.importId) ?? 0) + 1)
+  return records.map((record) => {
+    const inBase = count.get(record.id) ?? 0
+    const skipped = record.skipped ?? []
+    const checked = auditRows(skipped.map((k) => ({ accountRef: k.account_ref, bookingDate: k.date, description: k.description, amount: k.amount, currency: k.currency })), stored, knownRefs)
+    return {
+      record, inBase,
+      notWritten: Math.max(0, record.rows_total - record.rows_inserted),
+      lost: Math.max(0, record.rows_inserted - inBase),
+      rows: checked.map((r, i) => ({ ...r, reason: skipped[i].reason, matches: skipped[i].matches })),
+    }
+  })
+}

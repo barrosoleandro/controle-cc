@@ -149,6 +149,9 @@ export async function sha256(bytes: Uint8Array) {
   return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+/** A row of a file that was not written, and why (import log, migration 007). */
+export interface SkippedRow { date: string; account_ref: string; description: string; amount: number; currency: Currency; reason: 'repetida' | 'recusada pela base' | 'conta não cadastrada'; matches?: string }
+
 export interface ImportRecord {
   id: string
   file_name: string
@@ -157,6 +160,7 @@ export interface ImportRecord {
   rows_total: number
   rows_inserted: number
   created_at: string
+  skipped?: SkippedRow[] // absent before migration 007
 }
 
 export async function listImports(): Promise<ImportRecord[]> {
@@ -249,7 +253,16 @@ export async function executeImport(plan: ImportPlan, data: AppData, forced: Set
   }).select().single()) as { id: string }
   // Rows the user chose to keep although they repeat get their own fingerprint.
   const kept = plan.duplicates.filter((d) => forced.has(d.id)).map((d, i) => ({ ...d.tx, fingerprint: `${d.tx.fingerprint}|mantida-${Date.now()}-${i}` }))
-  const rows = [...newRowsOf(plan.result, data).fresh, ...kept]
+  const { fresh, dups } = newRowsOf(plan.result, data)
+  const wanted = [...fresh, ...kept]
+  // Every row left out goes to the import log, so the audit can find it without the file.
+  const skip = (t: ParsedTransaction, reason: SkippedRow['reason'], matches?: string): SkippedRow =>
+    ({ date: t.bookingDate, account_ref: t.accountRef, description: t.description, amount: t.amount, currency: t.currency, reason, ...(matches ? { matches } : {}) })
+  const skipped: SkippedRow[] = [
+    ...dups.filter((d) => !forced.has(`${plan.fileName}#${d.tx.fingerprint}`)).map((d) => skip(d.tx, 'repetida', d.matches)),
+    ...wanted.filter((t) => !accByRef.has(t.accountRef)).map((t) => skip(t, 'conta não cadastrada')),
+  ]
+  const rows = wanted
     .filter((t) => accByRef.has(t.accountRef))
     .map((t) => {
       const acc = accByRef.get(t.accountRef)!
@@ -262,9 +275,16 @@ export async function executeImport(plan: ImportPlan, data: AppData, forced: Set
         ...(t.statementDue ? { statement_due: t.statementDue } : {}), // column from migration 004
       }
     })
+  // The database drops a row whose fingerprint is already stored, without an error: asking for
+  // the rows written back tells which ones it dropped.
+  let inserted = 0
   for (let i = 0; i < rows.length; i += 500) {
-    const r = await supabase.from('transactions').upsert(rows.slice(i, i + 500), { onConflict: 'user_id,fingerprint', ignoreDuplicates: true })
+    const chunk = rows.slice(i, i + 500)
+    const r = await supabase.from('transactions').upsert(chunk, { onConflict: 'user_id,fingerprint', ignoreDuplicates: true }).select('fingerprint')
     if (r.error) throw new Error(needs004(r.error.message))
+    const got = new Set((r.data ?? []).map((x: { fingerprint: string }) => x.fingerprint))
+    inserted += got.size
+    for (const t of wanted.filter((w) => chunk.some((c) => c.fingerprint === w.fingerprint) && !got.has(w.fingerprint))) skipped.push(skip(t, 'recusada pela base', 'impressão digital igual à de uma linha já gravada'))
   }
   const cps = plan.result.checkpoints.filter((c) => accByRef.has(c.accountRef)).map((c) => ({
     account_id: accByRef.get(c.accountRef)!.id, date: c.date, balance: c.balance, source: plan.result.source,
@@ -278,8 +298,10 @@ export async function executeImport(plan: ImportPlan, data: AppData, forced: Set
     const r = await supabase.from('card_statements').upsert(bills, { onConflict: 'account_id,due_date' })
     if (r.error) throw new Error(needs004(r.error.message))
   }
-  must(await supabase.from('imports').update({ rows_inserted: rows.length }).eq('id', imp.id))
-  return rows.length
+  // Without migration 007 there is no log column: the count alone is still saved.
+  const logged = await supabase.from('imports').update({ rows_inserted: inserted, skipped }).eq('id', imp.id)
+  if (logged.error) must(await supabase.from('imports').update({ rows_inserted: inserted }).eq('id', imp.id))
+  return inserted
 }
 
 /**
