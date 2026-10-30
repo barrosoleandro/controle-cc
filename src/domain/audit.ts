@@ -102,3 +102,18 @@ export function auditImportLog(records: LogRecord[], stored: (AuditStored & { im
     }
   })
 }
+
+/** Category shown for a transfer with no other side in the user's accounts: money from or to outside. */
+export const EXTERNAL = 'Transferência externa'
+
+/**
+ * Transfers whose other side is in none of the user's accounts are money that came from or went
+ * outside (a savings account not in the app, someone else): they count as income or expense, in
+ * the category EXTERNAL. Paired ones stay transfers. `skip`: transfers never turned (card bill
+ * payments, whose purchases are already counted, and rows of card accounts).
+ */
+export function withExternalTransfers<T extends PairTx & { categoryName: string }>(txs: T[], convert: (amount: number, from: string, to: string, date: string) => number, skip: (t: T) => boolean): T[] {
+  const ids = new Set(unpairedTransfers(txs, convert).filter((t) => !skip(t as T)).map((t) => t.id))
+  if (!ids.size) return txs
+  return txs.map((t) => (ids.has(t.id) ? { ...t, kind: t.amount > 0 ? 'income' : 'expense', categoryName: EXTERNAL } : t))
+}

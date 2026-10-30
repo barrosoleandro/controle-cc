@@ -1,11 +1,14 @@
 import { useMemo } from 'react'
 import type { Ctx } from '../App'
-import { balanceSeries, lastCompleteMonths } from '../domain/analytics'
+import { balanceSeries, lastCompleteMonths, type EnrichedTx } from '../domain/analytics'
 import { detectSubscriptions } from '../domain/subscriptions'
 import { isTithe } from '../domain/categorize'
 import { money } from './format'
 import type { AppData } from './data'
-import type { Account } from '../domain/types'
+import type { Account, Currency } from '../domain/types'
+import type { FxTable } from '../domain/fx'
+import { withExternalTransfers } from '../domain/audit'
+import { isCardBillPayment } from '../domain/forecast'
 
 export const today = () => new Date().toISOString().slice(0, 10)
 /** The month every page opens on: the current one, even before its first transaction. */
@@ -61,3 +64,17 @@ export function useSubscriptions(ctx: Ctx) {
 
 export const useFmt = (ctx: Ctx) => useMemo(() => money(ctx.currency), [ctx.currency])
 export const last3 = () => lastCompleteMonths(new Date(), 3)
+
+/**
+ * The enriched transactions with each transfer that has no other side in the user's accounts
+ * turned into income or expense ("Transferência externa"): e.g. a resgate from a savings account
+ * that is not in the app is money in. Card bill payments and card accounts stay as they are.
+ */
+export function externalize<T extends EnrichedTx>(etx: T[], accounts: Account[], fx: FxTable): T[] {
+  const cards = new Set(accounts.filter((a) => a.type === 'card').map((a) => a.id))
+  const out = withExternalTransfers(etx.map((t) => ({ ...t, date: t.booking_date, amount: Number(t.amount) })),
+    (amount, from, to, date) => fx.convert(amount, from as Currency, to as Currency, date),
+    (t) => cards.has(t.account_id) || isCardBillPayment({ bank_category: t.bank_category, description: t.description }))
+  return out as T[]
+}
+export const useExternalized = (ctx: Ctx) => useMemo(() => externalize(ctx.etx, ctx.data.accounts, ctx.fx), [ctx.etx, ctx.data.accounts, ctx.fx])

@@ -3,7 +3,7 @@ import type { Ctx } from '../App'
 import { addCategory, loadAll, markAiNote, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote, type AppData } from '../lib/data'
 import { CategorySelect } from '../components/CategorySelect'
 import { monthLabel, money } from '../lib/format'
-import { currentMonth, hiddenByDefault, last3, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
+import { currentMonth, externalize, hiddenByDefault, last3, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
 import { Menu } from './analysis/shared'
 import { balanceSeries, enrich } from '../domain/analytics'
 import { buildPeriod, monthBalances, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
@@ -137,7 +137,8 @@ function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accou
       const sim = accounts.map((a) => ({ id: a.id, name: a.name, currency: a.currency, opening: monthBalances([a], data.transactions, months, (v) => v).opening[0],
         bank: Object.fromEntries(data.checkpoints.filter((c) => c.account_id === a.id).map((c) => [c.date, Number(c.balance)])) }))
       const ids = new Set(accounts.map((a) => a.id))
-      const etx = enrich(data.transactions, data.categories, data.accounts, ctx.fx, ctx.currency)
+      // A transfer with no other side in the user's accounts counts as money from or to outside.
+      const etx = externalize(enrich(data.transactions, data.categories, data.accounts, ctx.fx, ctx.currency), data.accounts, ctx.fx)
       const txs = etx.filter((t) => ids.has(t.account_id)).map((t) => ({ ...t, amount: Number(t.amount), merchant: t.merchant || '(sem descrição)' }))
       const rows = buildSimSheet(sim, txs, months, cur, last3(),
         (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel, brazilLink(cur, data, etx), findSalaryCategory(data.categories)?.name)

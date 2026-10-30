@@ -136,4 +136,16 @@ describe('simulation sheet', () => {
     expect(v('Diferença (planilha − banco)', 0)).toBe(0)
     expect(v('Diferença (planilha − banco)', 1)).toBe(1500)
   })
+
+  it('Brazil: money from abroad that became income (no other side) still counts as the month sent', () => {
+    const br: SimTx[] = [
+      ...['2026-07', '2026-08', '2026-09'].map((m) => tx(m, -500, 'expense', 'Saúde', 'UNIMED', 'i')),
+      { ...tx('2026-10', 900, 'income', 'Transferência externa', 'WISE', 'i'), description: 'WISE PAYMENTS' },
+    ]
+    const accs = [{ id: 'a', name: 'BCP', currency: 'EUR', opening: 500 }, { id: 'i', name: 'Itaú', currency: 'BRL', opening: 100 }]
+    const rec = (m: string, kind: 'income' | 'expense') => kind === 'expense' && m === 'UNIMED'
+    const v = evaluate(buildSimSheet(accs, br, months, '2026-10', avg, rec, (m) => m, { from: 'a', to: 'i', rate: 6, bill: () => 0 }))
+    expect(v(RECEIVED, 2)).toBe(0) // October: already sent
+    expect(v(RECEIVED, 3)).toBeGreaterThan(0) // November: estimated
+  })
 })

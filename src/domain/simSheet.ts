@@ -20,6 +20,7 @@
 import type { Cell } from 'write-excel-file/browser'
 import { nextMonth, recurringExpectations, steadyIncomes, type PlanTx } from './monthPlan'
 import { isCardBillPayment, sentToBrazil } from './forecast'
+import { EXTERNAL } from './audit'
 
 export type Kind = 'income' | 'expense' | 'transfer'
 export interface SimTx { account_id: string; month: string; amount: number; kind: Kind; categoryName: string; merchant: string; booking_date: string; description?: string; bank_category?: string | null }
@@ -67,7 +68,7 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
   const r = () => rows.length + 1 // Excel number of the row about to be pushed
   // Brazil: the received row and its formula ingredients, filled in once every block has its rows.
   const est = { months: [] as number[], sentRow: 0, receivedRow: 0, openingRow: 0, bills: [] as number[] }
-  const arrived = link ? new Set(months.filter((m) => sentToBrazil(txs.filter((t) => t.account_id === link.to).map((t) => ({ ...t, value: t.amount, description: t.description ?? '' })), m))) : new Set<string>()
+  const arrived = link ? new Set(months.filter((m) => sentToBrazil(txs.filter((t) => t.account_id === link.to && t.kind !== 'expense').map((t) => ({ ...t, kind: 'transfer', value: t.amount, description: t.description ?? '' })), m))) : new Set<string>()
   if (link) est.months = months.map((_, i) => i).filter((i) => ahead(i) && !arrived.has(months[i]))
 
   for (const a of accounts) {
@@ -114,7 +115,7 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     }
     // Future months: the rest of each category up to its 3-month average.
     const media = new Map<string, number>()
-    for (const t of mine) if (t.kind !== 'transfer' && t.categoryName !== BILL && avgSet.has(t.month)) media.set(`${t.kind}/${t.categoryName}`, (media.get(`${t.kind}/${t.categoryName}`) ?? 0) + mag(t.kind, t.amount) / avgMonths.length)
+    for (const t of mine) if (t.kind !== 'transfer' && t.categoryName !== BILL && t.categoryName !== EXTERNAL && avgSet.has(t.month)) media.set(`${t.kind}/${t.categoryName}`, (media.get(`${t.kind}/${t.categoryName}`) ?? 0) + mag(t.kind, t.amount) / avgMonths.length)
     for (const [key, avg] of media) {
       const kind = key.slice(0, key.indexOf('/')) as Kind, cat = key.slice(key.indexOf('/') + 1)
       for (let i = cur + 1; cur >= 0 && i < months.length; i++) {

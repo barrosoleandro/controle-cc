@@ -77,3 +77,19 @@ describe('audit from the import log', () => {
     expect(a.rows[0].match?.description).toBe('VIR SEPA CPT')
   })
 })
+
+describe('transfers with no other side count as money from or to outside', () => {
+  const t = (id: string, account_id: string, date: string, amount: number, kind = 'transfer') => ({ id, account_id, date, amount, currency: 'EUR', description: id, kind, categoryName: kind === 'transfer' ? 'Transfer' : 'Mercado' })
+  const same = (a: number) => a
+  it('the resgate from a savings account not in the app becomes income; a paired transfer stays', async () => {
+    const { withExternalTransfers, EXTERNAL } = await import('../src/domain/audit')
+    const out = withExternalTransfers([t('resgate', 'cc', '2026-10-22', 1000), t('out', 'cc', '2026-10-02', -300), t('in', 'sv', '2026-10-03', 300), t('lidl', 'cc', '2026-10-05', -50, 'expense')], same, () => false)
+    expect(out.map((x) => [x.id, x.kind, x.categoryName])).toEqual([
+      ['resgate', 'income', EXTERNAL], ['out', 'transfer', 'Transfer'], ['in', 'transfer', 'Transfer'], ['lidl', 'expense', 'Mercado'],
+    ])
+  })
+  it('leaves the skipped ones (card bill payments) as transfers', async () => {
+    const { withExternalTransfers } = await import('../src/domain/audit')
+    expect(withExternalTransfers([t('fatura', 'cc', '2026-10-10', -900)], same, (x) => x.id === 'fatura')[0].kind).toBe('transfer')
+  })
+})

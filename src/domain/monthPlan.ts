@@ -4,6 +4,7 @@
  * falta = max(0, média − realizado − manual), so a known payment entered by hand takes the place
  * of the average instead of adding to it. Values are positive, in the display currency.
  */
+import { EXTERNAL } from './audit'
 
 /** A line added by hand to a month; editable, unlike the imported transactions. */
 export interface ManualLine {
@@ -55,7 +56,8 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
   }
   for (const t of txs) {
     if (t.kind === 'transfer') continue
-    if (avgSet.has(t.month)) row(t.categoryName, t.kind).media += signed(t.kind, t.value) / n
+    // Money from or to outside (a resgate) is a one-off: it counts in its month, not in the average.
+    if (avgSet.has(t.month) && t.categoryName !== EXTERNAL) row(t.categoryName, t.kind).media += signed(t.kind, t.value) / n
     if (t.month === month) row(t.categoryName, t.kind).realizado += signed(t.kind, t.value)
   }
   for (const m of manual) {

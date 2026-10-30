@@ -5,7 +5,7 @@ import { billEffective } from '../domain/forecast'
 import { useRecurring } from '../lib/recurring'
 import { countryOf } from '../domain/countries'
 import { monthLabel } from '../lib/format'
-import { currentMonth, hiddenByDefault, last3, today, useFmt } from '../lib/hooks'
+import { currentMonth, hiddenByDefault, last3, today, useExternalized, useFmt } from '../lib/hooks'
 import { CategorySelect } from '../components/CategorySelect'
 import { Help, Tabs } from '../components/Page'
 import { Menu } from './analysis/shared'
@@ -31,7 +31,9 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
   const nShown = accounts.filter((a) => shown(a.id)).length
   const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
 
-  const txs = useMemo(() => ctx.etx.filter((t) => inScope(t.account_id)), [ctx.etx, inScope])
+  // A transfer with no other side in the user's accounts (a resgate from savings not in the app) is money in or out here.
+  const all = useExternalized(ctx)
+  const txs = useMemo(() => all.filter((t) => inScope(t.account_id)), [all, inScope])
   const lines = useMemo(() => data.settings.dashboard?.manualLines ?? [], [data.settings.dashboard?.manualLines])
   const catById = useMemo(() => new Map(data.categories.map((c) => [c.id, c])), [data.categories])
   // A manual line takes its sign from its category: an income category adds, the rest subtract.
@@ -230,7 +232,7 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
         <p><strong>Média</strong>: dos 3 últimos meses fechados ({monthLabel(avgMonths[0])} a {monthLabel(avgMonths.at(-1)!)}), nas contas marcadas.
           <strong> Realizado</strong>: lançamentos importados no mês (🔒, não mudam aqui). <strong>Manual</strong>: as linhas que você inseriu, que podem ser editadas e excluídas.</p>
         <p><strong>Falta</strong> = média − realizado − manual, nunca abaixo de zero: uma linha manual ocupa o lugar da média em vez de somar a ela.
-          <strong> Previsto</strong> = realizado + manual + falta. Transferências entre contas ficam de fora.</p>
+          <strong> Previsto</strong> = realizado + manual + falta. Transferências entre contas suas ficam de fora; uma transferência sem o outro lado em nenhuma conta sua (ex.: resgate de uma poupança que não está no app) entra como <strong>Transferência externa</strong>, receita ou despesa, só no mês em que aconteceu — não entra na média.</p>
         <p><strong>↻ Recorrentes</strong>: cada estabelecimento marcado como recorrente em Lançamentos, e cada receita que entrou nos 3 últimos meses (ex.: salário), aparece como previsto enquanto não for lançado no mês, pela média dos meses em que apareceu.
           Na categoria, o que falta é pelo menos a soma desses recorrentes, mesmo que a média da categoria seja menor.
           <strong> ajustar</strong> transforma o previsto numa linha manual do mês, com data, descrição e valor editáveis; para um mês em que ele não vai acontecer, ajuste o valor para 0.</p>

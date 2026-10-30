@@ -90,3 +90,12 @@ describe('recurring lines in the month plan', () => {
     expect(plan.income.find((r) => r.name === 'Salário')).toMatchObject({ pendentes: [], realizado: 3100, previsto: 3100 })
   })
 })
+
+describe('money from or to outside', () => {
+  it('a one-off resgate counts in its month but not in the average', async () => {
+    const { EXTERNAL } = await import('../src/domain/audit')
+    const txs = [tx('2026-08', EXTERNAL, 1000, 'income'), tx('2026-10', EXTERNAL, 1000, 'income')]
+    const p = buildMonthPlan(txs, [], '2026-10', AVG)
+    expect(p.income[0]).toMatchObject({ name: EXTERNAL, media: 0, realizado: 1000, previsto: 1000 })
+  })
+})
