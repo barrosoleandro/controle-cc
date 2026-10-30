@@ -3,7 +3,7 @@ import type { Ctx } from '../App'
 import { addCategory, markAiNote, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote } from '../lib/data'
 import { CategorySelect } from '../components/CategorySelect'
 import { monthLabel, money } from '../lib/format'
-import { currentMonth, hiddenByDefault, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
+import { currentMonth, hiddenByDefault, last3, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
 import { Menu } from './analysis/shared'
 import { balanceSeries } from '../domain/analytics'
 import { buildPeriod, monthBalances, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
@@ -11,7 +11,9 @@ import type { CategoryKind } from '../domain/types'
 import { byName, isTithe } from '../domain/categorize'
 import { countryOf, flowsByCountry, type Country } from '../domain/countries'
 import { purchaseDate } from '../domain/simplify'
-import { recurrenceCandidates } from '../domain/forecast'
+import { billEffective, recurrenceCandidates } from '../domain/forecast'
+import { nextMonth } from '../domain/monthPlan'
+import { buildSimSheet } from '../domain/simSheet'
 import { AsOf, Tabs } from '../components/Page'
 import { skipRecurring, useRecurring } from '../lib/recurring'
 
@@ -93,6 +95,7 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
           ))}
         </div>
       </Menu>
+      <ExcelExport ctx={ctx} accounts={accounts.filter((a) => shown(a.id))} />
     </div>
     {view === 'Lista'
       ? <Lista ctx={ctx} shown={inScope} rec={rec} merchant={merchant} onClearMerchant={() => setMerchant('')} />
@@ -100,6 +103,40 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
         ? <PorPais ctx={ctx} shown={inScope} />
         : <Periodo ctx={ctx} shown={inScope} rec={rec} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
     <RecurringQuestions ctx={ctx} />
+  </>
+}
+
+/**
+ * Excel for simulations: the ticked accounts, one block under the other, 11 months back, the
+ * current one and 2 ahead, with recurring lines filled in and totals and balances as formulas.
+ */
+function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accounts'] }) {
+  const { isBill, marks } = useRecurring(ctx)
+  const [busy, setBusy] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
+  async function download() {
+    setBusy(true); setErro(null)
+    try {
+      const cur = currentMonth()
+      const months = monthWindow(nextMonth(nextMonth(cur)), 14)
+      const sim = accounts.map((a) => ({ id: a.id, name: a.name, currency: a.currency, opening: monthBalances([a], ctx.data.transactions, months, (v) => v).opening[0] }))
+      const ids = new Set(accounts.map((a) => a.id))
+      const txs = ctx.etx.filter((t) => ids.has(t.account_id)).map((t) => ({ ...t, amount: Number(t.amount), merchant: t.merchant || '(sem descrição)' }))
+      const rows = buildSimSheet(sim, txs, months, cur, last3(),
+        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel)
+      const { default: writeExcelFile } = await import('write-excel-file/browser')
+      await writeExcelFile(rows, {
+        sheet: 'Lançamentos', stickyRowsCount: 1, stickyColumnsCount: 2,
+        columns: [{ width: 24 }, { width: 30 }, ...months.map(() => ({ width: 13 }))],
+      }).toFile(`lancamentos-simulacao-${cur}.xlsx`)
+    } catch (e) { setErro(`Não foi possível gerar o Excel: ${(e as Error).message}`) }
+    finally { setBusy(false) }
+  }
+  return <>
+    <button onClick={download} disabled={busy || !accounts.length}
+      title="Contas marcadas, uma embaixo da outra: 11 meses para trás, o atual e 2 à frente, com recorrentes preenchidos e totais em fórmula para simular">
+      {busy ? 'Gerando…' : 'Baixar Excel'}</button>
+    {erro && <span className="err">{erro}</span>}
   </>
 }
 
