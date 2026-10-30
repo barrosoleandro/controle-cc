@@ -440,32 +440,31 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
 
   // Transfers between the user's own accounts (and paid card bills) of the ticked accounts:
   // per month by direction (for the totals) and per merchant (shown as their own category,
-  // sent positive, received negative, never part of the expense total). Each merchant row is
-  // one direction of one account: summed together, money sent and received under the same
-  // description ("VIR. VERS CPT DEPOT PART." both ways, or both sides of a joint ↔ LDDS
-  // transfer with the two accounts ticked) cancel out and the operation disappears.
+  // sent positive, received negative, never part of the expense total). One row per
+  // transfer, with its date and account: summed per merchant, money sent and received under
+  // the same description ("VIR. VERS CPT DEPOT PART." both ways, or both sides of a joint ↔
+  // LDDS transfer) netted out and the operation itself could not be found.
   const transfers = useMemo(() => {
     const idx = new Map(months.map((m, i) => [m, i]))
     const cardIds = new Set(data.accounts.filter((a) => a.type === 'card').map((a) => a.id))
     const multi = data.accounts.filter((a) => shown(a.id) && !cardIds.has(a.id)).length > 1
     const inn = months.map(() => 0), out = months.map(() => 0)
-    const byRow = new Map<string, { merchant: string; v: number[] }>()
+    const asRow = (key: string, v: number[]): PeriodRow => {
+      const total = v.reduce((a, b) => a + b, 0)
+      return { key, perMonth: v.map((x) => (Math.abs(x) > 0.005 ? x : null)), outlier: v.map(() => false), isNew: v.map(() => false), avg: total / months.length, total, flagged: false }
+    }
+    const merchants: (PeriodRow & { merchant: string; label: string; date: string })[] = []
     for (const t of etx) {
       const i = idx.get(t.month)
       if (i === undefined || t.kind !== 'transfer' || !shown(t.account_id) || cardIds.has(t.account_id)) continue
       if (t.value >= 0) inn[i] += t.value
       else out[i] -= t.value
-      const merchant = t.merchant || '(sem descrição)'
-      const key = `${merchant} · ${t.value >= 0 ? 'entrada' : 'saída'}${multi ? ` · ${t.accountName}` : ''}`
-      const row = byRow.get(key) ?? { merchant, v: months.map(() => 0) }
-      row.v[i] -= t.value
-      byRow.set(key, row)
+      const v = months.map(() => 0)
+      v[i] = -t.value
+      const label = `${t.booking_date.slice(8, 10)}/${t.booking_date.slice(5, 7)} · ${t.description || '(sem descrição)'}${multi ? ` · ${t.accountName}` : ''}`
+      merchants.push({ ...asRow(t.id, v), merchant: t.merchant || '(sem descrição)', label, date: t.booking_date })
     }
-    const asRow = (key: string, v: number[]): PeriodRow => {
-      const total = v.reduce((a, b) => a + b, 0)
-      return { key, perMonth: v.map((x) => (Math.abs(x) > 0.005 ? x : null)), outlier: v.map(() => false), isNew: v.map(() => false), avg: total / months.length, total, flagged: false }
-    }
-    const merchants = [...byRow].map(([k, r]) => ({ ...asRow(k, r.v), merchant: r.merchant })).sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
+    merchants.sort((a, b) => a.date.localeCompare(b.date) || Math.abs(b.total) - Math.abs(a.total))
     const net = months.map((_, i) => out[i] - inn[i])
     return { inn, out, group: merchants.length ? { ...asRow('Transferências', net), merchants } : null }
   }, [etx, months, shown, data.accounts])
@@ -677,7 +676,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
                 {isOpen && g.merchants.map((m) => (
                   <tr key={`transfers/${m.key}`} className="transfer-row">
                     <td className="first-col" style={{ ...sticky, paddingLeft: 24, fontSize: 13 }}>
-                      {m.key}{' '}<button className="link" style={{ fontWeight: 400, fontSize: 12 }} onClick={() => onOpen(m.merchant)}>ver lançamentos</button>
+                      {m.label}{' '}<button className="link" style={{ fontWeight: 400, fontSize: 12 }} onClick={() => onOpen(m.merchant)}>ver lançamentos</button>
                     </td>
                     <td style={{ minWidth: 170 }}>
                       <CategorySelect ctx={ctx} value={catIdByName.get('Transfer') ?? ''} empty="—" disabled={saving === m.merchant}
