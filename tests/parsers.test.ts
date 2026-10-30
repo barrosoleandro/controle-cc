@@ -52,6 +52,11 @@ describe('BCP CSV', () => {
     expect(r.transactions[0]).toMatchObject({ accountRef: '01234567890', bookingDate: '2026-09-25', amount: -10.16, bankCategory: 'Alimentation', bankSubcategory: 'Restaurant' })
     expect(r.transactions[1].amount).toBe(1250)
   })
+  it('reads a transfer from savings ("Transaction exclue", credit without decimals)', () => {
+    const row = '22/10/2026;VIR. VERS CPT DEPOT PART.;VIR. VERS CPT DEPOT PART.;2629521IN0176814;;Virement recu;Transaction exclue;Virement interne;;1000;22/10/2026;22/10/2026;0'
+    const t = parseBcpCsv(`${CSV.split('\n')[0]}\n${row}`, '01234567890_01102026_30102026.csv').transactions
+    expect(t).toEqual([expect.objectContaining({ bookingDate: '2026-10-22', amount: 1000, description: 'VIR. VERS CPT DEPOT PART.', bankCategory: 'Transaction exclue' })])
+  })
 })
 
 describe('BCP PDF', () => {
