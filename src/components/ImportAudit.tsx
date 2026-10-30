@@ -9,6 +9,8 @@ import type { Currency, ParseResult } from '../domain/types'
 
 const LABEL: Record<AuditRow['status'], string> = { ok: 'na base', similar: 'outra descrição na base', missing: 'faltando', noAccount: 'conta não cadastrada' }
 const MONTHS_BACK = 12 // transfers checked for the last 12 months
+// Phone browsers (Safari on iPhone, most on Android) open no folder picker: the button would do nothing there.
+const canPickFolder = typeof window !== 'undefined' && !window.matchMedia('(pointer: coarse)').matches && 'webkitdirectory' in HTMLInputElement.prototype
 
 interface FileAudit { name: string; source: ParseResult['source']; rows: (AuditRow & { reason?: string; matches?: string })[] }
 
@@ -113,11 +115,12 @@ export function ImportAudit({ ctx }: { ctx: Ctx }) {
       <div className="row">
         <button className="primary" onClick={auditLog} disabled={!!busy}>Auditar pelo histórico</button>
         <button onClick={() => fileRef.current?.click()} disabled={!!busy}>Auditar com os arquivos</button>
-        <button onClick={() => dirRef.current?.click()} disabled={!!busy} title="Por exemplo a pasta “processado”, para onde a importação move os extratos">Auditar uma pasta</button>
+        {canPickFolder && <button onClick={() => dirRef.current?.click()} disabled={!!busy} title="Por exemplo a pasta “processado”, para onde a importação move os extratos">Auditar uma pasta</button>}
         <button onClick={checkTransfers} disabled={!!busy}>Conferir transferências entre contas</button>
         <input ref={fileRef} type="file" multiple accept=".csv,.pdf,.xlsx" hidden onChange={(e) => { auditFiles(e.target.files); e.target.value = '' }} />
         <input ref={dirRef} type="file" multiple hidden onChange={(e) => { auditFiles(e.target.files); e.target.value = '' }} />
       </div>
+      {!canPickFolder && <p className="muted" style={{ fontSize: 12 }}>No celular não dá para escolher uma pasta: em “Auditar com os arquivos”, use “Selecionar” no seletor e marque vários extratos de uma vez — ou faça a auditoria de uma pasta no computador.</p>}
       {busy && <div className="loading" style={{ justifyContent: 'flex-start', margin: '12px 0' }}><span className="spinner" />{busy}</div>}
       {erro && <p className="err">{erro}</p>}
       {ok && <p className="pos">✔ {ok}</p>}

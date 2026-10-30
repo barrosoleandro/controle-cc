@@ -14,6 +14,8 @@ import { Icon } from '../components/Icons'
 import { Help } from '../components/Page'
 
 const SUPPORTED = /\.(csv|pdf|xlsx)$/i
+// Phone browsers (Safari on iPhone, most on Android) open no folder picker: the button would do nothing there.
+const canPickFolder = typeof window !== 'undefined' && !window.matchMedia('(pointer: coarse)').matches && 'webkitdirectory' in HTMLInputElement.prototype
 
 /** Category picked for a merchant before importing (by hand or pre-filled by the AI). */
 export interface Choice { categoryId: string; description?: string; confidence?: number; source: 'ai' | 'manual' }
@@ -242,7 +244,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
           <span className="muted">ou escolha no computador — pode ser vários de uma vez</span>
           <div className="row">
             <button className="primary" onClick={() => fileRef.current?.click()} disabled={busy}><Icon name="importar" size={16} /> Escolher arquivos</button>
-            <button onClick={pickFolder} disabled={busy} title={'showDirectoryPicker' in window ? `Depois de importar, os arquivos vão para a subpasta “${DONE_DIR}” da pasta onde estavam` : undefined}><Icon name="pasta" size={16} /> Escolher uma pasta</button>
+            {canPickFolder && <button onClick={pickFolder} disabled={busy} title={'showDirectoryPicker' in window ? `Depois de importar, os arquivos vão para a subpasta “${DONE_DIR}” da pasta onde estavam` : undefined}><Icon name="pasta" size={16} /> Escolher uma pasta</button>}
           </div>
           <input ref={fileRef} type="file" multiple accept=".csv,.pdf,.xlsx" onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} />
           <input ref={dirRef} type="file" multiple onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} disabled={busy} />
