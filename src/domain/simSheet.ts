@@ -1,7 +1,7 @@
 /**
  * Simulation workbook of Lançamentos: one block per account, one under the other, with the same
- * months as columns (11 back, the current one, 2 ahead). Rows are category subtotals (formulas)
- * over merchant rows (values), so changing any value in Excel flows into the totals and the
+ * months as columns (as many back as chosen, the current one, 2 ahead). Rows are category subtotals
+ * (formulas) over merchant rows (values); rows with no value in the period are left out. So changing any value in Excel flows into the totals and the
  * month-to-month balance. Values are in the account's own currency: income positive, expenses
  * and money sent negative.
  *
@@ -35,7 +35,11 @@ const PROJ = '#FFF4D6' // background of the months that are (partly) projected
 const SECTIONS: [Kind, string][] = [['income', 'Receitas'], ['expense', 'Despesas'], ['transfer', 'Transferências']]
 const RATE_ROW = 2 // the exchange rate sits in C2
 
-const col = (i: number) => String.fromCharCode(67 + i) // month i → C, D, …
+/** Excel column name of a 1-based column number: 1 → A, 27 → AA. */
+const colName = (n: number): string => (n > 26 ? colName(Math.floor((n - 1) / 26)) : '') + String.fromCharCode(65 + ((n - 1) % 26))
+const col = (i: number) => colName(i + 3) // month i → C, D, … (any number of months)
+/** A merchant row is shown only when it has a value in the period; the estimated transfers always are. */
+const keep = (m: string, v: number[]) => m === SENT || m === RECEIVED || v.some((x) => Math.abs(x) > 0.005)
 const round = (v: number) => Math.round(v * 100) / 100
 /** Sign that makes a value positive for its kind: income counts up, the rest counts down. */
 const mag = (kind: Kind, v: number) => (kind === 'income' ? v : -v)
@@ -113,13 +117,15 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     if (link && est.months.length && (isTo || isFrom)) cell('transfer', isTo ? RECEIVED : SENT, isTo ? RECEIVED : SENT)
     const recurringExpense = new Set(recurring.filter((e) => e.kind === 'expense').map((e) => e.merchant))
 
+    // An account with nothing in the period and no balance would be a block of zeros: left out.
+    const empty = ![...grid.values()].some((byCat) => [...byCat.values()].some((ms) => [...ms].some(([m, v]) => keep(m, v))))
+    if (empty && Math.abs(a.opening) < 0.005) continue
     rows.push([{ value: `${a.name} (${a.currency})`, fontWeight: 'bold' }])
     const opening = r()
     const openRow: Cell[] = ['Saldo inicial', null] // months filled once the closing row is known
     rows.push(openRow)
     const totals: number[] = []
     for (const [kind, label] of SECTIONS) {
-      const keep = (m: string, v: number[]) => m === SENT || m === RECEIVED || v.some((x) => Math.abs(x) > 0.005)
       const cats = [...(grid.get(kind) ?? [])]
         .map(([cat, ms]) => ({ cat, ms: [...ms].filter(([m, v]) => keep(m, v)) }))
         .filter((c) => c.ms.length)

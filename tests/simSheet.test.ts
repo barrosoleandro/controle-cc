@@ -14,25 +14,27 @@ const isRec = (m: string, kind: 'income' | 'expense', steady: Set<string>) => (k
 const accounts = [{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 500 }, { id: 'b', name: 'Conta B', currency: 'BRL', opening: 10 }]
 const sheet = () => buildSimSheet(accounts, txs, months, '2026-10', avg, isRec, (m) => m)
 
+const colOf = (n: number): string => (n > 26 ? colOf(Math.floor((n - 1) / 26)) : '') + String.fromCharCode(65 + ((n - 1) % 26))
+
 /** Evaluates the sheet's formulas (stored without "="): SUM ranges, MAX, CEILING, + − / of references. */
 function evaluate(rows: Cell[][]) {
   const at = (ref: string): number => {
-    const [, c, r] = ref.replace(/\$/g, '').match(/([A-Z])(\d+)/)!
-    const v = rows[Number(r) - 1]?.[c.charCodeAt(0) - 65]
+    const [, c, r] = ref.replace(/\$/g, '').match(/([A-Z]+)(\d+)/)!
+    const v = rows[Number(r) - 1]?.[[...c].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1]
     const x = v && typeof v === 'object' ? v.value : v
     return typeof x === 'number' ? x : v && typeof v === 'object' && v.type === 'Formula' ? calc(String(x)) : 0
   }
   const calc = (f: string): number => {
     const js = f
-      .replace(/SUM\(([A-Z])(\d+):[A-Z](\d+)\)/g, (_, c, a, b) => `(${Array.from({ length: b - a + 1 }, (_, k) => at(`${c}${Number(a) + k}`)).join('+')})`)
-      .replace(/\$?[A-Z]\$?\d+/g, (ref) => `(${at(ref)})`)
+      .replace(/SUM\(([A-Z]+)(\d+):[A-Z]+(\d+)\)/g, (_, c, a, b) => `(${Array.from({ length: b - a + 1 }, (_, k) => at(`${c}${Number(a) + k}`)).join('+')})`)
+      .replace(/\$?[A-Z]+\$?\d+/g, (ref) => `(${at(ref)})`)
       .replace(/MAX\(/g, 'Math.max(').replace(/CEILING\(/g, 'ceil(')
     return new Function('ceil', `return ${js}`)((x: number, s: number) => Math.ceil(x / s) * s)
   }
   return (label: string, monthIdx: number, nth = 0) => {
     const row = rows.map((r, i) => [r, i] as const).filter(([r]) => r[0] === label || (r[0] as { value?: string })?.value === label || (r[1] as { value?: string })?.value === label)[nth]
     expect(row, label).toBeDefined()
-    return Math.round(at(`${String.fromCharCode(67 + monthIdx)}${row[1] + 1}`) * 100) / 100
+    return Math.round(at(`${colOf(monthIdx + 3)}${row[1] + 1}`) * 100) / 100
   }
 }
 
@@ -91,5 +93,21 @@ describe('simulation sheet', () => {
     expect(projectCardBill('2026-12', '2026-10', [], [{ month: '2026-10', amount: -50, statement_due: '2026-12-10' }])).toBe(50)
     expect(projectCardBill('2026-11', '2026-10', [], [{ month: '2026-10', amount: -80 }])).toBe(80)
     expect(projectCardBill('2026-12', '2026-10', [], [{ month: '2026-10', amount: -80 }])).toBe(0)
+  })
+
+  it('any number of months (past Z), and no row without a value in the period', () => {
+    const long = Array.from({ length: 27 }, (_, i) => new Date(Date.UTC(2024, 10 + i, 1)).toISOString().slice(0, 7)) // 2024-11 … 2027-01
+    const data = [...txs, tx('2025-01', -40, 'expense', 'Lazer', 'CINEMA'), tx('2026-08', 25, 'expense', 'Lazer', 'ESTORNO'), tx('2026-08', -25, 'expense', 'Lazer', 'ESTORNO')]
+    const rows = buildSimSheet([...accounts, { id: 'z', name: 'Conta vazia', currency: 'EUR', opening: 0 }], data, long, '2026-10', avg, isRec, (m) => m)
+    expect(rows[0].length).toBe(2 + 27)
+    const v = evaluate(rows)
+    expect(v('CINEMA', 2)).toBe(-40) // 2025-01, column E
+    expect(v('Saldo final', 26)).toBe(v('Saldo inicial', 26) + v('Resultado do mês', 26)) // column AC
+    const labels = rows.map((r) => r.map((c) => (c && typeof c === 'object' ? c.value : c)))
+    expect(labels.some((r) => r[1] === 'ESTORNO')).toBe(false) // nets to zero in every month
+    expect(labels.some((r) => String(r[0]).startsWith('Conta vazia'))).toBe(false)
+    // With a short window, merchants only seen before it are left out.
+    const short = buildSimSheet(accounts, data, months, '2026-10', avg, isRec, (m) => m).map((r) => r.map((c) => (c && typeof c === 'object' ? c.value : c)))
+    expect(short.some((r) => r[1] === 'CINEMA')).toBe(false)
   })
 })

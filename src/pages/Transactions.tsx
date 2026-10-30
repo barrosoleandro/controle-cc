@@ -108,12 +108,13 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
 }
 
 /**
- * Excel for simulations: the ticked accounts, one block under the other, 11 months back, the
- * current one and 2 ahead, with recurring lines filled in and totals and balances as formulas.
+ * Excel for simulations: the ticked accounts, one block under the other, the chosen months back,
+ * the current one and 2 ahead, with recurring lines filled in and totals and balances as formulas.
  */
 function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accounts'] }) {
   const { isBill, marks } = useRecurring(ctx)
   const [busy, setBusy] = useState(false)
+  const [back, setBack] = useState(11) // months before the current one; the current and 2 ahead always come
   const [erro, setErro] = useState<string | null>(null)
   /** Itaú checking and the euro account that feeds it, both exported: the transfer is estimated as in the Painel alert. */
   function brazilLink(cur: string): BrazilLink | undefined {
@@ -129,7 +130,7 @@ function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accou
     setBusy(true); setErro(null)
     try {
       const cur = currentMonth()
-      const months = monthWindow(nextMonth(nextMonth(cur)), 14)
+      const months = monthWindow(nextMonth(nextMonth(cur)), back + 3)
       const sim = accounts.map((a) => ({ id: a.id, name: a.name, currency: a.currency, opening: monthBalances([a], ctx.data.transactions, months, (v) => v).opening[0] }))
       const ids = new Set(accounts.map((a) => a.id))
       const txs = ctx.etx.filter((t) => ids.has(t.account_id)).map((t) => ({ ...t, amount: Number(t.amount), merchant: t.merchant || '(sem descrição)' }))
@@ -144,8 +145,12 @@ function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accou
     finally { setBusy(false) }
   }
   return <>
+    <select value={back} onChange={(e) => setBack(Number(e.target.value))} aria-label="Meses para trás no Excel"
+      title="Meses antes do atual no Excel; o mês atual e os 2 seguintes sempre vêm">
+      {[3, 6, 11, 12, 24].map((n) => <option key={n} value={n}>Excel: {n} meses + atual + 2</option>)}
+    </select>
     <button onClick={download} disabled={busy || !accounts.length}
-      title="Contas marcadas, uma embaixo da outra: 11 meses para trás, o atual e 2 à frente, com recorrentes preenchidos e totais em fórmula para simular">
+      title="Contas marcadas, uma embaixo da outra: os meses escolhidos para trás, o atual e 2 à frente, com recorrentes preenchidos e totais em fórmula para simular. Linhas sem valor no período ficam de fora">
       {busy ? 'Gerando…' : 'Baixar Excel'}</button>
     {erro && <span className="err">{erro}</span>}
   </>
