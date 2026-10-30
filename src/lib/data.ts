@@ -283,6 +283,16 @@ export async function executeImport(plan: ImportPlan, data: AppData, forced: Set
 }
 
 /**
+ * Writes rows the audit found missing, even when the import's loose duplicate check would take
+ * them for a stored row: the user saw both and chose. Recorded as an import of its own, so it
+ * can be undone from the import history like any other.
+ */
+export async function importAuditRows(fileName: string, source: ParseResult['source'], rows: ParsedTransaction[], data: AppData): Promise<number> {
+  const plan = planImport(`auditoria · ${fileName}`, `audit-${crypto.randomUUID()}`, { source, transactions: rows, checkpoints: [], warnings: [] }, data)
+  return executeImport(plan, data, new Set(plan.duplicates.map((d) => d.id)))
+}
+
+/**
  * Opening balance = earliest bank balance on/after the first transaction − transactions up to it.
  * This is what makes the rebuilt balance match the bank statements.
  */

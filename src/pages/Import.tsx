@@ -9,6 +9,7 @@ import { LearnedRules } from '../components/LearnedRules'
 import { AiSuggestions } from '../components/AiSuggestions'
 import { ImportCategories } from '../components/ImportCategories'
 import { ImportHistory } from '../components/ImportHistory'
+import { ImportAudit } from '../components/ImportAudit'
 import { Icon } from '../components/Icons'
 import { Help } from '../components/Page'
 
@@ -338,6 +339,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
       </div>
       <AiSuggestions ctx={ctx} />
       <ImportHistory ctx={ctx} />
+      <ImportAudit ctx={ctx} />
       <LearnedRules ctx={ctx} />
     </div>
   )
