@@ -14,12 +14,13 @@ export interface ManualLine {
   category_id: string
   amount: number // positive; the category decides whether it adds (income) or subtracts
   currency: 'EUR' | 'BRL'
+  merchant?: string // set when the line was made from a recurring one: it takes that one's place in the month
 }
 
 export interface PlanTx { month: string; value: number; kind: 'income' | 'expense' | 'transfer'; categoryName: string; merchant?: string; booking_date?: string }
-/** A recurring expense expected every month, until its charge shows up in the month. */
-export interface RecurringExpect { merchant: string; categoryName: string; amount: number; day: number }
-export interface PlanManual { month: string; value: number; kind: 'income' | 'expense' | 'transfer'; categoryName: string }
+/** A recurring income or expense expected every month, until it shows up in the month. */
+export interface RecurringExpect { merchant: string; kind: 'income' | 'expense'; categoryName: string; amount: number; day: number }
+export interface PlanManual { month: string; value: number; kind: 'income' | 'expense' | 'transfer'; categoryName: string; merchant?: string }
 
 export interface PlanRow {
   name: string
@@ -27,7 +28,7 @@ export interface PlanRow {
   media: number
   realizado: number
   manual: number
-  recorrente: number // recurring expenses still to come this month
+  recorrente: number // recurring lines still to come this month
   pendentes: RecurringExpect[]
   falta: number
   previsto: number
@@ -39,8 +40,8 @@ export interface MonthPlan { month: string; income: PlanRow[]; expense: PlanRow[
 const signed = (kind: 'income' | 'expense', v: number) => (kind === 'income' ? v : -v)
 
 /**
- * `recurring`: expected recurring expenses; one still missing from the month counts in its
- * category, so falta = max(0, max(recorrentes pendentes, média − realizado) − manual).
+ * `recurring`: expected recurring lines; one still missing from the month (not imported, not
+ * replaced by a manual line of the same merchant) counts in its category, so falta = max(0, max(recorrentes pendentes, média − realizado) − manual).
  */
 export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: string, avgMonths: string[], recurring: RecurringExpect[] = []): MonthPlan {
   const avgSet = new Set(avgMonths)
@@ -61,10 +62,13 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
     if (m.kind === 'transfer' || m.month !== month) continue
     row(m.categoryName, m.kind).manual += signed(m.kind, m.value)
   }
-  const paid = new Set(txs.filter((t) => t.month === month && t.kind === 'expense' && t.merchant).map((t) => t.merchant))
+  const done = new Set([
+    ...txs.filter((t) => t.month === month && t.kind !== 'transfer' && t.merchant).map((t) => `${t.kind}/${t.merchant}`),
+    ...manual.filter((m) => m.month === month && m.merchant).map((m) => `${m.kind}/${m.merchant}`),
+  ])
   for (const e of recurring) {
-    if (paid.has(e.merchant)) continue
-    const r = row(e.categoryName, 'expense')
+    if (done.has(`${e.kind}/${e.merchant}`)) continue
+    const r = row(e.categoryName, e.kind)
     r.recorrente += e.amount
     r.pendentes.push(e)
   }
@@ -83,24 +87,38 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
 }
 
 /**
- * What each recurring merchant is expected to charge: its average over the months it charged in
- * `avgMonths`, in the category and on the day of its latest charge. Merchants with no charge in
- * those months are left out (nothing to base the value on).
+ * What each recurring merchant is expected to bring in or charge: its average over the months it
+ * appeared in `avgMonths`, in the category and on the day of its latest entry. Merchants with
+ * nothing in those months are left out (nothing to base the value on).
  */
-export function recurringExpectations(txs: PlanTx[], isRecurring: (merchant: string) => boolean, avgMonths: string[]): RecurringExpect[] {
+export function recurringExpectations(txs: PlanTx[], isRecurring: (merchant: string, kind: 'income' | 'expense') => boolean, avgMonths: string[]): RecurringExpect[] {
   const set = new Set(avgMonths)
-  const by = new Map<string, { perMonth: Map<string, number>; last: PlanTx }>()
+  const by = new Map<string, { kind: 'income' | 'expense'; perMonth: Map<string, number>; last: PlanTx }>()
   for (const t of txs) {
-    if (t.kind !== 'expense' || !t.merchant || !set.has(t.month) || !isRecurring(t.merchant)) continue
-    const m = by.get(t.merchant) ?? { perMonth: new Map(), last: t }
-    m.perMonth.set(t.month, (m.perMonth.get(t.month) ?? 0) - t.value)
+    if (t.kind === 'transfer' || !t.merchant || !set.has(t.month) || !isRecurring(t.merchant, t.kind)) continue
+    const key = `${t.kind}/${t.merchant}`
+    const m = by.get(key) ?? { kind: t.kind, perMonth: new Map(), last: t }
+    m.perMonth.set(t.month, (m.perMonth.get(t.month) ?? 0) + signed(t.kind, t.value))
     if ((t.booking_date ?? '') >= (m.last.booking_date ?? '')) m.last = t
-    by.set(t.merchant, m)
+    by.set(key, m)
   }
-  return [...by].map(([merchant, m]) => {
+  return [...by.values()].map((m) => {
     const vals = [...m.perMonth.values()]
-    return { merchant, categoryName: m.last.categoryName, amount: vals.reduce((s, v) => s + v, 0) / vals.length, day: Number((m.last.booking_date ?? '').slice(8, 10)) || 1 }
+    return { merchant: m.last.merchant!, kind: m.kind, categoryName: m.last.categoryName, amount: vals.reduce((s, v) => s + v, 0) / vals.length, day: Number((m.last.booking_date ?? '').slice(8, 10)) || 1 }
   }).filter((e) => e.amount > 0.005)
+}
+
+/**
+ * Incomes that came in every one of `avgMonths` (salary, rent received): recurring by default,
+ * so next month already shows them. A mark in Lançamentos still overrides this.
+ */
+export function steadyIncomes(txs: PlanTx[], avgMonths: string[]): Set<string> {
+  const seen = new Map<string, Set<string>>()
+  for (const t of txs) {
+    if (t.kind !== 'income' || !t.merchant || !avgMonths.includes(t.month)) continue
+    seen.set(t.merchant, (seen.get(t.merchant) ?? new Set()).add(t.month))
+  }
+  return new Set([...seen].filter(([, ms]) => ms.size === avgMonths.length).map(([m]) => m))
 }
 
 /** The month after `month` (yyyy-mm). */

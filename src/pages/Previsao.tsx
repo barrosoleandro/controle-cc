@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { buildMonthPlan, nextMonth, recurringExpectations, type ManualLine, type PlanRow } from '../domain/monthPlan'
+import { buildMonthPlan, nextMonth, recurringExpectations, steadyIncomes, type ManualLine, type PlanRow, type RecurringExpect } from '../domain/monthPlan'
+import { billEffective } from '../domain/forecast'
 import { useRecurring } from '../lib/recurring'
 import { countryOf } from '../domain/countries'
 import { monthLabel } from '../lib/format'
@@ -38,11 +39,14 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
     const c = catById.get(l.category_id)
     const kind = c?.kind ?? 'expense'
     const v = fx.convert(Math.abs(l.amount), l.currency, ctx.currency, l.date)
-    return { line: l, month: l.month, kind, categoryName: c?.name ?? 'Outros', value: kind === 'income' ? v : -v }
+    return { line: l, month: l.month, kind, categoryName: c?.name ?? 'Outros', value: kind === 'income' ? v : -v, merchant: l.merchant }
   }), [lines, catById, fx, ctx.currency])
-  // Recurring expenses (the flag of Lançamentos) not charged yet in the month show as expected lines.
-  const { isBill } = useRecurring(ctx)
-  const recurring = useMemo(() => recurringExpectations(txs, (m) => isBill({ merchant: m }), avgMonths), [txs, isBill, avgMonths])
+  // Recurring lines not in the month yet show as expected: expenses by the flag of Lançamentos,
+  // incomes by that flag or, unmarked, by having come in every one of the last 3 months (salary).
+  const { isBill, marks } = useRecurring(ctx)
+  const steady = useMemo(() => steadyIncomes(txs, avgMonths), [txs, avgMonths])
+  const recurring = useMemo(() => recurringExpectations(txs,
+    (m, kind) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), avgMonths), [txs, isBill, marks, steady, avgMonths])
   const plans = useMemo(() => months.map((m) => buildMonthPlan(txs, manual, m, avgMonths, recurring)), [txs, manual, months[0], avgMonths, recurring]) // eslint-disable-line react-hooks/exhaustive-deps
   const plan = plans[months.indexOf(month as typeof months[number])] ?? plans[0]
 
@@ -87,6 +91,16 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
     if (await saveLines([...lines, line])) setOk(`Linha adicionada em ${c.name}: ajuste a descrição e o valor na própria linha.`)
   }
 
+  /** "ajustar": the expected recurring line becomes a manual line of the month, ready to edit; it takes the expected one's place. */
+  async function adoptRecurring(e: RecurringExpect) {
+    const c = data.categories.find((x) => x.name === e.categoryName && x.kind === e.kind)
+    if (!c) { setErro(`“${e.categoryName}” não é uma categoria cadastrada: use o formulário “Inserir linha”.`); return }
+    const [y, m] = month.split('-').map(Number)
+    const day = Math.min(e.day, new Date(y, m, 0).getDate())
+    const line: ManualLine = { id: crypto.randomUUID(), month, date: `${month}-${String(day).padStart(2, '0')}`, description: e.merchant, merchant: e.merchant, category_id: c.id, amount: Math.round(e.amount * 100) / 100, currency: ctx.currency }
+    if (await saveLines([...lines, line])) setOk(`“${e.merchant}” em ${monthLabel(month)} virou linha editável: ajuste o valor na própria linha.`)
+  }
+
   const section = (kind: 'income' | 'expense') => {
     const rows = kind === 'income' ? plan.income : plan.expense
     const t = plan.totals[kind]
@@ -118,7 +132,8 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
               ))}
               {r.pendentes.map((e) => (
                 <tr key={`rec/${e.merchant}`} className="muted" style={{ fontSize: 13 }}>
-                  <td style={{ paddingLeft: 24 }} title="Recorrente ainda não lançado neste mês: valor pela média dele nos últimos meses">↻ previsto ~{String(e.day).padStart(2, '0')}/{plan.month.slice(5, 7)} · {e.merchant}</td>
+                  <td style={{ paddingLeft: 24 }} title="Recorrente ainda não lançado neste mês: valor pela média dele nos últimos meses">↻ previsto ~{String(e.day).padStart(2, '0')}/{plan.month.slice(5, 7)} · {e.merchant}
+                    {' '}<button className="link" style={{ fontSize: 12 }} onClick={() => adoptRecurring(e)}>ajustar</button></td>
                   <td /><td /><td /><td className="num warn">{fmt(e.amount)}</td><td />
                 </tr>
               ))}
@@ -216,8 +231,9 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
           <strong> Realizado</strong>: lançamentos importados no mês (🔒, não mudam aqui). <strong>Manual</strong>: as linhas que você inseriu, que podem ser editadas e excluídas.</p>
         <p><strong>Falta</strong> = média − realizado − manual, nunca abaixo de zero: uma linha manual ocupa o lugar da média em vez de somar a ela.
           <strong> Previsto</strong> = realizado + manual + falta. Transferências entre contas ficam de fora.</p>
-        <p><strong>↻ Recorrentes</strong>: cada estabelecimento marcado como recorrente em Lançamentos que ainda não foi lançado no mês aparece como previsto, pela média dele nos meses em que cobrou.
-          Na categoria, o que falta é pelo menos a soma desses recorrentes, mesmo que a média da categoria seja menor.</p>
+        <p><strong>↻ Recorrentes</strong>: cada estabelecimento marcado como recorrente em Lançamentos, e cada receita que entrou nos 3 últimos meses (ex.: salário), aparece como previsto enquanto não for lançado no mês, pela média dos meses em que apareceu.
+          Na categoria, o que falta é pelo menos a soma desses recorrentes, mesmo que a média da categoria seja menor.
+          <strong> ajustar</strong> transforma o previsto numa linha manual do mês, com data, descrição e valor editáveis; para um mês em que ele não vai acontecer, ajuste o valor para 0.</p>
         <p>As linhas manuais valem para qualquer conta marcada. Quando o lançamento de verdade for importado, exclua a linha manual correspondente.</p>
       </Help>
     </div>
