@@ -243,6 +243,9 @@ label.inline { display: flex; gap: 6px; align-items: center; }
 .form label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); font-weight: 550; }
 .form input, .form select { width: 100%; text-align: left; }
 @media (max-width: 600px) { .hide-sm { display: none; } }
+/* First column of the month grid: one line on desktop; on a phone it wraps and is capped so the month columns stay in view. */
+.first-col { white-space: nowrap; }
+@media (max-width: 600px) { .first-col { white-space: normal; min-width: 110px; max-width: 42vw; overflow-wrap: anywhere; } }
 :root { --new: #fff1b8; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme=light]) { --new: #46390f; } }
 :root[data-theme=dark] { --new: #46390f; }

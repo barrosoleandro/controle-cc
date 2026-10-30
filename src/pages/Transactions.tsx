@@ -536,7 +536,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
               return (
                 <Fragment key={`receita/${g.key}`}>
                   <tr className="receita-row">
-                    <td style={{ ...sticky, whiteSpace: 'nowrap' }}>
+                    <td className="first-col" style={sticky}>
                       <button className="link" onClick={() => toggle(g.key)} aria-expanded={isOpen}>{isOpen ? '▾' : '▸'} {g.key}</button>
                       <span className="muted" style={{ fontSize: 12 }}> entrada · fora do total de despesas</span>
                     </td>
@@ -545,7 +545,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
                   </tr>
                   {isOpen && g.merchants.map((m) => (
                     <tr key={`receita/${g.key}/${m.key}`} className="receita-row">
-                      <td style={{ ...sticky, whiteSpace: 'nowrap', paddingLeft: 24, fontSize: 13 }}>
+                      <td className="first-col" style={{ ...sticky, paddingLeft: 24, fontSize: 13 }}>
                         {m.key}{' '}<button className="link" style={{ fontWeight: 400, fontSize: 12 }} onClick={() => onOpen(m.key)}>ver lançamentos</button>
                       </td>
                       <td style={{ minWidth: 170 }}>
@@ -566,7 +566,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
             return (
               <Fragment key={g.key}>
                 <tr>
-                  <td style={{ ...sticky, whiteSpace: 'nowrap' }}>
+                  <td className="first-col" style={sticky}>
                     <button className="link" onClick={() => toggle(g.key)} aria-expanded={isOpen}>{isOpen ? '▾' : '▸'} {g.key}</button>
                     {g.flagged && <span className="neg" title="Algum mês fora da média"> ⚑</span>}
                     {reviews > 0 && <span className="warn" title="Assinaturas para revisar"> ↻{reviews}</span>}
@@ -578,7 +578,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
                   const sub = subOf.get(m.key)
                   return (
                     <tr key={`${g.key}/${m.key}`} className={sub?.active ? 'recorrente' : ''}>
-                      <td style={{ ...sticky, whiteSpace: 'nowrap', paddingLeft: 24, fontSize: 13 }}>
+                      <td className="first-col" style={{ ...sticky, paddingLeft: 24, fontSize: 13 }}>
                         {sub && <span title="Cobrança recorrente">↻ </span>}{m.key}
                         {m.flagged && <span className="neg" title="Algum mês fora da média"> ⚑</span>}
                         {sub?.reason && <span className="warn" title={sub.reason}> revisar: {sub.reason}</span>}
@@ -603,7 +603,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
             return (
               <Fragment key="transfers">
                 <tr className="transfer-row">
-                  <td style={{ ...sticky, whiteSpace: 'nowrap' }}>
+                  <td className="first-col" style={sticky}>
                     <button className="link" onClick={() => toggle(g.key)} aria-expanded={isOpen}>{isOpen ? '▾' : '▸'} Transferências</button>
                     <span className="muted" style={{ fontSize: 12 }}> entre suas contas · fora do total</span>
                   </td>
@@ -612,7 +612,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
                 </tr>
                 {isOpen && g.merchants.map((m) => (
                   <tr key={`transfers/${m.key}`} className="transfer-row">
-                    <td style={{ ...sticky, whiteSpace: 'nowrap', paddingLeft: 24, fontSize: 13 }}>
+                    <td className="first-col" style={{ ...sticky, paddingLeft: 24, fontSize: 13 }}>
                       {m.key}{' '}<button className="link" style={{ fontWeight: 400, fontSize: 12 }} onClick={() => onOpen(m.key)}>ver lançamentos</button>
                     </td>
                     <td style={{ minWidth: 170 }}>
