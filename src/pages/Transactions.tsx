@@ -13,7 +13,8 @@ import { countryOf, flowsByCountry, type Country } from '../domain/countries'
 import { purchaseDate } from '../domain/simplify'
 import { billEffective, recurrenceCandidates } from '../domain/forecast'
 import { nextMonth } from '../domain/monthPlan'
-import { buildSimSheet } from '../domain/simSheet'
+import { buildSimSheet, projectCardBill, type BrazilLink } from '../domain/simSheet'
+import { CARD_PAYMENT } from '../domain/categorize'
 import { AsOf, Tabs } from '../components/Page'
 import { skipRecurring, useRecurring } from '../lib/recurring'
 
@@ -114,6 +115,16 @@ function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accou
   const { isBill, marks } = useRecurring(ctx)
   const [busy, setBusy] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
+  /** Itaú checking and the euro account that feeds it, both exported: the transfer is estimated as in the Painel alert. */
+  function brazilLink(cur: string): BrazilLink | undefined {
+    const to = accounts.find((a) => countryOf(a.bank) === 'Brasil' && a.type === 'checking')
+    const from = accounts.find((a) => countryOf(a.bank) !== 'Brasil' && a.type === 'checking' && a.currency === 'EUR')
+    if (!to || !from) return undefined
+    const cardIds = new Set(ctx.data.accounts.filter((a) => countryOf(a.bank) === 'Brasil' && a.type === 'card').map((a) => a.id))
+    const openBills = ctx.data.cardStatements.filter((b) => cardIds.has(b.account_id) && b.status === 'aberta')
+    const buys = ctx.etx.filter((t) => cardIds.has(t.account_id) && Number(t.amount) < 0 && t.bank_category !== CARD_PAYMENT).map((t) => ({ ...t, amount: Number(t.amount) }))
+    return { from: from.id, to: to.id, rate: ctx.fx.latest(), bill: (m) => projectCardBill(m, cur, openBills, buys) }
+  }
   async function download() {
     setBusy(true); setErro(null)
     try {
@@ -123,10 +134,10 @@ function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accou
       const ids = new Set(accounts.map((a) => a.id))
       const txs = ctx.etx.filter((t) => ids.has(t.account_id)).map((t) => ({ ...t, amount: Number(t.amount), merchant: t.merchant || '(sem descrição)' }))
       const rows = buildSimSheet(sim, txs, months, cur, last3(),
-        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel)
+        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel, brazilLink(cur))
       const { default: writeExcelFile } = await import('write-excel-file/browser')
       await writeExcelFile(rows, {
-        sheet: 'Lançamentos', stickyRowsCount: 1, stickyColumnsCount: 2,
+        sheet: 'Lançamentos', stickyRowsCount: 2, stickyColumnsCount: 2,
         columns: [{ width: 24 }, { width: 30 }, ...months.map(() => ({ width: 13 }))],
       }).toFile(`lancamentos-simulacao-${cur}.xlsx`)
     } catch (e) { setErro(`Não foi possível gerar o Excel: ${(e as Error).message}`) }

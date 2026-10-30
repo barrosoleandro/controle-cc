@@ -1,4 +1,5 @@
 import { detectSubscriptions, nextDate, type Subscription } from './subscriptions'
+import { CARD_PAYMENT } from './categorize'
 
 /** What the forecast needs from an enriched transaction (value signed, in the display currency). */
 export interface FcTx { booking_date: string; month: string; value: number; kind: string; categoryName: string; merchant: string }
@@ -122,6 +123,10 @@ export function brazilCard(bills: CardBill[], cardIds: Set<string>, month: strin
   const thisMonth = mine.filter((b) => b.due_date.slice(0, 7) === month)
   return { open, paidThisMonth: thisMonth.length > 0 && thisMonth.every((b) => b.status === 'paga') }
 }
+
+/** The card bill paid from the checking account: counted apart from the account's own bills. */
+export const isCardBillPayment = (t: { bank_category: string | null; description: string }) =>
+  t.bank_category === CARD_PAYMENT || /FATURA|ITAUCARD|PAG(TO|AMENTO)? CART/i.test(t.description)
 
 /** Money that arrived from abroad in the Brazilian accounts: what a transfer from the French account looks like there. */
 const ARRIVAL = /OP REC EXT|WISE|REVOLUT|EXTERIOR|C[AÂ]MBIO|REMESSA/i

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSimSheet, OTHERS, type Cell, type SimTx } from '../src/domain/simSheet'
+import { BILL, buildSimSheet, OTHERS, projectCardBill, RECEIVED, SENT, type Cell, type SimTx } from '../src/domain/simSheet'
 
 const months = ['2026-08', '2026-09', '2026-10', '2026-11']
 const avg = ['2026-07', '2026-08', '2026-09']
@@ -14,21 +14,21 @@ const isRec = (m: string, kind: 'income' | 'expense', steady: Set<string>) => (k
 const accounts = [{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 500 }, { id: 'b', name: 'Conta B', currency: 'BRL', opening: 10 }]
 const sheet = () => buildSimSheet(accounts, txs, months, '2026-10', avg, isRec, (m) => m)
 
-/** Evaluates the sheet's formulas (only SUM ranges and + of references are used; stored without "="). */
+/** Evaluates the sheet's formulas (stored without "="): SUM ranges, MAX, CEILING, + − / of references. */
 function evaluate(rows: Cell[][]) {
   const at = (ref: string): number => {
-    const [, c, r] = ref.match(/([A-Z])(\d+)/)!
+    const [, c, r] = ref.replace(/\$/g, '').match(/([A-Z])(\d+)/)!
     const v = rows[Number(r) - 1]?.[c.charCodeAt(0) - 65]
     const x = v && typeof v === 'object' ? v.value : v
-    return typeof x === 'number' ? x : v && typeof v === 'object' && v.type === 'Formula' ? calc(`=${x}`) : 0
+    return typeof x === 'number' ? x : v && typeof v === 'object' && v.type === 'Formula' ? calc(String(x)) : 0
   }
-  const calc = (f: string): number => f.slice(1).split('+').reduce((s, term) => {
-    const sum = term.match(/^SUM\(([A-Z])(\d+):[A-Z](\d+)\)$/)
-    if (!sum) return s + at(term)
-    let t = 0
-    for (let r = Number(sum[2]); r <= Number(sum[3]); r++) t += at(`${sum[1]}${r}`)
-    return s + t
-  }, 0)
+  const calc = (f: string): number => {
+    const js = f
+      .replace(/SUM\(([A-Z])(\d+):[A-Z](\d+)\)/g, (_, c, a, b) => `(${Array.from({ length: b - a + 1 }, (_, k) => at(`${c}${Number(a) + k}`)).join('+')})`)
+      .replace(/\$?[A-Z]\$?\d+/g, (ref) => `(${at(ref)})`)
+      .replace(/MAX\(/g, 'Math.max(').replace(/CEILING\(/g, 'ceil(')
+    return new Function('ceil', `return ${js}`)((x: number, s: number) => Math.ceil(x / s) * s)
+  }
   return (label: string, monthIdx: number, nth = 0) => {
     const row = rows.map((r, i) => [r, i] as const).filter(([r]) => r[0] === label || (r[0] as { value?: string })?.value === label || (r[1] as { value?: string })?.value === label)[nth]
     expect(row, label).toBeDefined()
@@ -60,5 +60,36 @@ describe('simulation sheet', () => {
     expect(v('Saldo inicial', 1)).toBe(2200)
     expect(v('Saldo final', 3)).toBe(2200 + 1700 + (3000 - 1000 - 120) + 1700)
     expect(v('Saldo final', 1, 1)).toBe(10 - 50) // second account, its own currency
+  })
+
+  it('Brazil: card only as its bill, transfer estimated by the Painel rule while nothing arrived', () => {
+    const br: SimTx[] = [
+      ...['2026-07', '2026-08', '2026-09'].flatMap((m) => [
+        tx(m, -2000, 'expense', 'Cartão Itaú', 'PAGAMENTO FATURA', 'i'), tx(m, -500, 'expense', 'Saúde', 'UNIMED', 'i'), tx(m, -100, 'expense', 'Lazer', 'BAR', 'i'),
+        { ...tx(m, 2600, 'transfer', 'Transferência', 'WISE', 'i'), description: 'WISE PAYMENTS' },
+      ]),
+      { ...tx('2026-10', 900, 'transfer', 'Transferência', 'WISE', 'i'), description: 'WISE PAYMENTS' }, // October already sent
+    ]
+    const accs = [{ id: 'a', name: 'BCP', currency: 'EUR', opening: 500 }, { id: 'i', name: 'Itaú', currency: 'BRL', opening: 100 }]
+    const rec = (m: string, kind: 'income' | 'expense', steady: Set<string>) => (kind === 'income' ? steady.has(m) : m === 'UNIMED' || m === 'ALUGUEL')
+    const rows = buildSimSheet(accs, [...txs.filter((t) => t.account_id === 'a'), ...br], months, '2026-10', avg, rec, (m) => m,
+      { from: 'a', to: 'i', rate: 6, bill: (m) => (m === '2026-11' ? 1800 : 0) })
+    const v = evaluate(rows)
+    expect(v(BILL, 1)).toBe(-2000) // the payment shows as the bill total
+    expect(v(BILL, 3)).toBe(-1800) // projected bill
+    expect(v(RECEIVED, 2)).toBe(0) // already sent in October: no estimate
+    // November: bill 1800 + UNIMED 500 − opening of the month, rounded up to 10
+    const open = v('Saldo inicial', 3, 1)
+    expect(v(RECEIVED, 3)).toBe(Math.max(0, Math.ceil((1800 + 500 - open) / 10) * 10))
+    expect(v(SENT, 3)).toBeCloseTo(-v(RECEIVED, 3) / 6, 2)
+    // The Itaú balance never goes below what the recurring lines need (only the rest of the spending is uncovered).
+    expect(v('Saldo final', 3, 1)).toBeCloseTo(open + v(RECEIVED, 3) - 1800 - 500 - 100, 2)
+  })
+
+  it('projects the card bill from open bills, then assigned purchases, then the current month', () => {
+    expect(projectCardBill('2026-11', '2026-10', [{ due_date: '2026-11-10', total: 700 }], [])).toBe(700)
+    expect(projectCardBill('2026-12', '2026-10', [], [{ month: '2026-10', amount: -50, statement_due: '2026-12-10' }])).toBe(50)
+    expect(projectCardBill('2026-11', '2026-10', [], [{ month: '2026-10', amount: -80 }])).toBe(80)
+    expect(projectCardBill('2026-12', '2026-10', [], [{ month: '2026-10', amount: -80 }])).toBe(0)
   })
 })
