@@ -526,6 +526,10 @@ function Rules({ ctx }: { ctx: Ctx }) {
   const [cat, setCat] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [busca, setBusca] = useState('')
+  const plain = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  const q = plain(busca.trim())
+  const shown = q ? data.rules.filter((r) => plain(`${r.pattern} ${r.category}`).includes(q)) : data.rules
   /** Every rule change is followed by a refresh of the whole base, so the lists never lag behind. */
   async function run(change: () => Promise<number | void>) {
     setBusy(true); setMsg(null)
@@ -551,8 +555,10 @@ function Rules({ ctx }: { ctx: Ctx }) {
       <div className="row"><input placeholder="Texto da descrição, ex.: TEKEL" value={pattern} onChange={(e) => setPattern(e.target.value)} />
         <CategorySelect ctx={ctx} value={cat} onChange={setCat} empty="Categoria…" label="Categoria da nova regra" />
         <button disabled={busy || pattern.trim().length < 2 || !cat} onClick={() => run(async () => { await addRule(pattern.trim(), cat, null, Math.min(1000, ...data.rules.map((r) => r.priority)) - 1); setPattern('') })}>Adicionar (prioridade máxima)</button></div>
+      <div className="row"><input type="search" placeholder="Buscar regra por texto ou categoria…" aria-label="Buscar regra" value={busca} onChange={(e) => setBusca(e.target.value)} />
+        {q && <span className="muted">{shown.length} de {data.rules.length} regras</span>}</div>
       <div className="scroll"><table><thead><tr><th className="num">Prio</th><th>Texto</th><th>Sinal</th><th>Categoria</th><th /></tr></thead><tbody>
-        {data.rules.map((r) => (
+        {shown.map((r) => (
           <tr key={r.id}><td className="num"><input type="number" style={{ width: 70 }} defaultValue={r.priority} onBlur={(e) => { if (Number(e.target.value) !== r.priority) run(() => updateRule(r.id, { priority: Number(e.target.value) })) }} /></td>
             <td>{r.pattern}</td><td>{r.sign === 'debit' ? 'saída' : r.sign === 'credit' ? 'entrada' : 'qualquer'}</td>
             <td><CategorySelect ctx={ctx} value={r.category_id} label={`Categoria da regra ${r.pattern}`}

@@ -128,6 +128,7 @@ const RULES: R[] = [
   ['MILLENNIUM', 'Transfer'],
   ['OUVERTURE EPARGNE', 'Transfer'],
   ['OUV AUTO LIVRET', 'Transfer'],
+  ['CPT DEPOT PART', 'Transfer'], // BCP: "VIR. VERS CPT DEPOT PART." = between own accounts (joint ↔ LDDS/Livret)
   // Shopping / food
   ['AMAZON', 'Compras online'],
   ['AMZ ', 'Compras online'],
