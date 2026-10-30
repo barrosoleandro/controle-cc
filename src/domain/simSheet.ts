@@ -23,7 +23,8 @@ import { isCardBillPayment, sentToBrazil } from './forecast'
 
 export type Kind = 'income' | 'expense' | 'transfer'
 export interface SimTx { account_id: string; month: string; amount: number; kind: Kind; categoryName: string; merchant: string; booking_date: string; description?: string; bank_category?: string | null }
-export interface SimAccount { id: string; name: string; currency: string; opening: number } // opening: balance before the first month
+/** opening: balance before the first month; bank: balances read from the bank's statements (yyyy-mm-dd → balance), to check the sheet against. */
+export interface SimAccount { id: string; name: string; currency: string; opening: number; bank?: Record<string, number> }
 /** Recurring flag; `steady`: the account's incomes that came in every average month (recurring unless unmarked). */
 export type IsRecurring = (merchant: string, kind: 'income' | 'expense', steady: Set<string>) => boolean
 /** `to`: the Itaú checking account; `from`: the account that sends; `rate`: BRL per 1 unit of the sender's currency; `bill`: projected card bill of a month (0 = unknown). */
@@ -165,6 +166,15 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     rows.push([{ value: 'Saldo final', fontWeight: 'bold' }, null, ...months.map((_, i) => num(`=${col(i)}${opening}+${col(i)}${result}`, i, true))])
     // The opening of each month after the first points at the previous closing.
     openRow.push(...months.map((_, i) => num(i === 0 ? round(openingBalance) : `=${col(i - 1)}${close}`, i, true)))
+    // Check against the bank: the last statement balance of each month, and how far the sheet is
+    // from it (the next month's salary already credited is added back, as the bank has it).
+    const bankAt = months.map((m) => Object.entries(a.bank ?? {}).filter(([d]) => d.slice(0, 7) === m).sort(([x], [y]) => x.localeCompare(y)).at(-1))
+    if (bankAt.some(Boolean)) {
+      const early = months.map((m) => mine.filter((t) => t.month === nextMonth(m) && t.booking_date.slice(0, 7) === m).reduce((s, t) => s + t.amount, 0))
+      const bankRow = r()
+      rows.push(['Saldo no extrato do banco', null, ...bankAt.map((b, i) => (b ? num(round(b[1]), i) : null))])
+      rows.push(['Diferença (planilha − banco)', null, ...bankAt.map((b, i) => (b ? num(`=${col(i)}${close}${early[i] ? `+${round(early[i])}` : ''}-${col(i)}${bankRow}`, i) : null))])
+    }
     rows.push([])
   }
 

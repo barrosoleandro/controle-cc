@@ -132,7 +132,8 @@ function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accou
     try {
       const cur = currentMonth()
       const months = monthWindow(nextMonth(nextMonth(cur)), back + 3)
-      const sim = accounts.map((a) => ({ id: a.id, name: a.name, currency: a.currency, opening: monthBalances([a], ctx.data.transactions, months, (v) => v).opening[0] }))
+      const sim = accounts.map((a) => ({ id: a.id, name: a.name, currency: a.currency, opening: monthBalances([a], ctx.data.transactions, months, (v) => v).opening[0],
+        bank: Object.fromEntries(ctx.data.checkpoints.filter((c) => c.account_id === a.id).map((c) => [c.date, Number(c.balance)])) }))
       const ids = new Set(accounts.map((a) => a.id))
       const txs = ctx.etx.filter((t) => ids.has(t.account_id)).map((t) => ({ ...t, amount: Number(t.amount), merchant: t.merchant || '(sem descrição)' }))
       const rows = buildSimSheet(sim, txs, months, cur, last3(),

@@ -125,4 +125,15 @@ describe('simulation sheet', () => {
     // Without the salary category, the same data is plain cash: the 30/out credit stays in October.
     expect(evaluate(buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], data, months, '2026-10', avg, isRec, (m) => m))('ACME', 2)).toBe(3000)
   })
+
+  it('checks each month against the bank statement balance, salary paid early added back', () => {
+    const pay = (m: string) => ({ ...tx(m, 3000, 'income', 'Salário', 'ACME'), booking_date: `${m}-30` })
+    const data = [...['2026-07', '2026-08', '2026-09'].map(pay), tx('2026-08', -1000, 'expense', 'Moradia', 'ALUGUEL'), tx('2026-09', -1000, 'expense', 'Moradia', 'ALUGUEL')]
+    // Bank: 3500 on 31/jul (with August's salary), 5500 on 31/ago, but 6000 on 30/set: 1500 short in the app.
+    const bank = { '2026-07-31': 3500, '2026-08-31': 5500, '2026-09-30': 6000 }
+    const v = evaluate(buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500, bank }], data, months, '2026-10', avg, isRec, (m) => m, undefined, 'Salário'))
+    expect(v('Saldo no extrato do banco', 0)).toBe(5500)
+    expect(v('Diferença (planilha − banco)', 0)).toBe(0)
+    expect(v('Diferença (planilha − banco)', 1)).toBe(1500)
+  })
 })
