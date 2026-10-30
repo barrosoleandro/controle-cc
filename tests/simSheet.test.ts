@@ -110,4 +110,19 @@ describe('simulation sheet', () => {
     const short = buildSimSheet(accounts, data, months, '2026-10', avg, isRec, (m) => m).map((r) => r.map((c) => (c && typeof c === 'object' ? c.value : c)))
     expect(short.some((r) => r[1] === 'CINEMA')).toBe(false)
   })
+
+  it('salary paid at the end of the month before shows in the month it is for, counted once', () => {
+    // Paid on the 30th for the next month, from June on; the one of 30/out (November's) is already in.
+    const pay = (m: string) => ({ ...tx(m, 3000, 'income', 'Salário', 'ACME'), booking_date: `${m}-30` })
+    const data = [...['2026-06', '2026-07', '2026-08', '2026-09', '2026-10'].map(pay), ...['2026-08', '2026-09', '2026-10'].map((m) => tx(m, -1000, 'expense', 'Moradia', 'ALUGUEL'))]
+    const rows = buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], data, months, '2026-10', avg, isRec, (m) => m, undefined, 'Salário')
+    const v = evaluate(rows)
+    // 2026-08 … 2026-11: one salary each, November's being the one credited on 30/out; none extra after.
+    expect([0, 1, 2, 3].map((i) => v('ACME', i))).toEqual([3000, 3000, 3000, 3000])
+    // The opening (bank: 3500) leaves out August's salary, credited on 30/jul and shown in August.
+    expect(v('Saldo inicial', 0)).toBe(500)
+    expect(v('Saldo final', 3)).toBe(500 + 4 * 3000 - 1000 * 4)
+    // Without the salary category, the same data is plain cash: the 30/out credit stays in October.
+    expect(evaluate(buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], data, months, '2026-10', avg, isRec, (m) => m))('ACME', 2)).toBe(3000)
+  })
 })

@@ -1,9 +1,13 @@
 /**
  * Simulation workbook of Lançamentos: one block per account, one under the other, with the same
  * months as columns (as many back as chosen, the current one, 2 ahead). Rows are category subtotals
- * (formulas) over merchant rows (values); rows with no value in the period are left out. So changing any value in Excel flows into the totals and the
- * month-to-month balance. Values are in the account's own currency: income positive, expenses
- * and money sent negative.
+ * (formulas) over merchant rows (values); rows with no value in the period are left out. Changing
+ * any value in Excel flows into the totals and the month-to-month balance. Values are in the
+ * account's own currency: income positive, expenses and money sent negative.
+ *
+ * Salary (optional category name): paid at the end of the month before the one it is for, it is
+ * shown in the month it is for, so each month has its own salary. The balances follow: a month's
+ * closing leaves out the next month's salary already credited, unlike the bank's.
  *
  * Current month: what came in plus the recurring lines not in yet. Future months: the same,
  * plus "(demais, média 3 meses)" per category, so a category is at least its 3-month average.
@@ -28,6 +32,7 @@ export interface BrazilLink { from: string; to: string; rate: number; bill: (mon
 export type { Cell }
 export const OTHERS = '(demais, média 3 meses)'
 export const BILL = 'Fatura do cartão Itaú'
+const SALARY_FROM_DAY = 20 // a salary credited from this day on is the next month's
 export const SENT = 'Transferência para o Itaú (estimada)'
 export const RECEIVED = 'Transferência do exterior (estimada)'
 const NUM = '#,##0.00;[Red]-#,##0.00'
@@ -44,7 +49,7 @@ const round = (v: number) => Math.round(v * 100) / 100
 /** Sign that makes a value positive for its kind: income counts up, the rest counts down. */
 const mag = (kind: Kind, v: number) => (kind === 'income' ? v : -v)
 
-export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: string[], current: string, avgMonths: string[], isRecurring: IsRecurring, labels: (m: string) => string, brazil?: BrazilLink): Cell[][] {
+export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: string[], current: string, avgMonths: string[], isRecurring: IsRecurring, labels: (m: string) => string, brazil?: BrazilLink, salary?: string): Cell[][] {
   const cur = months.indexOf(current)
   const ahead = (i: number) => cur >= 0 && i >= cur // current month and after: (partly) projected
   const link = brazil && accounts.some((a) => a.id === brazil.from) && accounts.some((a) => a.id === brazil.to) ? brazil : undefined
@@ -69,6 +74,10 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     // In the Itaú account the card is its bill total, an expense line of its own.
     const mine = txs.filter((t) => t.account_id === a.id).map((t) => (isTo && (t.categoryName === 'Cartão Itaú' || isCardBillPayment({ bank_category: t.bank_category ?? null, description: t.description ?? '' }))
       ? { ...t, kind: 'expense' as const, categoryName: BILL, merchant: BILL } : t))
+      .map((t) => (t.kind === 'income' && t.categoryName === salary && Number(t.booking_date.slice(8, 10)) >= SALARY_FROM_DAY ? { ...t, month: nextMonth(t.month) } : t))
+    // A salary credited just before the first month is in the bank's opening balance but shows in
+    // the first month: taken out of the opening so it is not counted twice.
+    const openingBalance = a.opening - mine.filter((t) => t.month === months[0] && t.booking_date.slice(0, 7) < months[0]).reduce((s, t) => s + t.amount, 0)
     const idx = new Map(months.map((m, i) => [m, i]))
     // kind → category → merchant → value per month
     const grid = new Map<Kind, Map<string, Map<string, number[]>>>()
@@ -119,7 +128,7 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
 
     // An account with nothing in the period and no balance would be a block of zeros: left out.
     const empty = ![...grid.values()].some((byCat) => [...byCat.values()].some((ms) => [...ms].some(([m, v]) => keep(m, v))))
-    if (empty && Math.abs(a.opening) < 0.005) continue
+    if (empty && Math.abs(openingBalance) < 0.005) continue
     rows.push([{ value: `${a.name} (${a.currency})`, fontWeight: 'bold' }])
     const opening = r()
     const openRow: Cell[] = ['Saldo inicial', null] // months filled once the closing row is known
@@ -155,7 +164,7 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     const close = r()
     rows.push([{ value: 'Saldo final', fontWeight: 'bold' }, null, ...months.map((_, i) => num(`=${col(i)}${opening}+${col(i)}${result}`, i, true))])
     // The opening of each month after the first points at the previous closing.
-    openRow.push(...months.map((_, i) => num(i === 0 ? round(a.opening) : `=${col(i - 1)}${close}`, i, true)))
+    openRow.push(...months.map((_, i) => num(i === 0 ? round(openingBalance) : `=${col(i - 1)}${close}`, i, true)))
     rows.push([])
   }
 

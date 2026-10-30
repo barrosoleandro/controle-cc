@@ -14,6 +14,7 @@ import { purchaseDate } from '../domain/simplify'
 import { billEffective, recurrenceCandidates } from '../domain/forecast'
 import { nextMonth } from '../domain/monthPlan'
 import { buildSimSheet, projectCardBill, type BrazilLink } from '../domain/simSheet'
+import { findSalaryCategory } from '../domain/budget'
 import { CARD_PAYMENT } from '../domain/categorize'
 import { AsOf, Tabs } from '../components/Page'
 import { skipRecurring, useRecurring } from '../lib/recurring'
@@ -135,7 +136,7 @@ function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accou
       const ids = new Set(accounts.map((a) => a.id))
       const txs = ctx.etx.filter((t) => ids.has(t.account_id)).map((t) => ({ ...t, amount: Number(t.amount), merchant: t.merchant || '(sem descrição)' }))
       const rows = buildSimSheet(sim, txs, months, cur, last3(),
-        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel, brazilLink(cur))
+        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel, brazilLink(cur), findSalaryCategory(ctx.data.categories)?.name)
       const { default: writeExcelFile } = await import('write-excel-file/browser')
       await writeExcelFile(rows, {
         sheet: 'Lançamentos', stickyRowsCount: 2, stickyColumnsCount: 2,
