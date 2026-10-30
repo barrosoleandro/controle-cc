@@ -130,7 +130,7 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
                         onBlur={(e) => { const d = e.target.value; if (d && d !== l.date) updateLine(l.id, { date: d, month: d.slice(0, 7) }) }} />
                       <input defaultValue={l.description} aria-label="Descrição" style={{ minWidth: 140 }}
                         onBlur={(e) => { if (e.target.value !== l.description) updateLine(l.id, { description: e.target.value }) }} />
-                      <CategorySelect ctx={ctx} value={l.category_id} label="Categoria" onChange={(id) => updateLine(l.id, { category_id: id })} />
+                      <CategorySelect ctx={ctx} value={l.category_id} label="Categoria" onChange={(id) => { updateLine(l.id, { category_id: id }) }} />
                     </div>
                   </td>
                   <td /><td />
