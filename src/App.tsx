@@ -29,6 +29,8 @@ import { Cards } from './pages/Cards'
 // autenticador. Aos 60 minutos parados, sai de verdade.
 const LOCK_MS = 15 * 60 * 1000
 const SIGNOUT_MS = 60 * 60 * 1000
+const STALE_MS = 60 * 1000 // data older than this is read again when the app comes back to the screen
+let loadedAt = 0 // when the data was last read from the database
 let fxFetchedThisOpen = false // reset only by a fresh page load, i.e. opening the app
 
 export default function App() {
@@ -75,6 +77,7 @@ function Shell() {
 
   const reload = useCallback(async () => {
     try {
+      loadedAt = Date.now()
       let d = await loadAll()
       if (d.categories.length === 0) { await seedDefaults(); d = await loadAll() }
       // Atualiza as cotações EUR→BRL a cada abertura do app (não a cada recarga de dados;
@@ -94,6 +97,13 @@ function Shell() {
     } catch (e) { setError((e as Error).message) }
   }, [])
   useEffect(() => { reload() }, [reload])
+  // Back to the app (a phone keeps it open for days): reload, or rows imported meanwhile on
+  // another device stay off every screen until the app is closed and opened again.
+  useEffect(() => {
+    const onShow = () => { if (document.visibilityState === 'visible' && Date.now() - loadedAt > STALE_MS) reload() }
+    document.addEventListener('visibilitychange', onShow)
+    return () => document.removeEventListener('visibilitychange', onShow)
+  }, [reload])
   // Which computer this is, and its local-AI settings. In the background: the AI is optional.
   useEffect(() => { syncDevice() }, [])
   useEffect(() => { try { sessionStorage.setItem('tab', tab) } catch { /* ignore */ } }, [tab])

@@ -1,11 +1,11 @@
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { addCategory, markAiNote, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote } from '../lib/data'
+import { addCategory, loadAll, markAiNote, reapplyRules, setCategoryForTransactions, setMerchantCategory, setTransactionCategory, setTransactionNote, type AppData } from '../lib/data'
 import { CategorySelect } from '../components/CategorySelect'
 import { monthLabel, money } from '../lib/format'
 import { currentMonth, hiddenByDefault, last3, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
 import { Menu } from './analysis/shared'
-import { balanceSeries } from '../domain/analytics'
+import { balanceSeries, enrich } from '../domain/analytics'
 import { buildPeriod, monthBalances, monthWindow, subscriptionReview, type PeriodRow } from '../domain/period'
 import type { CategoryKind } from '../domain/types'
 import { byName, isTithe } from '../domain/categorize'
@@ -118,13 +118,13 @@ function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accou
   const [back, setBack] = useState(11) // months before the current one; the current and 2 ahead always come
   const [erro, setErro] = useState<string | null>(null)
   /** Itaú checking and the euro account that feeds it, both exported: the transfer is estimated as in the Painel alert. */
-  function brazilLink(cur: string): BrazilLink | undefined {
+  function brazilLink(cur: string, data: AppData, etx: Ctx['etx']): BrazilLink | undefined {
     const to = accounts.find((a) => countryOf(a.bank) === 'Brasil' && a.type === 'checking')
     const from = accounts.find((a) => countryOf(a.bank) !== 'Brasil' && a.type === 'checking' && a.currency === 'EUR')
     if (!to || !from) return undefined
-    const cardIds = new Set(ctx.data.accounts.filter((a) => countryOf(a.bank) === 'Brasil' && a.type === 'card').map((a) => a.id))
-    const openBills = ctx.data.cardStatements.filter((b) => cardIds.has(b.account_id) && b.status === 'aberta')
-    const buys = ctx.etx.filter((t) => cardIds.has(t.account_id) && Number(t.amount) < 0 && t.bank_category !== CARD_PAYMENT).map((t) => ({ ...t, amount: Number(t.amount) }))
+    const cardIds = new Set(data.accounts.filter((a) => countryOf(a.bank) === 'Brasil' && a.type === 'card').map((a) => a.id))
+    const openBills = data.cardStatements.filter((b) => cardIds.has(b.account_id) && b.status === 'aberta')
+    const buys = etx.filter((t) => cardIds.has(t.account_id) && Number(t.amount) < 0 && t.bank_category !== CARD_PAYMENT).map((t) => ({ ...t, amount: Number(t.amount) }))
     return { from: from.id, to: to.id, rate: ctx.fx.latest(), bill: (m) => projectCardBill(m, cur, openBills, buys) }
   }
   async function download() {
@@ -132,12 +132,15 @@ function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accou
     try {
       const cur = currentMonth()
       const months = monthWindow(nextMonth(nextMonth(cur)), back + 3)
-      const sim = accounts.map((a) => ({ id: a.id, name: a.name, currency: a.currency, opening: monthBalances([a], ctx.data.transactions, months, (v) => v).opening[0],
-        bank: Object.fromEntries(ctx.data.checkpoints.filter((c) => c.account_id === a.id).map((c) => [c.date, Number(c.balance)])) }))
+      // Read from the database now, not the copy loaded when the app was opened.
+      const data = await loadAll()
+      const sim = accounts.map((a) => ({ id: a.id, name: a.name, currency: a.currency, opening: monthBalances([a], data.transactions, months, (v) => v).opening[0],
+        bank: Object.fromEntries(data.checkpoints.filter((c) => c.account_id === a.id).map((c) => [c.date, Number(c.balance)])) }))
       const ids = new Set(accounts.map((a) => a.id))
-      const txs = ctx.etx.filter((t) => ids.has(t.account_id)).map((t) => ({ ...t, amount: Number(t.amount), merchant: t.merchant || '(sem descrição)' }))
+      const etx = enrich(data.transactions, data.categories, data.accounts, ctx.fx, ctx.currency)
+      const txs = etx.filter((t) => ids.has(t.account_id)).map((t) => ({ ...t, amount: Number(t.amount), merchant: t.merchant || '(sem descrição)' }))
       const rows = buildSimSheet(sim, txs, months, cur, last3(),
-        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel, brazilLink(cur), findSalaryCategory(ctx.data.categories)?.name)
+        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel, brazilLink(cur, data, etx), findSalaryCategory(data.categories)?.name)
       const { default: writeExcelFile } = await import('write-excel-file/browser')
       await writeExcelFile(rows, {
         sheet: 'Lançamentos', stickyRowsCount: 2, stickyColumnsCount: 2,
