@@ -2,12 +2,15 @@ import type { ParsedTransaction } from './types'
 import { merchantKey } from './categorize'
 
 /**
- * The vendor as far as duplicate detection is concerned: the first word of the merchant
- * key ("CB CARREFOUR FACT 250426" and "CARREFOUR MARKET" → CARREFOUR). Banks word the
- * same operation differently in CSV, PDF and Excel; the first word is what they share.
+ * The vendor as far as duplicate detection is concerned: its first word that names someone
+ * ("CB CARREFOUR FACT 250426" and "CARREFOUR MARKET" → CARREFOUR). Banks word the same
+ * operation differently in CSV, PDF and Excel; that word is what they share. Words that only
+ * say how money moved are skipped: with "VIR" as the vendor, every transfer of the same amount
+ * on the same day got one fingerprint, and the database dropped all but the first.
  */
 export function vendorToken(description: string): string {
-  return merchantKey(description).split(' ')[0] ?? ''
+  const words = [...vendorWords(description)].filter((w) => !MOVEMENT.has(w))
+  return words.find((w) => /^[A-Z]/.test(w)) ?? words[0] ?? merchantKey(description).split(' ')[0] ?? ''
 }
 
 /** Account, date and amount: the bucket where two rows can be the same operation. */
@@ -17,6 +20,8 @@ export function dedupeKey(account: string, date: string, amount: number): string
 
 // Words that say how money moved, not who received it.
 const GENERIC = new Set(['CARTE', 'VIR', 'PIX', 'TRANSF', 'SEPA', 'PRLV', 'FACT', 'COMPRA', 'CARTAO', 'DEBITO', 'CREDITO'])
+// Also skipped for the fingerprint: they come before the name in transfers ("VIR. VERS CPT DEPOT", "VIREMENT RECU DE").
+const MOVEMENT = new Set(['VIREMENT', 'VERS', 'RECU', 'EMIS', 'INST', 'TED', 'DOC'])
 
 /**
  * The vendor's words, in any order and without accents: "DI Resgate CDB" and "RESGATE CDB DI",

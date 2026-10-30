@@ -96,6 +96,11 @@ describe('fingerprints', () => {
     const [a, b] = withFingerprints([tx('CB CARREFOUR FACT 010126'), tx('CB PICARD FACT 010126')], (r) => r)
     expect(a.fingerprint).not.toBe(b.fingerprint)
   })
+  it('tell apart two transfers with the same date and amount (the vendor is not "VIR")', () => {
+    const [a, b] = withFingerprints([tx('VIR. VERS CPT DEPOT PART.'), tx('VIR SEPA LOYER MARS')], (r) => r)
+    expect(a.fingerprint).not.toBe(b.fingerprint)
+    expect(a.fingerprint).toMatch(/\|CPT\|0$/)
+  })
 })
 
 describe('duplicate check across files (date + vendor + amount)', () => {

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Ctx } from '../App'
 import { importAuditRows, listImports, loadAll, type AppData } from '../lib/data'
 import { money } from '../lib/format'
@@ -27,6 +27,9 @@ export function ImportAudit({ ctx }: { ctx: Ctx }) {
   const [logs, setLogs] = useState<{ checked: number; issues: LogAudit[] } | null>(null)
   const [unpaired, setUnpaired] = useState<(PairTx & { accountName: string })[] | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const dirRef = useRef<HTMLInputElement>(null)
+  // webkitdirectory is not in React's prop types; set it on the element itself.
+  useEffect(() => { dirRef.current?.setAttribute('webkitdirectory', '') }, [])
 
   const storedOf = (data: AppData) => {
     const acc = new Map(data.accounts.map((a) => [a.id, a]))
@@ -54,7 +57,8 @@ export function ImportAudit({ ctx }: { ctx: Ctx }) {
       const stored = storedOf(data)
       const refs = new Set(data.accounts.map((a) => a.external_ref))
       const out: FileAudit[] = []
-      for (const f of [...list]) {
+      // A folder brings everything in it: only statements are read.
+      for (const f of [...list].filter((x) => /\.(csv|pdf|xlsx)$/i.test(x.name))) {
         setBusy(`Conferindo ${f.name}…`)
         const { loadPdf } = await import('../lib/pdf')
         const res = await parseStatement(f.name, new Uint8Array(await f.arrayBuffer()), loadPdf)
@@ -109,8 +113,10 @@ export function ImportAudit({ ctx }: { ctx: Ctx }) {
       <div className="row">
         <button className="primary" onClick={auditLog} disabled={!!busy}>Auditar pelo histórico</button>
         <button onClick={() => fileRef.current?.click()} disabled={!!busy}>Auditar com os arquivos</button>
+        <button onClick={() => dirRef.current?.click()} disabled={!!busy} title="Por exemplo a pasta “processado”, para onde a importação move os extratos">Auditar uma pasta</button>
         <button onClick={checkTransfers} disabled={!!busy}>Conferir transferências entre contas</button>
         <input ref={fileRef} type="file" multiple accept=".csv,.pdf,.xlsx" hidden onChange={(e) => { auditFiles(e.target.files); e.target.value = '' }} />
+        <input ref={dirRef} type="file" multiple hidden onChange={(e) => { auditFiles(e.target.files); e.target.value = '' }} />
       </div>
       {busy && <div className="loading" style={{ justifyContent: 'flex-start', margin: '12px 0' }}><span className="spinner" />{busy}</div>}
       {erro && <p className="err">{erro}</p>}
