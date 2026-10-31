@@ -3,7 +3,7 @@ import { supabase } from './supabase'
 import type { Account, AccountHint, BankMapEntry, Category, Currency, ParseResult, ParsedTransaction, Rule, Transaction } from '../domain/types'
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/defaults'
 import { categorize, merchantKey, ruleMatches, TRANSFER } from '../domain/categorize'
-import { matchBillDebits, matchCardPayments, type StoredCardStatement } from '../domain/cards'
+import { CARD_BILL, matchBillDebits, matchCardPayments, type StoredCardStatement } from '../domain/cards'
 import { dedupeKey, markDuplicates, sameVendor, withFingerprints } from '../domain/fingerprint'
 import { withAiNote } from '../domain/claudeExchange'
 import type { ContractItem } from '../domain/payroll'
@@ -424,8 +424,6 @@ export async function linkCardPayments(data: AppData): Promise<number> {
   }
   return ids.length + unlinked
 }
-/** Category of a bill payment whose purchases are not in the app: the bill total is the spending. */
-const CARD_BILL = 'Cartão Itaú'
 export async function setTransactionCategory(id: string, category_id: string | null, locked = true) {
   must(await supabase.from('transactions').update({ category_id, category_locked: locked }).eq('id', id))
 }

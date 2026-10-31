@@ -16,6 +16,7 @@ import { nextMonth } from '../domain/monthPlan'
 import { buildSimSheet, projectCardBill, type BrazilLink } from '../domain/simSheet'
 import { findSalaryCategory } from '../domain/budget'
 import { CARD_PAYMENT } from '../domain/categorize'
+import { CARD_BILL, matchBillDebits, matchCardPayments } from '../domain/cards'
 import { AsOf, Tabs } from '../components/Page'
 import { skipRecurring, useRecurring } from '../lib/recurring'
 
@@ -38,10 +39,6 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const listed = useMemo(() => new Set(accounts.map((a) => a.id)), [accounts])
   const [hidden, setHidden] = useState<Set<string>>(() => hiddenByDefault(accounts))
   const shown = useCallback((id: string) => listed.has(id) && !hidden.has(id), [hidden, listed])
-  // A card's purchases count with the account that pays it: ticking Itaú Conta brings the Itaú
-  // card's spending into the expense lines and the list (never into balances).
-  const payerOf = useMemo(() => new Map(ctx.data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!])), [ctx.data.accounts])
-  const inScope = useCallback((id: string) => shown(id) || (payerOf.has(id) && shown(payerOf.get(id)!)), [shown, payerOf])
   const fmt = useFmt(ctx)
   const balances = useBalances(ctx)
   const mine = balances.filter((b) => shown(b.account.id))
@@ -100,10 +97,10 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
       <ExcelExport ctx={ctx} accounts={accounts.filter((a) => shown(a.id))} />
     </div>
     {view === 'Lista'
-      ? <Lista ctx={ctx} shown={inScope} rec={rec} merchant={merchant} onClearMerchant={() => setMerchant('')} />
+      ? <Lista ctx={ctx} shown={shown} rec={rec} merchant={merchant} onClearMerchant={() => setMerchant('')} />
       : view === 'Por país'
-        ? <PorPais ctx={ctx} shown={inScope} />
-        : <Periodo ctx={ctx} shown={inScope} rec={rec} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
+        ? <PorPais ctx={ctx} shown={shown} />
+        : <Periodo ctx={ctx} shown={shown} rec={rec} n={MONTHS[view]} onOpen={(m) => { setMerchant(m); setView('Lista') }} />}
     <RecurringQuestions ctx={ctx} />
   </>
 }
@@ -191,9 +188,24 @@ function RecurringQuestions({ ctx }: { ctx: Ctx }) {
   )
 }
 
+/**
+ * On this page the Itaú card is one line: the bill paid from the account, under "Cartão Itaú"
+ * (spending, not a transfer). Its purchases are left out (`shown` has no card accounts) and
+ * stay on the Cartões page.
+ */
+function useBillsAsSpending(ctx: Ctx): Ctx['etx'] {
+  const { data } = ctx
+  return useMemo(() => {
+    const viaPayment = matchCardPayments(data.accounts, data.transactions).map((m) => m.bankTx.id)
+    const paid = new Set([...viaPayment, ...matchBillDebits(data.accounts, data.cardStatements, data.transactions, new Set(viaPayment)).map((m) => m.bankTx.id)])
+    return ctx.etx.map((t) => (paid.has(t.id) ? { ...t, kind: 'expense' as const, categoryName: CARD_BILL } : t))
+  }, [ctx.etx, data.accounts, data.transactions, data.cardStatements])
+}
+
 function Lista({ ctx, shown, rec, merchant, onClearMerchant }: { ctx: Ctx; shown: (accountId: string) => boolean; rec: Rec; merchant: string; onClearMerchant: () => void }) {
   const fmt = useFmt(ctx)
-  const { data, etx } = ctx
+  const { data } = ctx
+  const etx = useBillsAsSpending(ctx)
   const [q, setQ] = useState('')
   // Opens on the current month (a search across the whole history is "Todos os meses").
   // Opened from a merchant in a month view, it shows that merchant's whole history.
@@ -397,7 +409,8 @@ function Lista({ ctx, shown, rec, merchant, onClearMerchant }: { ctx: Ctx; shown
 function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: string) => boolean; rec: Rec; n: number; onOpen: (merchant: string) => void }) {
   const { isBill, setRecurring } = useRecurring(ctx)
   const fmt = useFmt(ctx)
-  const { data, etx } = ctx
+  const { data } = ctx
+  const etx = useBillsAsSpending(ctx)
   const subs = useSubscriptions(ctx)
   const [end, setEnd] = useState('') // último mês da janela; vazio = o mais recente com dados
   const [onlyAlerts, setOnlyAlerts] = useState(false)
@@ -438,7 +451,7 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
       .map((g) => ({ ...quiet(g), merchants: g.merchants.map(quiet) }))
   }, [etx, shown, months])
 
-  // Transfers between the user's own accounts (and paid card bills) of the ticked accounts:
+  // Transfers between the user's own accounts of the ticked accounts (card bills are spending here):
   // per month by direction (for the totals) and per merchant (shown as their own category,
   // sent positive, received negative, never part of the expense total). One row per
   // transfer, with its date and account: summed per merchant, money sent and received under
@@ -742,7 +755,8 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
  */
 function PorPais({ ctx, shown }: { ctx: Ctx; shown: (accountId: string) => boolean }) {
   const fmt = useFmt(ctx)
-  const { data, etx } = ctx
+  const { data } = ctx
+  const etx = useBillsAsSpending(ctx)
   const months = useMemo(() => monthWindow(today().slice(0, 7), 24), [])
   const countryOfAccount = useMemo(
     () => new Map(data.accounts.filter((a) => shown(a.id)).map((a) => [a.id, countryOf(a.bank)] as [string, Country])),
@@ -758,7 +772,7 @@ function PorPais({ ctx, shown }: { ctx: Ctx; shown: (accountId: string) => boole
   return <>
     <div className="card">
       <h3>Recebimentos e gastos por país · {months[0]} a {months.at(-1)}</h3>
-      <p className="muted">Contas marcadas acima, em {ctx.currency}. Itaú = Brasil (inclui o cartão), BCP e CCF = França, Millennium = Portugal.
+      <p className="muted">Contas marcadas acima, em {ctx.currency}. Itaú = Brasil (o cartão pela fatura paga), BCP e CCF = França, Millennium = Portugal.
         Transferências entre as suas contas e pagamentos de fatura ficam de fora, para nada contar duas vezes.</p>
       <div className="scroll"><table>
         <thead><tr><th>País</th><th className="num">Recebimentos</th><th className="num">Gastos</th><th className="num">Resultado</th><th className="num">Gasto médio/mês</th></tr></thead>

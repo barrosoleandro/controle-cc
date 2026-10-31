@@ -11,6 +11,9 @@ export interface StoredCardStatement {
 /** What matching needs from a stored transaction. */
 export interface PayTx { id: string; account_id: string; booking_date: string; amount: number; bank_category?: string | null; statement_due?: string | null }
 
+/** Category of a bill payment shown as spending: the bill total, its purchases left aside. */
+export const CARD_BILL = 'Cartão Itaú'
+
 const DAY = 86400000
 const WINDOW_DAYS = 5 // the card may credit the payment a day or two after the account debit
 
