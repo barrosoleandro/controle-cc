@@ -9,7 +9,7 @@ export interface StoredCardStatement {
 }
 
 /** What matching needs from a stored transaction. */
-export interface PayTx { id: string; account_id: string; booking_date: string; amount: number; bank_category?: string | null }
+export interface PayTx { id: string; account_id: string; booking_date: string; amount: number; bank_category?: string | null; statement_due?: string | null }
 
 const DAY = 86400000
 const WINDOW_DAYS = 5 // the card may credit the payment a day or two after the account debit
@@ -21,18 +21,26 @@ const WINDOW_DAYS = 5 // the card may credit the payment a day or two after the 
  *
  * Those debits are transfers between the user's own accounts — the spending is the card
  * purchases themselves. Payments that no imported fatura mentions are left alone and
- * stay "Cartão Itaú" (an expense), so months without card detail keep their total.
+ * stay "Cartão Itaú" (an expense), so months without card detail keep their total. So do
+ * payments of a bill whose purchases were not imported: the payment of the 11/10 bill shows
+ * on the next bill, and without the 11/10 bill itself its purchases would be counted nowhere.
+ * (Cards whose purchases carry no bill due date, imported before migration 004, are not checked.)
  */
 export function matchCardPayments(accounts: Account[], txs: PayTx[]) {
   const parentOf = new Map(accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!]))
   const used = new Set<string>()
   const out: { cardTx: PayTx; bankTx: PayTx }[] = []
+  const dues = new Map<string, number[]>() // per card: due dates of the bills whose purchases are imported
+  for (const t of txs) if (parentOf.has(t.account_id) && t.statement_due && Number(t.amount) < 0) dues.set(t.account_id, [...(dues.get(t.account_id) ?? []), Date.parse(t.statement_due)])
   const payments = txs
     .filter((t) => parentOf.has(t.account_id) && t.bank_category === CARD_PAYMENT && Number(t.amount) > 0)
     .sort((a, b) => a.booking_date.localeCompare(b.booking_date))
   for (const p of payments) {
     const parent = parentOf.get(p.account_id)
     const at = Date.parse(p.booking_date)
+    const billed = dues.get(p.account_id)
+    // The bill paid is due from 15 days before to 10 days after the payment; the next one is a month away.
+    if (billed && !billed.some((d) => (at - d) / DAY >= -10 && (at - d) / DAY <= 15)) continue // the paid bill is not imported
     const best = txs
       .filter((t) => t.account_id === parent && !used.has(t.id) && Math.abs(Number(t.amount) + Number(p.amount)) < 0.005)
       .map((t) => ({ t, gap: Math.abs(Date.parse(t.booking_date) - at) / DAY }))

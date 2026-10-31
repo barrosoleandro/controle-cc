@@ -141,3 +141,22 @@ describe('matchCardPayments', () => {
     expect(billPayment(bill, txs)?.id).toBe('p1')
   })
 })
+
+describe('matchCardPayments with bill due dates', () => {
+  const acc = (id: string, type: Account['type'], parent?: string): Account => ({
+    id, name: id, bank: 'ITAU', currency: 'BRL', type, external_ref: id, opening_balance: 0, opening_date: null, is_active: true, parent_account_id: parent ?? null,
+  })
+  const accounts = [acc('chk', 'checking'), acc('card', 'card', 'chk')]
+  // The 11/10 bill was never imported: its payment only shows on the 11/11 bill.
+  const txs = [
+    { id: 'p-oct', account_id: 'card', booking_date: '2026-10-11', amount: 11744.52, bank_category: CARD_PAYMENT, statement_due: '2026-11-11' },
+    { id: 'buy-nov', account_id: 'card', booking_date: '2026-10-20', amount: -6717.21, statement_due: '2026-11-11' },
+    { id: 'p-sep', account_id: 'card', booking_date: '2026-09-11', amount: 25996.24, bank_category: CARD_PAYMENT, statement_due: '2026-10-11' },
+    { id: 'buy-sep', account_id: 'card', booking_date: '2026-08-20', amount: -25996.24, statement_due: '2026-09-11' },
+    { id: 'd-oct', account_id: 'chk', booking_date: '2026-10-13', amount: -11744.52 },
+    { id: 'd-sep', account_id: 'chk', booking_date: '2026-09-11', amount: -25996.24 },
+  ]
+  it('leaves the payment of a bill whose purchases are not imported as spending', () => {
+    expect(matchCardPayments(accounts, txs).map((m) => m.bankTx.id)).toEqual(['d-sep'])
+  })
+})

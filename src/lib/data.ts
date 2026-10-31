@@ -393,7 +393,10 @@ export async function ensureAccounts(plans: ImportPlan[], data: AppData): Promis
 
 /**
  * Turns each matched bill payment in the paying account into a transfer (see
- * matchCardPayments). Locked, so "Reaplicar regras" keeps it. Returns how many changed.
+ * matchCardPayments). Locked, so "Reaplicar regras" keeps it. A bill payment of a paying
+ * account left as a transfer that no longer matches (its bill's purchases are not imported)
+ * goes back to its rule category ("Cartão Itaú"), so the month keeps the bill as spending.
+ * Returns how many changed.
  */
 export async function linkCardPayments(data: AppData): Promise<number> {
   const transfer = data.categories.find((c) => c.name === TRANSFER)
@@ -406,8 +409,23 @@ export async function linkCardPayments(data: AppData): Promise<number> {
     .filter((t) => t.category_id !== transfer.id)
     .map((t) => t.id)
   if (ids.length) await setCategoryForTransactions(ids, transfer.id)
-  return ids.length
+  // Only rows the rules file as a card bill ("Cartão Itaú") go back: transfers picked by hand stay.
+  const matched = new Set([...viaPayment, ...viaBill])
+  const payers = new Map(data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.parent_account_id!, a]))
+  const billCat = data.categories.find((c) => c.name === CARD_BILL)
+  let unlinked = 0
+  if (billCat) for (const t of data.transactions) {
+    const payer = payers.get(t.account_id)
+    if (!payer || Number(t.amount) >= 0 || t.category_id !== transfer.id || matched.has(t.id)) continue
+    const name = categorize({ description: t.description, amount: Number(t.amount), bankCategory: t.bank_category, bankSubcategory: t.bank_subcategory }, data.rules, data.bankMap, payer.bank)
+    if (name !== CARD_BILL) continue
+    await setTransactionCategory(t.id, billCat.id, false)
+    unlinked++
+  }
+  return ids.length + unlinked
 }
+/** Category of a bill payment whose purchases are not in the app: the bill total is the spending. */
+const CARD_BILL = 'Cartão Itaú'
 export async function setTransactionCategory(id: string, category_id: string | null, locked = true) {
   must(await supabase.from('transactions').update({ category_id, category_locked: locked }).eq('id', id))
 }
