@@ -137,6 +137,18 @@ describe('simulation sheet', () => {
     expect(v('Diferença (planilha − banco)', 1)).toBe(1500)
   })
 
+  it('closing as the bank has it: the next salary already credited, or expected in projected months', () => {
+    const pay = (m: string) => ({ ...tx(m, 3000, 'income', 'Salário', 'ACME'), booking_date: `${m}-30` })
+    const data = [...['2026-07', '2026-08', '2026-09'].map(pay), ...['2026-08', '2026-09'].map((m) => tx(m, -1000, 'expense', 'Moradia', 'ALUGUEL'))]
+    const v = evaluate(buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], data, months, '2026-10', avg, isRec, (m) => m, undefined, 'Salário'))
+    // August and September: September's / October's salary credited on the 30th.
+    expect(v('Saldo final (como no banco)', 0)).toBe(v('Saldo final', 0) + 3000)
+    expect(v('Saldo final (como no banco)', 1)).toBe(v('Saldo final', 1) + 3000)
+    // October (current, November's salary not in yet): November's salary as projected; last month: nothing to add.
+    expect(v('Saldo final (como no banco)', 2)).toBe(v('Saldo final', 2) + v('Salário', 3))
+    expect(v('Saldo final (como no banco)', 3)).toBe(v('Saldo final', 3))
+  })
+
   it('Brazil: money from abroad that became income (no other side) still counts as the month sent', () => {
     const br: SimTx[] = [
       ...['2026-07', '2026-08', '2026-09'].map((m) => tx(m, -500, 'expense', 'Saúde', 'UNIMED', 'i')),

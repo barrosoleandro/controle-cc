@@ -7,7 +7,8 @@
  *
  * Salary (optional category name): paid at the end of the month before the one it is for, it is
  * shown in the month it is for, so each month has its own salary. The balances follow: a month's
- * closing leaves out the next month's salary already credited, unlike the bank's.
+ * closing leaves out the next month's salary already credited, unlike the bank's. A second
+ * closing row, "como no banco", adds it back (in projected months, the next month's salary row).
  *
  * Current month: what came in plus the recurring lines not in yet. Future months: the same,
  * plus "(demais, média 3 meses)" per category, so a category is at least its 3-month average.
@@ -136,6 +137,7 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     const openRow: Cell[] = ['Saldo inicial', null] // months filled once the closing row is known
     rows.push(openRow)
     const totals: number[] = []
+    let salaryRow = 0 // subtotal row of the salary category, when it has one
     for (const [kind, label] of SECTIONS) {
       const cats = [...(grid.get(kind) ?? [])]
         .map(([cat, ms]) => ({ cat, ms: [...ms].filter(([m, v]) => keep(m, v)) }))
@@ -149,6 +151,7 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
         ms.sort(([ka, a], [kb, b]) => (ka === OTHERS ? 1 : kb === OTHERS ? -1 : abs(b) - abs(a)))
         const at = r()
         catRows.push(at)
+        if (kind === 'income' && cat === salary) salaryRow = at
         rows.push([{ value: cat, fontWeight: 'bold' }, null, ...months.map((_, i) => num(`=SUM(${col(i)}${at + 1}:${col(i)}${at + ms.length})`, i, true))])
         for (const [merchant, v] of ms) {
           if (isTo && (merchant === BILL || recurringExpense.has(merchant))) est.bills.push(r())
@@ -167,14 +170,22 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     rows.push([{ value: 'Saldo final', fontWeight: 'bold' }, null, ...months.map((_, i) => num(`=${col(i)}${opening}+${col(i)}${result}`, i, true))])
     // The opening of each month after the first points at the previous closing.
     openRow.push(...months.map((_, i) => num(i === 0 ? round(openingBalance) : `=${col(i - 1)}${close}`, i, true)))
-    // Check against the bank: the last statement balance of each month, and how far the sheet is
-    // from it (the next month's salary already credited is added back, as the bank has it).
+    // The closing as the bank has it: plus the next month's salary already credited; in the
+    // current and projected months, while it is not in yet, the next month's salary row.
+    const early = months.map((m) => mine.filter((t) => t.month === nextMonth(m) && t.booking_date.slice(0, 7) === m).reduce((s, t) => s + t.amount, 0))
+    const paysEarly = early.some((v) => Math.abs(v) > 0.005)
+    const addBack = (i: number) => (Math.abs(early[i]) > 0.005 ? `+${round(early[i])}` : ahead(i) && salaryRow && i + 1 < months.length ? `+${col(i + 1)}${salaryRow}` : '')
+    let asBank = close
+    if (paysEarly) {
+      asBank = r()
+      rows.push([{ value: 'Saldo final (como no banco)', fontWeight: 'bold' }, null, ...months.map((_, i) => num(`=${col(i)}${close}${addBack(i)}`, i, true))])
+    }
+    // Check against the bank: the last statement balance of each month, and how far the sheet is from it.
     const bankAt = months.map((m) => Object.entries(a.bank ?? {}).filter(([d]) => d.slice(0, 7) === m).sort(([x], [y]) => x.localeCompare(y)).at(-1))
     if (bankAt.some(Boolean)) {
-      const early = months.map((m) => mine.filter((t) => t.month === nextMonth(m) && t.booking_date.slice(0, 7) === m).reduce((s, t) => s + t.amount, 0))
       const bankRow = r()
       rows.push(['Saldo no extrato do banco', null, ...bankAt.map((b, i) => (b ? num(round(b[1]), i) : null))])
-      rows.push(['Diferença (planilha − banco)', null, ...bankAt.map((b, i) => (b ? num(`=${col(i)}${close}${early[i] ? `+${round(early[i])}` : ''}-${col(i)}${bankRow}`, i) : null))])
+      rows.push(['Diferença (planilha − banco)', null, ...bankAt.map((b, i) => (b ? num(`=${col(i)}${asBank}-${col(i)}${bankRow}`, i) : null))])
     }
     rows.push([])
   }
