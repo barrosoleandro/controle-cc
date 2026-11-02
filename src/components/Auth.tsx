@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { noteSignedIn, noteSignedOut, setTrust, signOutWith, trustUntil, trustedDevice } from '../lib/trust'
+import { authenticateBiometric, biometricFactors, biometricSupported, orderForThisDevice, thisDeviceFactor } from '../lib/biometric'
+import type { Factor } from '@supabase/supabase-js'
 
 type Step = 'loading' | 'login' | 'code' | 'reset' | 'enroll' | 'verify' | 'newpass' | 'ok'
 type Metodo = 'senha' | 'email'
@@ -27,6 +29,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [lembrar, setLembrar] = useState(true)
+  const [bio, setBio] = useState<Factor[]>([]) // biometrics registered on the account, this device's first
   // Back from the reset link: the link only signs in (aal1); the new password is asked after the TOTP.
   const [recuperando] = useState(() => new URLSearchParams(window.location.search).has(RECOVERY_PARAM))
   const [novaSenha, setNovaSenha] = useState('')
@@ -41,7 +44,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     if (aal?.currentLevel === 'aal2') return setStep(recuperando ? 'newpass' : 'ok')
     const { data: factors } = await supabase.auth.mfa.listFactors()
     const totp = factors?.totp.find((f) => f.status === 'verified')
-    if (totp) { setFactorId(totp.id); return setStep('verify') }
+    if (totp) {
+      setFactorId(totp.id)
+      if (biometricSupported()) setBio(orderForThisDevice(await biometricFactors()))
+      return setStep('verify')
+    }
     // Limpa cadastros pela metade e registra um novo autenticador.
     for (const f of factors?.all ?? []) if (f.status !== 'verified') await supabase.auth.mfa.unenroll({ factorId: f.id })
     const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName: APP_NAME })
@@ -102,6 +109,16 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     if (error) return setError(`Não foi possível trocar a senha: ${error.message}`)
     window.history.replaceState(null, '', window.location.pathname)
     setStep('ok')
+  }
+
+  async function entrarComBiometria(id: string) {
+    setBusy(true); setError(null)
+    try {
+      if (!(await authenticateBiometric(id))) return
+      noteSignedIn(lembrar)
+      setStep(recuperando ? 'newpass' : 'ok')
+    } catch { setError('A biometria não funcionou neste aparelho. Use o código do autenticador.') }
+    finally { setBusy(false) }
   }
 
   async function verificarTotp(e: React.FormEvent) {
@@ -178,7 +195,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               {qr && <img src={qr} alt="QR code do TOTP" style={{ width: 200, background: '#fff', justifySelf: 'center' }} />}
               <p className="muted" style={{ wordBreak: 'break-all', fontSize: 12 }}>Chave manual: {secret}</p>
             </>}
-            <input inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" placeholder="Código de 6 dígitos" value={code} onChange={(e) => setCode(e.target.value)} required />
+            {step === 'verify' && bio.length > 0 && <>
+              <BioButtons factors={bio} busy={busy} onPick={entrarComBiometria} />
+              <p className="muted" style={{ fontSize: 12, textAlign: 'center' }}>ou o código do autenticador:</p>
+            </>}
+            <input inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" placeholder="Código de 6 dígitos" value={code} onChange={(e) => setCode(e.target.value)} required={!bio.length} />
             <label className="inline"><input type="checkbox" checked={lembrar} onChange={(e) => setLembrar(e.target.checked)} />
               Lembrar neste aparelho</label>
             <p className="muted" style={{ fontSize: 12 }}>Só em aparelho seu: o app abre direto, sem senha, código nem bloqueio por inatividade, enquanto for usado ao menos uma vez a cada 30 dias. Dá para revogar em Ajustes → Aparelhos.</p>
@@ -202,6 +223,13 @@ export function ReauthLock({ onUnlock }: { onUnlock: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  const [bio, setBio] = useState<Factor[]>([])
+  useEffect(() => { if (biometricSupported()) biometricFactors().then((f) => setBio(orderForThisDevice(f)), () => setBio([])) }, [])
+  async function comBiometria(id: string) {
+    setBusy(true); setError(null)
+    try { if (await authenticateBiometric(id)) onUnlock() } catch { setError('A biometria não funcionou. Use o código.') } finally { setBusy(false) }
+  }
+
   async function desbloquear(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setError(null)
     const { data: factors } = await supabase.auth.mfa.listFactors()
@@ -218,6 +246,7 @@ export function ReauthLock({ onUnlock }: { onUnlock: () => void }) {
       <div className="card auth">
         <h3>Tela bloqueada</h3>
         <p className="muted">Você ficou um tempo sem usar o app. Digite o código do autenticador para voltar.</p>
+        {bio.length > 0 && <BioButtons factors={bio} busy={busy} onPick={comBiometria} />}
         <form onSubmit={desbloquear} className="auth">
           <input inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" placeholder="Código de 6 dígitos"
             value={code} onChange={(e) => setCode(e.target.value)} required autoFocus />
@@ -228,4 +257,18 @@ export function ReauthLock({ onUnlock }: { onUnlock: () => void }) {
       </div>
     </div>
   )
+}
+
+/**
+ * Biometric sign-in: one button for this device's key; when the browser forgot which one is
+ * this device's (data wiped), one per registered device, to pick this one.
+ */
+function BioButtons({ factors, busy, onPick }: { factors: Factor[]; busy: boolean; onPick: (id: string) => void }) {
+  const mine = factors[0]
+  const known = Boolean(mine) && mine.id === thisDeviceFactor()
+  if (known) return <button type="button" className="primary" disabled={busy} onClick={() => onPick(mine.id)}>Entrar com biometria (Face ID / digital)</button>
+  return <div className="auth">
+    <p className="muted" style={{ fontSize: 12 }}>Entrar com a biometria deste aparelho:</p>
+    {factors.map((f) => <button key={f.id} type="button" disabled={busy} onClick={() => onPick(f.id)}>Biometria · {f.friendly_name || 'aparelho'}</button>)}
+  </div>
 }

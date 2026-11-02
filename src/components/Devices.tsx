@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { DEVICE_EVENT, deleteDevice, deviceState, revokeDevice, saveThisDevice, signOutOthers, syncDevice } from '../lib/device'
 import { installedApp, keepStorage, rememberHere, trustUntil, trustedDevice } from '../lib/trust'
 import { SIGNOUT_REASON, type Device, type SignoutReason } from '../domain/device'
+import { biometricFactors, biometricSupported, registerBiometric, removeBiometric, thisDeviceFactor } from '../lib/biometric'
+import type { Factor } from '@supabase/supabase-js'
 
 const quando = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—')
 const ios = () => /iPhone|iPad/.test(navigator.userAgent)
@@ -23,12 +25,16 @@ export function Devices() {
   const [erro, setErro] = useState<string | null>(null)
   const [persisted, setPersisted] = useState<boolean | null>(null)
   const [, setTick] = useState(0) // re-render after a local trust change
+  const [bio, setBio] = useState<Factor[] | null>(null)
+  const [bioMsg, setBioMsg] = useState<string | null>(null)
+  const loadBio = () => biometricFactors().then(setBio, () => setBio([]))
 
   useEffect(() => {
     const refresh = () => { setSt(deviceState()); setBusy(false) }
     window.addEventListener(DEVICE_EVENT, refresh)
     if (!deviceState()) syncDevice().then(refresh)
     navigator.storage?.persisted?.().then(setPersisted, () => setPersisted(null))
+    loadBio()
     return () => window.removeEventListener(DEVICE_EVENT, refresh)
   }, [])
   const run = (f: () => Promise<unknown>) => { setErro(null); f().catch((e) => setErro((e as Error).message)) }
@@ -42,6 +48,8 @@ export function Devices() {
   const lembrado = trustedDevice()
   const toggle = (on: boolean) => { rememberHere(on); setTick((n) => n + 1); run(async () => { await syncDevice(); if (on) setPersisted(await keepStorage()) }) }
   const outros = devices.filter((d) => d.id !== device.id)
+  const myBio = bio?.find((f) => f.id === thisDeviceFactor())
+  const bioRun = (f: () => Promise<unknown>, ok: string) => { setErro(null); setBioMsg(null); f().then(() => { setBioMsg(ok); return loadBio() }).catch((e) => setErro((e as Error).message)) }
 
   return <>
     <div className="card">
@@ -58,6 +66,17 @@ export function Devices() {
       <div className="row">
         {lembrado ? <button onClick={() => toggle(false)}>Esquecer este aparelho</button> : <button className="primary" onClick={() => toggle(true)}>Lembrar este aparelho</button>}
       </div>
+      {biometricSupported() && bio && <div style={{ marginTop: 12 }}>
+        <strong>Biometria</strong>
+        {myBio
+          ? <p className="pos" style={{ margin: '4px 0' }}>✔ Cadastrada (“{myBio.friendly_name}”): o login pede Face ID / digital em vez do código.</p>
+          : <p className="muted" style={{ margin: '4px 0', fontSize: 13 }}>Entre com Face ID, Touch ID ou digital em vez de digitar o código do autenticador. O código continua valendo como reserva.</p>}
+        <div className="row">
+          {!myBio && <button className="primary" onClick={() => bioRun(() => registerBiometric(device.name), 'Biometria cadastrada neste aparelho.')}>Cadastrar biometria neste aparelho</button>}
+          {myBio && <button onClick={() => confirm('Remover a biometria deste aparelho? O login volta a pedir o código.') && bioRun(() => removeBiometric(myBio.id), 'Biometria removida.')}>Remover a biometria deste aparelho</button>}
+        </div>
+        {bioMsg && <p className="pos">✔ {bioMsg}</p>}
+      </div>}
       <ul className="muted" style={{ fontSize: 13, margin: '10px 0 0 18px' }}>
         <li>Último login aqui: {quando(device.last_signin_at)}{device.last_signout ? ` — motivo: ${SIGNOUT_REASON[device.last_signout as SignoutReason] ?? device.last_signout}` : ''}</li>
         <li>Armazenamento persistente: {persisted === null ? 'o navegador não informa' : persisted ? 'sim (o navegador não apaga o login para liberar espaço)' : 'não'}</li>
@@ -89,6 +108,18 @@ export function Devices() {
           </tr>
         })}</tbody>
       </table></div>
+      {bio && bio.length > 0 && <>
+        <h4 style={{ margin: '16px 0 6px' }}>Biometrias cadastradas</h4>
+        <div className="scroll"><table>
+          <thead><tr><th>Nome</th><th className="hide-sm">Cadastrada em</th><th /></tr></thead>
+          <tbody>{bio.map((f) => <tr key={f.id}>
+            <td>{f.friendly_name || 'aparelho'}{f.id === thisDeviceFactor() && <strong> · este aparelho</strong>}</td>
+            <td className="hide-sm">{quando(f.created_at)}</td>
+            <td><button className="link" aria-label={`Remover a biometria ${f.friendly_name}`}
+              onClick={() => confirm(`Remover a biometria “${f.friendly_name}”? Aquele aparelho volta a pedir o código.`) && bioRun(() => removeBiometric(f.id), 'Biometria removida.')}>✕</button></td>
+          </tr>)}</tbody>
+        </table></div>
+      </>}
       {outros.length > 0 && <div className="row" style={{ marginTop: 10 }}>
         <button onClick={() => confirm('Encerrar agora a sessão de todos os outros aparelhos? Eles vão pedir login completo.') && run(signOutOthers)}>Sair de todos os outros aparelhos</button>
       </div>}
