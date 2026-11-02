@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { APP_NAME, AuthGate, ReauthLock } from './components/Auth'
-import { trustedDevice } from './lib/trust'
+import { signOutWith, trustedDevice } from './lib/trust'
 import { syncDevice } from './lib/device'
-import { configError, configured, supabase } from './lib/supabase'
+import { configError, configured } from './lib/supabase'
 import { loadAll, saveFx, saveSettings, seedDefaults, type AppData, type Settings } from './lib/data'
 import { FxTable, fetchEurBrl } from './domain/fx'
 import { enrich } from './domain/analytics'
@@ -100,7 +100,7 @@ function Shell() {
   // Back to the app (a phone keeps it open for days): reload, or rows imported meanwhile on
   // another device stay off every screen until the app is closed and opened again.
   useEffect(() => {
-    const onShow = () => { if (document.visibilityState === 'visible' && Date.now() - loadedAt > STALE_MS) reload() }
+    const onShow = () => { if (document.visibilityState === 'visible' && Date.now() - loadedAt > STALE_MS) { reload(); syncDevice() } }
     document.addEventListener('visibilitychange', onShow)
     return () => document.removeEventListener('visibilitychange', onShow)
   }, [reload])
@@ -119,7 +119,7 @@ function Shell() {
     if (trustedDevice()) return
     if (locked) {
       // Já travado: o relógio do logout corre sozinho e digitar no cadeado não o reinicia.
-      const bye = window.setTimeout(() => supabase.auth.signOut(), SIGNOUT_MS - LOCK_MS)
+      const bye = window.setTimeout(() => signOutWith('inatividade'), SIGNOUT_MS - LOCK_MS)
       return () => clearTimeout(bye)
     }
     let lock = window.setTimeout(() => setLocked(true), LOCK_MS)
@@ -182,7 +182,7 @@ function Shell() {
             <Icon name={dark ? 'sol' : 'lua'} size={19} />
           </button>
           <button className="icon-btn" onClick={() => setLocked(true)} title="Bloquear" aria-label="Bloquear"><Icon name="bloquear" size={19} /></button>
-          <button className="icon-btn" onClick={() => supabase.auth.signOut()} title="Sair" aria-label="Sair"><Icon name="sair" size={19} /></button>
+          <button className="icon-btn" onClick={() => signOutWith('manual')} title="Sair" aria-label="Sair"><Icon name="sair" size={19} /></button>
         </div>
       </header>
       {/* Phone: bottom bar with the main pages and "Mais" for the rest. */}

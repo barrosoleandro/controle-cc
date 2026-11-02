@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { setTrust, trustUntil, trustedDevice } from '../lib/trust'
+import { noteSignedIn, noteSignedOut, setTrust, signOutWith, trustUntil, trustedDevice } from '../lib/trust'
 
 type Step = 'loading' | 'login' | 'code' | 'reset' | 'enroll' | 'verify' | 'newpass' | 'ok'
 type Metodo = 'senha' | 'email'
@@ -35,8 +35,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   async function evaluate() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return setStep('login')
-    // Os 30 dias acabaram: pede o login completo de novo.
-    if (trustUntil() && !trustedDevice()) { await supabase.auth.signOut(); return }
+    // 30 dias sem abrir o app neste aparelho (cada uso renova): pede o login completo de novo.
+    if (trustUntil() && !trustedDevice()) { await signOutWith('expirou'); return }
     const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
     if (aal?.currentLevel === 'aal2') return setStep(recuperando ? 'newpass' : 'ok')
     const { data: factors } = await supabase.auth.mfa.listFactors()
@@ -52,7 +52,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     evaluate()
-    const { data } = supabase.auth.onAuthStateChange((e) => { if (e === 'SIGNED_OUT') { setTrust(false); setStep('login') } })
+    const { data } = supabase.auth.onAuthStateChange((e) => { if (e === 'SIGNED_OUT') { noteSignedOut(); setTrust(false); setStep('login') } })
     return () => data.subscription.unsubscribe()
   }, [])
 
@@ -110,7 +110,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code: code.trim() })
     setBusy(false); setCode('')
     if (error) return setError('Código inválido.')
-    setTrust(lembrar)
+    noteSignedIn(lembrar)
     setStep(recuperando ? 'newpass' : 'ok')
   }
 
@@ -167,7 +167,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             <input type="password" autoComplete="new-password" placeholder="Senha nova" minLength={8} value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} required autoFocus />
             <input type="password" autoComplete="new-password" placeholder="Repita a senha nova" minLength={8} value={confirmaSenha} onChange={(e) => setConfirmaSenha(e.target.value)} required />
             <button className="primary" disabled={busy}>Salvar senha</button>
-            <button type="button" onClick={() => supabase.auth.signOut()}>Cancelar</button>
+            <button type="button" onClick={() => signOutWith('manual')}>Cancelar</button>
           </form>
         )}
 
@@ -180,10 +180,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             </>}
             <input inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" placeholder="Código de 6 dígitos" value={code} onChange={(e) => setCode(e.target.value)} required />
             <label className="inline"><input type="checkbox" checked={lembrar} onChange={(e) => setLembrar(e.target.checked)} />
-              Lembrar neste dispositivo por 30 dias</label>
-            <p className="muted" style={{ fontSize: 12 }}>Só em aparelho seu: por 30 dias o app abre direto, sem senha, código nem bloqueio por inatividade.</p>
+              Lembrar neste aparelho</label>
+            <p className="muted" style={{ fontSize: 12 }}>Só em aparelho seu: o app abre direto, sem senha, código nem bloqueio por inatividade, enquanto for usado ao menos uma vez a cada 30 dias. Dá para revogar em Ajustes → Aparelhos.</p>
             <button className="primary" disabled={busy}>Verificar</button>
-            <button type="button" onClick={() => supabase.auth.signOut()}>Cancelar</button>
+            <button type="button" onClick={() => signOutWith('manual')}>Cancelar</button>
           </form>
         )}
         {error && <p className="err">{error}</p>}
@@ -206,7 +206,7 @@ export function ReauthLock({ onUnlock }: { onUnlock: () => void }) {
     e.preventDefault(); setBusy(true); setError(null)
     const { data: factors } = await supabase.auth.mfa.listFactors()
     const totp = factors?.totp.find((f) => f.status === 'verified')
-    if (!totp) { setBusy(false); return supabase.auth.signOut() }
+    if (!totp) { setBusy(false); return signOutWith('servidor') }
     const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: totp.id, code: code.trim() })
     setBusy(false); setCode('')
     if (error) return setError('Código inválido.')
@@ -222,7 +222,7 @@ export function ReauthLock({ onUnlock }: { onUnlock: () => void }) {
           <input inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" placeholder="Código de 6 dígitos"
             value={code} onChange={(e) => setCode(e.target.value)} required autoFocus />
           <button className="primary" disabled={busy}>Desbloquear</button>
-          <button type="button" onClick={() => supabase.auth.signOut()}>Sair da conta</button>
+          <button type="button" onClick={() => signOutWith('manual')}>Sair da conta</button>
         </form>
         {error && <p className="err">{error}</p>}
       </div>

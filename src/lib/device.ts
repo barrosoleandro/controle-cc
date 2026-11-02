@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { DEFAULT_OLLAMA, listModels, loadOllama, saveOllama, type OllamaConfig } from './ollama'
-import { guessName, matchDevice, normalizeGpu, unclaimedDevice, uniqueName, type Device, type Hardware } from '../domain/device'
+import { guessName, matchDevice, normalizeGpu, signoutReason, trustAction, unclaimedDevice, uniqueName, type Device, type Hardware } from '../domain/device'
+import { clearPending, keepStorage, pendingSignin, pendingTrust, setTrust, signOutWith, trustedDevice } from './trust'
 
 /**
  * This computer's row in `devices`, found without asking (domain/device.ts decides how),
@@ -71,6 +72,31 @@ async function updateDevice(id: string, patch: Partial<Omit<Device, 'id'>>): Pro
   return r.data as Device
 }
 
+const TRUST_FIELDS = ['trusted_until', 'revoked_at', 'kind', 'last_signout', 'last_signin_at'] as const
+/** Before migration 008 those columns do not exist: the rest is saved, the trust stays in the browser. */
+async function updateWithTrust(id: string, patch: Partial<Omit<Device, 'id'>>): Promise<Device> {
+  try { return await updateDevice(id, patch) } catch (e) {
+    if (!TRUST_FIELDS.some((f) => (e as Error).message.includes(f))) throw e
+    return updateDevice(id, Object.fromEntries(Object.entries(patch).filter(([k]) => !(TRUST_FIELDS as readonly string[]).includes(k))))
+  }
+}
+
+const DAY = 86400000
+/**
+ * This device's trust, applied on every load: renewed while in use, dropped when revoked from
+ * another device (then the app signs out), and the reason of the last sign-in written down.
+ */
+function trustPatch(device: Device, how: DeviceState['how']): { patch: Partial<Device>; revoked: boolean } {
+  const now = new Date()
+  const action = trustAction({ localTrusted: trustedDevice(), pending: pendingTrust(), revokedAt: device.revoked_at })
+  const patch: Partial<Device> = { kind: mobile() ? 'celular' : 'computador' }
+  if (action === 'renew') { setTrust(true); patch.trusted_until = new Date(now.getTime() + 30 * DAY).toISOString(); patch.revoked_at = null }
+  if (action === 'forget') patch.trusted_until = null
+  const signin = pendingSignin()
+  if (signin !== null) { patch.last_signout = signoutReason(signin || null, how); patch.last_signin_at = now.toISOString() }
+  return { patch, revoked: action === 'revoked' }
+}
+
 let running: Promise<DeviceState | null> | null = null
 
 /**
@@ -101,7 +127,9 @@ async function identify(): Promise<DeviceState | null> {
 
     const seen = { hardware, last_seen_at: new Date().toISOString(), ...(digests.length ? { model_digests: digests } : {}) }
     if (device) {
-      device = await updateDevice(device.id, seen)
+      const trust = trustPatch(device, how)
+      if (trust.revoked) { setTrust(false); clearPending(); await signOutWith('revogado'); return null }
+      device = await updateWithTrust(device.id, { ...seen, ...trust.patch })
     } else {
       // A machine never seen: create it, carrying over what this browser had configured.
       how = 'novo'
@@ -110,8 +138,10 @@ async function identify(): Promise<DeviceState | null> {
         ...seen, ollama_url: local.url, ollama_model: local.model, ollama_enabled: local.enabled,
       }).select().single()
       if (r.error) throw new Error(r.error.message)
-      device = r.data as Device
+      device = await updateWithTrust((r.data as Device).id, trustPatch(r.data as Device, how).patch)
     }
+    clearPending()
+    if (trustedDevice()) void keepStorage()
     publish({ device, devices: [...devices.filter((d) => d.id !== device.id), device].sort((a, b) => a.name.localeCompare(b.name)), how })
     return state
   } catch (e) {
@@ -132,6 +162,21 @@ export async function chooseDevice(id: string) {
   if (!state) return
   const device = await updateDevice(id, { hardware: readHardware(), last_seen_at: new Date().toISOString() })
   publish({ device, devices: state.devices.map((d) => (d.id === device.id ? device : d)), how: 'escolhido' })
+}
+
+/** Revokes another device: it loses "lembrar" and is signed out the next time it opens the app. */
+export async function revokeDevice(id: string) {
+  if (!state) return
+  const device = await updateDevice(id, { revoked_at: new Date().toISOString(), trusted_until: null })
+  publish({ ...state, devices: state.devices.map((d) => (d.id === id ? device : d)) })
+}
+
+/** Ends every other session at once on the server, and revokes the other devices. */
+export async function signOutOthers() {
+  if (!state) return
+  const r = await supabase.auth.signOut({ scope: 'others' })
+  if (r.error) throw new Error(r.error.message)
+  for (const d of state.devices) if (d.id !== state.device.id && d.trusted_until) await revokeDevice(d.id)
 }
 
 export async function deleteDevice(id: string) {

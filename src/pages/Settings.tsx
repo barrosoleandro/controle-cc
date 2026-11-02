@@ -16,8 +16,9 @@ import { loadTheme, saveTheme, type Mode, type Theme } from '../lib/theme'
 import { DEFAULT_OLLAMA, listModels, loadOllama, normalizeUrl, ollamaReady, saveOllama, type OllamaConfig, type OllamaModel } from '../lib/ollama'
 import { chooseDevice, deleteDevice, DEVICE_EVENT, deviceState, saveThisDevice, syncDevice } from '../lib/device'
 import { Help, Tabs } from '../components/Page'
+import { Devices } from '../components/Devices'
 
-const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações', 'IA local', 'Aparência'] as const
+const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações', 'IA local', 'Aparelhos', 'Aparência'] as const
 
 export function SettingsPage({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const [sec, setSec] = useState<(typeof SECTIONS)[number]>(() => SECTIONS.find((s) => s === sub) ?? 'Contas')
@@ -25,6 +26,7 @@ export function SettingsPage({ ctx, sub }: { ctx: Ctx; sub?: string }) {
     <Tabs label="Seções dos ajustes" items={SECTIONS} value={sec} onChange={setSec} />
     {sec === 'Contas' && <Accounts ctx={ctx} />}
     {sec === 'IA local' && <><ThisComputer /><LocalAi /></>}
+    {sec === 'Aparelhos' && <div className="grid"><Devices /></div>}
     {sec === 'Aparência' && <Appearance />}
     {sec === 'Orçamentos' && <Budgets ctx={ctx} />}
     {sec === 'Categorias' && <Categories ctx={ctx} />}

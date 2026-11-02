@@ -97,3 +97,21 @@ describe('naming a machine the browser cannot name', () => {
     expect(uniqueName('Windows', ['windows', 'Windows (2)'])).toBe('Windows (3)')
   })
 })
+
+describe('device trust', () => {
+  it('renews on every use, honours a revocation, and a fresh code clears it', async () => {
+    const { trustAction } = await import('../src/domain/device')
+    expect(trustAction({ localTrusted: true, pending: null })).toBe('renew')
+    expect(trustAction({ localTrusted: true, pending: null, revokedAt: '2026-11-01T10:00:00Z' })).toBe('revoked')
+    expect(trustAction({ localTrusted: false, pending: 'on', revokedAt: '2026-11-01T10:00:00Z' })).toBe('renew')
+    expect(trustAction({ localTrusted: true, pending: 'off' })).toBe('forget')
+    expect(trustAction({ localTrusted: false, pending: null })).toBe('none')
+  })
+  it('explains why the device had to sign in again', async () => {
+    const { signoutReason } = await import('../src/domain/device')
+    expect(signoutReason('revogado', 'lembrado')).toBe('revogado')
+    expect(signoutReason(null, 'reconhecido')).toBe('apagado') // the browser lost the id it kept
+    expect(signoutReason(null, 'novo')).toBe('primeiro')
+    expect(signoutReason(null, 'lembrado')).toBe('servidor')
+  })
+})

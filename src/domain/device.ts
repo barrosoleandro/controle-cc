@@ -27,6 +27,45 @@ export interface Device {
   ollama_model: string
   ollama_enabled: boolean
   last_seen_at: string | null
+  // Migration 008 (absent before it is run)
+  trusted_until?: string | null
+  revoked_at?: string | null
+  kind?: string | null
+  last_signout?: string | null
+  last_signin_at?: string | null
+}
+
+/** Why a device had to sign in again, as recorded by the app (lib/trust.ts). */
+export const SIGNOUT_REASON = {
+  manual: 'você saiu pelo botão',
+  inatividade: 'inatividade num aparelho não lembrado',
+  expirou: 'mais de 30 dias sem abrir o app neste aparelho',
+  revogado: 'aparelho revogado em Ajustes → Aparelhos',
+  servidor: 'sessão encerrada pelo servidor (renovação recusada)',
+  apagado: 'dados do navegador apagados (ex.: Safari depois de 7 dias sem abrir o site, fora da Tela de Início)',
+  primeiro: 'primeiro acesso neste aparelho',
+} as const
+export type SignoutReason = keyof typeof SIGNOUT_REASON
+
+/**
+ * What to do with this device's trust on load: renew it (each use pushes the 30 days forward,
+ * so a device in use never expires), honour a revocation made from another device, or nothing.
+ * `pending`: the user just confirmed the authenticator code, with "lembrar" on or off.
+ */
+export function trustAction(o: { localTrusted: boolean; pending: 'on' | 'off' | null; revokedAt?: string | null }): 'renew' | 'forget' | 'revoked' | 'none' {
+  if (o.pending === 'on') return 'renew' // a fresh code clears an old revocation
+  if (o.pending === 'off') return 'forget'
+  if (!o.localTrusted) return 'none'
+  return o.revokedAt ? 'revoked' : 'renew'
+}
+
+/** Why the last sign-in was needed: the app's own record, else what identifying the device tells. */
+export function signoutReason(recorded: string | null, how: 'lembrado' | 'reconhecido' | 'novo' | 'escolhido'): SignoutReason {
+  if (recorded && recorded in SIGNOUT_REASON) return recorded as SignoutReason
+  if (how === 'novo') return 'primeiro'
+  // Recognized by its hardware, not by the id this browser kept: the browser's data was wiped.
+  if (how === 'reconhecido' || how === 'escolhido') return 'apagado'
+  return 'servidor'
 }
 
 export interface Seen {
