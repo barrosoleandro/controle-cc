@@ -176,7 +176,7 @@ function RecurringQuestions({ ctx }: { ctx: Ctx }) {
       <summary><strong>{toAsk.length} despesa(s) apareceram em 3 meses com valor parecido (até 20%). São recorrentes?</strong></summary>
       {toAsk.slice(0, asked).map((c) => (
         <div key={c.merchant} className="row" style={{ marginTop: 6, justifyContent: 'space-between' }}>
-          <span>{c.merchant} <span className="muted">· ≈ {fmt(c.avg)} em {c.months.map((m) => monthLabel(m).split(' ')[0]).join(', ')}</span></span>
+          <span>{c.merchant} <span className="muted">· ≈ {fmt(c.avg)} em {c.months.map((m) => monthLabel(m).split(' ')[0]).join(', ')}{c.period > 1 && ` · a cada ${c.period} meses`}</span></span>
           <span className="row" style={{ margin: 0 }}>
             <button className="primary" onClick={() => setRecurring(c.merchant, true)}>É recorrente</button>
             <button onClick={() => setRecurring(c.merchant, false)}>Não</button>

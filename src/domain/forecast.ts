@@ -1,5 +1,6 @@
 import { detectSubscriptions, nextDate, type Subscription } from './subscriptions'
 import { CARD_PAYMENT } from './categorize'
+import { recurrencePeriod } from './monthPlan'
 
 /** What the forecast needs from an enriched transaction (value signed, in the display currency). */
 export interface FcTx { booking_date: string; month: string; value: number; kind: string; categoryName: string; merchant: string }
@@ -202,7 +203,7 @@ export function applyBillMarks(auto: ForecastLine[], txs: FcTx[], marks: BillMar
   return [...kept, ...added].sort((a, b) => b.amount - a.amount)
 }
 
-export interface Candidate { merchant: string; months: string[]; amounts: number[]; avg: number }
+export interface Candidate { merchant: string; months: string[]; amounts: number[]; avg: number; period: number }
 
 /**
  * Merchants worth asking about: spent in three months of the last six (the three most recent
@@ -225,7 +226,7 @@ export function recurrenceCandidates(txs: FcTx[], marks: BillMarks, today: strin
     const amounts = seen.map(([, v]) => v)
     const med = [...amounts].sort((a, b) => a - b)[1]
     if (amounts.some((v) => Math.abs(v - med) > med * tolerance)) continue
-    out.push({ merchant, months: seen.map(([mo]) => mo), amounts, avg: amounts.reduce((a, b) => a + b, 0) / 3 })
+    out.push({ merchant, months: seen.map(([mo]) => mo), amounts, avg: amounts.reduce((a, b) => a + b, 0) / 3, period: recurrencePeriod(seen.map(([mo]) => mo)) })
   }
   return out.sort((a, b) => b.avg - a.avg)
 }

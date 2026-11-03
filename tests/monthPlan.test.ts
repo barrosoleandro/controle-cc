@@ -99,3 +99,37 @@ describe('money from or to outside', () => {
     expect(p.income[0]).toMatchObject({ name: EXTERNAL, media: 0, realizado: 1000, previsto: 1000 })
   })
 })
+
+describe('recurring every two or three months', () => {
+  it('detects the period from the gaps between months', async () => {
+    const { recurrencePeriod } = await import('../src/domain/monthPlan')
+    expect(recurrencePeriod(['2026-01', '2026-03', '2026-05'])).toBe(2)
+    expect(recurrencePeriod(['2026-01', '2026-03', '2026-05', '2026-09'])).toBe(2) // one bill skipped
+    expect(recurrencePeriod(['2026-01', '2026-04', '2026-07'])).toBe(3)
+    expect(recurrencePeriod(['2025-11', '2026-01', '2026-03'])).toBe(2) // across New Year
+    expect(recurrencePeriod(['2026-01', '2026-02', '2026-04'])).toBe(1) // came in two months in a row
+    expect(recurrencePeriod(['2026-01', '2026-03'])).toBe(1) // too few to tell
+    expect(recurrencePeriod(['2026-01', '2026-07', '2027-01'])).toBe(1) // half-yearly: not handled
+  })
+
+  const water = (month: string, value = -60): PlanTx => ({ month, value, kind: 'expense', categoryName: 'Casa', merchant: 'EAU', booking_date: `${month}-12` })
+  const hist = [water('2026-03'), water('2026-05'), water('2026-07'), water('2026-09', -80)]
+  const avg = ['2026-07', '2026-08', '2026-09']
+
+  it('expects the full amount only in the months it is due', () => {
+    const [e] = recurringExpectations(hist, () => true, avg)
+    expect(e).toMatchObject({ merchant: 'EAU', period: 2, lastMonth: '2026-09', amount: 70, day: 12 })
+    const pend = (month: string) => buildMonthPlan(hist, [], month, avg, [e]).expense[0]?.pendentes.map((p) => p.merchant) ?? []
+    expect(pend('2026-10')).toEqual([])
+    expect(pend('2026-11')).toEqual(['EAU'])
+    expect(pend('2026-12')).toEqual([])
+    expect(pend('2027-01')).toEqual(['EAU'])
+  })
+
+  it('a monthly one is still expected every month', () => {
+    const rent = ['2026-06', '2026-07', '2026-08', '2026-09'].map((m): PlanTx => ({ month: m, value: -1000, kind: 'expense', categoryName: 'Moradia', merchant: 'ALUGUEL', booking_date: `${m}-10` }))
+    const [e] = recurringExpectations(rent, () => true, avg)
+    expect(e.period).toBe(1)
+    expect(buildMonthPlan(rent, [], '2026-10', avg, [e]).expense[0].pendentes).toHaveLength(1)
+  })
+})
