@@ -19,8 +19,38 @@ export interface ManualLine {
 }
 
 export interface PlanTx { month: string; value: number; kind: 'income' | 'expense' | 'transfer'; categoryName: string; merchant?: string; booking_date?: string }
-/** A recurring income or expense expected every month, until it shows up in the month. */
-export interface RecurringExpect { merchant: string; kind: 'income' | 'expense'; categoryName: string; amount: number; day: number }
+/**
+ * A recurring income or expense, expected in the months it is due until it shows up there.
+ * `period`: 1 monthly, 2 every two months, 3 every three; `lastMonth`: its latest occurrence (yyyy-mm).
+ */
+export interface RecurringExpect { merchant: string; kind: 'income' | 'expense'; categoryName: string; amount: number; day: number; period: number; lastMonth: string }
+
+/** Whole months from `a` to `b` (yyyy-mm); negative when b is earlier. */
+export function monthsBetween(a: string, b: string): number {
+  const [ya, ma] = a.split('-').map(Number), [yb, mb] = b.split('-').map(Number)
+  return (yb - ya) * 12 + (mb - ma)
+}
+
+/**
+ * How often something comes, from the months it appeared in: 2 or 3 when the typical gap between
+ * them is 2 or 3 months and it never came in two months in a row; otherwise 1 (monthly).
+ * Needs three occurrences (two gaps): with fewer there is no pattern to trust.
+ */
+export function recurrencePeriod(months: Iterable<string>): number {
+  const ms = [...new Set(months)].sort()
+  if (ms.length < 3) return 1
+  const gaps = ms.slice(1).map((m, i) => monthsBetween(ms[i], m)).sort((a, b) => a - b)
+  if (gaps[0] < 2) return 1
+  const median = gaps[Math.floor(gaps.length / 2)]
+  return median === 2 || median === 3 ? median : 1
+}
+
+/** Is a recurring line due in `month`? Monthly ones always; the others every `period` months after the latest one. */
+export function isDue(e: Pick<RecurringExpect, 'period' | 'lastMonth'>, month: string): boolean {
+  if (e.period <= 1) return true
+  const n = monthsBetween(e.lastMonth, month)
+  return n > 0 && n % e.period === 0
+}
 export interface PlanManual { month: string; value: number; kind: 'income' | 'expense' | 'transfer'; categoryName: string; merchant?: string }
 
 export interface PlanRow {
@@ -69,7 +99,7 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
     ...manual.filter((m) => m.month === month && m.merchant).map((m) => `${m.kind}/${m.merchant}`),
   ])
   for (const e of recurring) {
-    if (done.has(`${e.kind}/${e.merchant}`)) continue
+    if (done.has(`${e.kind}/${e.merchant}`) || !isDue(e, month)) continue
     const r = row(e.categoryName, e.kind)
     r.recorrente += e.amount
     r.pendentes.push(e)
@@ -91,11 +121,16 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
 /**
  * What each recurring merchant is expected to bring in or charge: its average over the months it
  * appeared in `avgMonths`, in the category and on the day of its latest entry. Merchants with
- * nothing in those months are left out (nothing to base the value on).
+ * nothing in those months are left out (nothing to base the value on). The period (monthly, every
+ * 2 or 3 months) comes from the months it appeared in during the 12 months up to its latest one.
  */
 export function recurringExpectations(txs: PlanTx[], isRecurring: (merchant: string, kind: 'income' | 'expense') => boolean, avgMonths: string[]): RecurringExpect[] {
   const set = new Set(avgMonths)
   const by = new Map<string, { kind: 'income' | 'expense'; perMonth: Map<string, number>; last: PlanTx }>()
+  const history = new Map<string, Set<string>>() // kind/merchant → every month it appeared in
+  for (const t of txs) {
+    if (t.kind !== 'transfer' && t.merchant) history.set(`${t.kind}/${t.merchant}`, (history.get(`${t.kind}/${t.merchant}`) ?? new Set()).add(t.month))
+  }
   for (const t of txs) {
     if (t.kind === 'transfer' || !t.merchant || !set.has(t.month) || !isRecurring(t.merchant, t.kind)) continue
     const key = `${t.kind}/${t.merchant}`
@@ -104,9 +139,12 @@ export function recurringExpectations(txs: PlanTx[], isRecurring: (merchant: str
     if ((t.booking_date ?? '') >= (m.last.booking_date ?? '')) m.last = t
     by.set(key, m)
   }
-  return [...by.values()].map((m) => {
+  return [...by.entries()].map(([key, m]) => {
     const vals = [...m.perMonth.values()]
-    return { merchant: m.last.merchant!, kind: m.kind, categoryName: m.last.categoryName, amount: vals.reduce((s, v) => s + v, 0) / vals.length, day: Number((m.last.booking_date ?? '').slice(8, 10)) || 1 }
+    const seen = [...history.get(key)!].sort()
+    const lastMonth = seen.at(-1)!
+    const period = recurrencePeriod(seen.filter((mo) => monthsBetween(mo, lastMonth) <= 12))
+    return { merchant: m.last.merchant!, kind: m.kind, categoryName: m.last.categoryName, amount: vals.reduce((s, v) => s + v, 0) / vals.length, day: Number((m.last.booking_date ?? '').slice(8, 10)) || 1, period, lastMonth }
   }).filter((e) => e.amount > 0.005)
 }
 

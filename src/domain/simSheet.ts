@@ -19,7 +19,7 @@
  * balance, rounded up to 10 — as a formula, mirrored in the sender through the exchange-rate cell.
  */
 import type { Cell } from 'write-excel-file/browser'
-import { nextMonth, recurringExpectations, steadyIncomes, type PlanTx } from './monthPlan'
+import { isDue, nextMonth, recurringExpectations, steadyIncomes, type PlanTx } from './monthPlan'
 import { isCardBillPayment, sentToBrazil } from './forecast'
 import { EXTERNAL } from './audit'
 
@@ -102,7 +102,7 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     const recurring = recurringExpectations(plan, (m, kind) => m !== BILL && isRecurring(m, kind, steady), avgMonths)
     for (const e of recurring) {
       for (let i = Math.max(cur, 0); cur >= 0 && i < months.length; i++) {
-        if (!seen.has(`${e.kind}/${e.merchant}/${months[i]}`)) cell(e.kind, e.categoryName, e.merchant)[i] += e.kind === 'income' ? e.amount : -e.amount
+        if (!seen.has(`${e.kind}/${e.merchant}/${months[i]}`) && isDue(e, months[i])) cell(e.kind, e.categoryName, e.merchant)[i] += e.kind === 'income' ? e.amount : -e.amount
       }
     }
     const avgSet = new Set(avgMonths)

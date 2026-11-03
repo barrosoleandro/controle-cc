@@ -274,7 +274,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
             <strong>✔ {payslips.length} holerite(s) salvo(s):</strong> {payslips.join(', ')}.{' '}
             <button className="link" onClick={() => ctx.go('Holerites')}>Ver em Holerites</button></div>
         )}
-        {errors.length > 0 && <details>
+        {errors.length > 0 && <details open>
           <summary className="err">{errors.length} arquivo(s) com problema</summary>
           {errors.slice(0, 30).map((e) => <p key={e} className="err" style={{ fontSize: 13 }}>{e}</p>)}
           {errors.length > 30 && <p className="muted">e mais {errors.length - 30}…</p>}

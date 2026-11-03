@@ -134,7 +134,7 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
               ))}
               {r.pendentes.map((e) => (
                 <tr key={`rec/${e.merchant}`} className="muted" style={{ fontSize: 13 }}>
-                  <td style={{ paddingLeft: 24 }} title="Recorrente ainda não lançado neste mês: valor pela média dele nos últimos meses">↻ previsto ~{String(e.day).padStart(2, '0')}/{plan.month.slice(5, 7)} · {e.merchant}
+                  <td style={{ paddingLeft: 24 }} title="Recorrente ainda não lançado neste mês: valor pela média dele nos últimos meses">↻ previsto ~{String(e.day).padStart(2, '0')}/{plan.month.slice(5, 7)} · {e.merchant}{e.period > 1 && <span style={{ fontSize: 12 }}> · a cada {e.period} meses</span>}
                     {' '}<button className="link" style={{ fontSize: 12 }} onClick={() => adoptRecurring(e)}>ajustar</button></td>
                   <td /><td /><td /><td className="num warn">{fmt(e.amount)}</td><td />
                 </tr>
