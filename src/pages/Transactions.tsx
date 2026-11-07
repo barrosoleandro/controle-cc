@@ -143,7 +143,7 @@ function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accou
       const etx = externalize(enrich(data.transactions, data.categories, data.accounts, ctx.fx, ctx.currency), data.accounts, ctx.fx)
       const txs = etx.filter((t) => ids.has(t.account_id)).map((t) => ({ ...t, amount: Number(t.amount), merchant: t.merchant || '(sem descrição)' }))
       const rows = buildSimSheet(sim, txs, months, cur, last3(),
-        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel, brazilLink(cur, data, etx), findSalaryCategory(data.categories)?.name)
+        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel, brazilLink(cur, data, etx), findSalaryCategory(data.categories)?.name, data.settings.dashboard?.billPeriods)
       const { default: writeExcelFile } = await import('write-excel-file/browser')
       await writeExcelFile(rows, {
         sheet: 'Lançamentos', stickyRowsCount: 2, stickyColumnsCount: 2,

@@ -13,6 +13,8 @@ export interface DashboardPrefs {
   /** Payslips: country the salary is paid in, and the inflation table used per country. */
   /** Brazilian bills the user marked as counted in the transfer: merchant → month → on/off (domain/forecast). */
   billMarks?: Record<string, Record<string, boolean>>
+  /** Interval of recurring lines set by the user, in months, over the detected one: merchant → months (domain/monthPlan). */
+  billPeriods?: Record<string, number>
   payroll?: { country?: string; inflation?: Record<string, Record<string, number>> }
   /** Previdência privada no Brasil, em BRL (Investimentos; a Rescisão parte destes saldos). */
   previdencia?: PrevidenciaSaldo
