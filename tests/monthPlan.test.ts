@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildMonthPlan, nextMonth, recurringExpectations, steadyIncomes, type PlanTx } from '../src/domain/monthPlan'
+import { buildMonthPlan, detectPeriod, isDue, nextMonth, recurringExpectations, steadyIncomes, type PlanTx } from '../src/domain/monthPlan'
 
 const tx = (month: string, categoryName: string, value: number, kind: PlanTx['kind'] = value < 0 ? 'expense' : 'income'): PlanTx => ({ month, value, kind, categoryName })
 const AVG = ['2026-07', '2026-08', '2026-09']
@@ -97,5 +97,50 @@ describe('money from or to outside', () => {
     const txs = [tx('2026-08', EXTERNAL, 1000, 'income'), tx('2026-10', EXTERNAL, 1000, 'income')]
     const p = buildMonthPlan(txs, [], '2026-10', AVG)
     expect(p.income[0]).toMatchObject({ name: EXTERNAL, media: 0, realizado: 1000, previsto: 1000 })
+  })
+})
+
+describe('recorrentes com intervalo', () => {
+  const avg = ['2026-08', '2026-09', '2026-10']
+  const bill = (month: string, value = -120): PlanTx => ({ month, value, kind: 'expense', categoryName: 'Agua', merchant: 'AGUA', booking_date: `${month}-10` })
+  const rent = (month: string): PlanTx => ({ month, value: -1000, kind: 'expense', categoryName: 'Moradia', merchant: 'ALUGUEL', booking_date: `${month}-05` })
+  const history = [...['2026-02', '2026-04', '2026-06', '2026-08', '2026-10'].map((m) => bill(m)), ...['2026-08', '2026-09', '2026-10'].map(rent)]
+  const all = () => true
+
+  it('detecta o intervalo pela mediana dos espaços entre pagamentos', () => {
+    expect(detectPeriod(['2026-02', '2026-04', '2026-06', '2026-08'])).toBe(2)
+    expect(detectPeriod(['2026-01', '2026-02', '2026-04', '2026-05', '2026-06'])).toBe(1)
+    expect(detectPeriod(['2026-10'])).toBe(1)
+    expect(isDue({ period: 2, lastMonth: '2026-10' }, '2026-11')).toBe(false)
+    expect(isDue({ period: 2, lastMonth: '2026-10' }, '2026-12')).toBe(true)
+  })
+
+  it('um bimestral só entra no mês em que vence, pelo valor cheio, e fica fora da média', () => {
+    const rec = recurringExpectations(history, all, avg)
+    expect(rec.find((e) => e.merchant === 'AGUA')).toMatchObject({ period: 2, lastMonth: '2026-10', amount: 120 })
+    expect(rec.find((e) => e.merchant === 'ALUGUEL')).toMatchObject({ period: 1, amount: 1000 })
+    const nov = buildMonthPlan(history, [], '2026-11', avg, rec)
+    expect(nov.expense.find((r) => r.name === 'Agua')).toBeUndefined()
+    const dec = buildMonthPlan(history, [], '2026-12', avg, rec)
+    expect(dec.expense.find((r) => r.name === 'Agua')).toMatchObject({ media: 0, falta: 120, previsto: 120 })
+    expect(dec.expense.find((r) => r.name === 'Moradia')).toMatchObject({ falta: 1000 })
+  })
+
+  it('na categoria, o bimestral soma ao que falta da média das outras despesas', () => {
+    const txs = [...history, ...avg.map((m) => ({ ...bill(m, -60), merchant: 'MERCADINHO', booking_date: `${m}-15` })),
+      { ...bill('2026-12', -20), merchant: 'MERCADINHO', booking_date: '2026-12-02' }]
+    const rec = recurringExpectations(txs, (m) => m === 'AGUA', avg)
+    const dec = buildMonthPlan(txs, [], '2026-12', avg, rec)
+    expect(dec.expense.find((r) => r.name === 'Agua')).toMatchObject({ media: 60, realizado: 20, falta: 40 + 120 })
+    const paid = buildMonthPlan([...txs, bill('2026-12', -130)], [], '2026-12', avg, rec)
+    expect(paid.expense.find((r) => r.name === 'Agua')).toMatchObject({ realizado: 150, falta: 40, previsto: 190 })
+  })
+
+  it('o intervalo escolhido por você vale por cima do detectado, e um que parou sai', () => {
+    const rec = recurringExpectations(history, all, avg, { AGUA: 1, ALUGUEL: 3 })
+    expect(rec.find((e) => e.merchant === 'AGUA')).toMatchObject({ period: 1, periodSet: true })
+    expect(rec.find((e) => e.merchant === 'ALUGUEL')).toMatchObject({ period: 3, periodSet: true })
+    const old = ['2026-01', '2026-03', '2026-05'].map((m) => bill(m))
+    expect(recurringExpectations(old, all, avg)).toEqual([])
   })
 })

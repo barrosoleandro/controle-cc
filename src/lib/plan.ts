@@ -40,10 +40,12 @@ export function useMonthPlans(ctx: Ctx, inScope: (accountId: string) => boolean,
   // Recurring lines not in the month yet show as expected: expenses by the flag of Lançamentos,
   // incomes by that flag or, unmarked, by having come in every one of the last 3 months (salary).
   const { isBill, marks } = useRecurring(ctx)
+  // Each one is expected every `period` months (bimonthly bills only every other month), see recurringExpectations.
+  const periods = useMemo(() => data.settings.dashboard?.billPeriods ?? {}, [data.settings.dashboard?.billPeriods])
   const steady = useMemo(() => steadyIncomes(txs, avgMonths), [txs, avgMonths])
   const recurring = useMemo(() => recurringExpectations(txs,
-    (m, kind) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), avgMonths), [txs, isBill, marks, steady, avgMonths])
+    (m, kind) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), avgMonths, periods), [txs, isBill, marks, steady, avgMonths, periods])
   const key = months.join()
   const plans = useMemo(() => months.map((m) => buildMonthPlan(txs, manual, m, avgMonths, recurring)), [txs, manual, key, avgMonths, recurring]) // eslint-disable-line react-hooks/exhaustive-deps
-  return { txs, lines, manual, plans, avgMonths }
+  return { txs, lines, manual, plans, avgMonths, recurring, periods }
 }

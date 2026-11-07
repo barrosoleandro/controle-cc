@@ -19,7 +19,7 @@
  * balance, rounded up to 10 — as a formula, mirrored in the sender through the exchange-rate cell.
  */
 import type { Cell } from 'write-excel-file/browser'
-import { nextMonth, recurringExpectations, steadyIncomes, type PlanTx } from './monthPlan'
+import { isDue, nextMonth, recurringExpectations, steadyIncomes, type PlanTx, type RecurringPeriods } from './monthPlan'
 import { isCardBillPayment, sentToBrazil } from './forecast'
 import { EXTERNAL } from './audit'
 import { SALARY_FROM_DAY } from './monthEnd'
@@ -52,7 +52,7 @@ const round = (v: number) => Math.round(v * 100) / 100
 /** Sign that makes a value positive for its kind: income counts up, the rest counts down. */
 const mag = (kind: Kind, v: number) => (kind === 'income' ? v : -v)
 
-export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: string[], current: string, avgMonths: string[], isRecurring: IsRecurring, labels: (m: string) => string, brazil?: BrazilLink, salary?: string): Cell[][] {
+export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: string[], current: string, avgMonths: string[], isRecurring: IsRecurring, labels: (m: string) => string, brazil?: BrazilLink, salary?: string, periods: RecurringPeriods = {}): Cell[][] {
   const cur = months.indexOf(current)
   const ahead = (i: number) => cur >= 0 && i >= cur // current month and after: (partly) projected
   const link = brazil && accounts.some((a) => a.id === brazil.from) && accounts.some((a) => a.id === brazil.to) ? brazil : undefined
@@ -99,10 +99,10 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     // Recurring lines not in yet, from the current month on.
     const plan: PlanTx[] = mine.map((t) => ({ month: t.month, value: t.amount, kind: t.kind, categoryName: t.categoryName, merchant: t.merchant, booking_date: t.booking_date }))
     const steady = steadyIncomes(plan, avgMonths)
-    const recurring = recurringExpectations(plan, (m, kind) => m !== BILL && isRecurring(m, kind, steady), avgMonths)
+    const recurring = recurringExpectations(plan, (m, kind) => m !== BILL && isRecurring(m, kind, steady), avgMonths, periods)
     for (const e of recurring) {
       for (let i = Math.max(cur, 0); cur >= 0 && i < months.length; i++) {
-        if (!seen.has(`${e.kind}/${e.merchant}/${months[i]}`)) cell(e.kind, e.categoryName, e.merchant)[i] += e.kind === 'income' ? e.amount : -e.amount
+        if (isDue(e, months[i]) && !seen.has(`${e.kind}/${e.merchant}/${months[i]}`)) cell(e.kind, e.categoryName, e.merchant)[i] += e.kind === 'income' ? e.amount : -e.amount
       }
     }
     const avgSet = new Set(avgMonths)

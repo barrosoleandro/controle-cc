@@ -31,7 +31,7 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
   const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
 
   // A transfer with no other side in the user's accounts (a resgate from savings not in the app) is money in or out here.
-  const { txs, lines, manual, plans, avgMonths } = useMonthPlans(ctx, inScope, months)
+  const { txs, lines, manual, plans, avgMonths, recurring, periods } = useMonthPlans(ctx, inScope, months)
   const catById = useMemo(() => new Map(data.categories.map((c) => [c.id, c])), [data.categories])
   const plan = plans[months.indexOf(month as typeof months[number])] ?? plans[0]
 
@@ -76,6 +76,14 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
     if (await saveLines([...lines, line])) setOk(`Linha adicionada em ${c.name}: ajuste a descrição e o valor na própria linha.`)
   }
 
+  /** The interval of a recurring line, set by hand (0 = back to the one read from the history). */
+  async function setPeriod(merchant: string, months: number) {
+    const next = { ...periods }
+    if (months > 0) next[merchant] = months; else delete next[merchant]
+    setErro(null)
+    try { await ctx.patchSettings({ dashboard: { ...data.settings.dashboard, billPeriods: next } }) } catch (e) { setErro(e instanceof Error ? e.message : String(e)) }
+  }
+
   /** "ajustar": the expected recurring line becomes a manual line of the month, ready to edit; it takes the expected one's place. */
   async function adoptRecurring(e: RecurringExpect) {
     const c = data.categories.find((x) => x.name === e.categoryName && x.kind === e.kind)
@@ -117,7 +125,7 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
               ))}
               {r.pendentes.map((e) => (
                 <tr key={`rec/${e.merchant}`} className="muted" style={{ fontSize: 13 }}>
-                  <td style={{ paddingLeft: 24 }} title="Recorrente ainda não lançado neste mês: valor pela média dele nos últimos meses">↻ previsto ~{String(e.day).padStart(2, '0')}/{plan.month.slice(5, 7)} · {e.merchant}
+                  <td style={{ paddingLeft: 24 }} title="Recorrente ainda não lançado neste mês: valor pela média dele nos últimos meses">↻ previsto ~{String(e.day).padStart(2, '0')}/{plan.month.slice(5, 7)} · {e.merchant}{e.period > 1 && <span style={{ fontSize: 12 }}> · {everyLabel(e.period)}</span>}
                     {' '}<button className="link" style={{ fontSize: 12 }} onClick={() => adoptRecurring(e)}>ajustar</button></td>
                   <td /><td /><td /><td className="num warn">{fmt(e.amount)}</td><td />
                 </tr>
@@ -211,16 +219,43 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
           <th className={`num ${plan.resultado < 0 ? 'neg' : 'pos'}`}>{fmt(plan.resultado)}</th></tr></tfoot>
       </table></div>
       {!plan.income.length && !plan.expense.length && <p className="muted">Nada neste mês nem na média das contas marcadas.</p>}
+      {recurring.length > 0 && <details style={{ marginTop: 12 }}>
+        <summary><strong>↻ Intervalo dos recorrentes</strong> <span className="muted">· {recurring.filter((e) => e.period > 1).length} não são mensais</span></summary>
+        <p className="muted" style={{ fontSize: 13 }}>Lido dos últimos 12 meses pelo espaço entre os pagamentos. Um bimestral só entra como previsto nos meses em que vence, pelo valor cheio. Se o app errou, escolha o intervalo certo.</p>
+        <div className="scroll"><table>
+          <thead><tr><th>Recorrente</th><th>Categoria</th><th className="num">Valor</th><th>Último</th><th>Próximo</th><th>Intervalo</th></tr></thead>
+          <tbody>{[...recurring].sort((a, b) => b.period - a.period || a.merchant.localeCompare(b.merchant)).map((e) => (
+            <tr key={`${e.kind}/${e.merchant}`}>
+              <td>{e.merchant}</td><td className="muted">{e.categoryName}</td><td className="num">{fmt(e.amount)}</td>
+              <td className="muted">{monthLabel(e.lastMonth)}</td><td>{monthLabel(nextDue(e, cur))}</td>
+              <td><select aria-label={`Intervalo de ${e.merchant}`} value={e.periodSet ? e.period : 0} onChange={(ev) => setPeriod(e.merchant, Number(ev.target.value))}>
+                <option value={0}>Automático ({everyLabel(e.periodSet ? 0 : e.period)})</option>
+                {PERIODS.map((n) => <option key={n} value={n}>{everyLabel(n)}</option>)}
+              </select></td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+      </details>}
       <Help title="Como ler">
         <p><strong>Média</strong>: dos 3 últimos meses fechados ({monthLabel(avgMonths[0])} a {monthLabel(avgMonths.at(-1)!)}), nas contas marcadas.
           <strong> Realizado</strong>: lançamentos importados no mês (🔒, não mudam aqui). <strong>Manual</strong>: as linhas que você inseriu, que podem ser editadas e excluídas.</p>
         <p><strong>Falta</strong> = média − realizado − manual, nunca abaixo de zero: uma linha manual ocupa o lugar da média em vez de somar a ela.
           <strong> Previsto</strong> = realizado + manual + falta. Transferências entre contas suas ficam de fora; uma transferência sem o outro lado em nenhuma conta sua (ex.: resgate de uma poupança que não está no app) entra como <strong>Transferência externa</strong>, receita ou despesa, só no mês em que aconteceu — não entra na média.</p>
         <p><strong>↻ Recorrentes</strong>: cada estabelecimento marcado como recorrente em Lançamentos, e cada receita que entrou nos 3 últimos meses (ex.: salário), aparece como previsto enquanto não for lançado no mês, pela média dos meses em que apareceu.
+          O intervalo de cada um (mensal, bimestral, trimestral…) é lido dos últimos 12 meses: um bimestral só aparece nos meses em que vence, pelo valor cheio, e fica fora da média da categoria. Confira e corrija em <strong>Intervalo dos recorrentes</strong>.
           Na categoria, o que falta é pelo menos a soma desses recorrentes, mesmo que a média da categoria seja menor.
           <strong> ajustar</strong> transforma o previsto numa linha manual do mês, com data, descrição e valor editáveis; para um mês em que ele não vai acontecer, ajuste o valor para 0.</p>
         <p>As linhas manuais valem para qualquer conta marcada. Quando o lançamento de verdade for importado, exclua a linha manual correspondente.</p>
       </Help>
     </div>
   </div>
+}
+
+const PERIODS = [1, 2, 3, 4, 6, 12]
+const everyLabel = (n: number) => (n === 0 ? 'detectado' : n === 1 ? 'mensal' : n === 2 ? 'bimestral' : n === 3 ? 'trimestral' : n === 6 ? 'semestral' : n === 12 ? 'anual' : `a cada ${n} meses`)
+/** The next payment not in yet: every `period` months after the latest one, from `from` on. */
+function nextDue(e: RecurringExpect, from: string): string {
+  let m = e.lastMonth
+  do { for (let k = 0; k < Math.max(1, e.period); k++) m = nextMonth(m) } while (m < from)
+  return m
 }
