@@ -16,9 +16,10 @@ import { nextMonth } from '../domain/monthPlan'
 import { buildSimSheet, projectCardBill, type BrazilLink } from '../domain/simSheet'
 import { findSalaryCategory } from '../domain/budget'
 import { CARD_PAYMENT } from '../domain/categorize'
-import { CARD_BILL, matchBillDebits, matchCardPayments } from '../domain/cards'
 import { AsOf, Tabs } from '../components/Page'
 import { skipRecurring, useRecurring } from '../lib/recurring'
+import { MonthEndEstimate } from '../components/MonthEndEstimate'
+import { useBillsAsSpending, useCashTxs } from '../lib/cash'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 const NEW = '__new' // select option that opens the new-category form
@@ -45,6 +46,8 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const totalBalance = mine.reduce((s, b) => s + b.display, 0)
   const nShown = accounts.filter((a) => shown(a.id)).length
   const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
+  // Same rows as the views below (the Itaú card as its bill), for the end-of-month estimate.
+  const scoped = useCashTxs(ctx, shown)
 
   return <>
     <div className="card" style={{ marginBottom: 20 }}>
@@ -57,6 +60,7 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
           <div className="l">Total ({ctx.currency}) · {nShown} de {accounts.length} conta(s)</div>
           <div className={`v ${totalBalance < 0 ? 'neg' : ''}`}>{fmt(totalBalance)}</div>
         </div>
+        {mine.length > 0 && <MonthEndEstimate ctx={ctx} txs={scoped} balance={totalBalance} />}
         {mine.map((b) => (
           <div className="kpi" key={b.account.id}>
             <div className="l">{b.account.name}</div>
@@ -186,20 +190,6 @@ function RecurringQuestions({ ctx }: { ctx: Ctx }) {
       {toAsk.length > asked && <button style={{ marginTop: 6 }} onClick={() => setAsked(asked + 5)}>Mostrar mais</button>}
     </details>
   )
-}
-
-/**
- * On this page the Itaú card is one line: the bill paid from the account, under "Cartão Itaú"
- * (spending, not a transfer). Its purchases are left out (`shown` has no card accounts) and
- * stay on the Cartões page.
- */
-function useBillsAsSpending(ctx: Ctx): Ctx['etx'] {
-  const { data } = ctx
-  return useMemo(() => {
-    const viaPayment = matchCardPayments(data.accounts, data.transactions).map((m) => m.bankTx.id)
-    const paid = new Set([...viaPayment, ...matchBillDebits(data.accounts, data.cardStatements, data.transactions, new Set(viaPayment)).map((m) => m.bankTx.id)])
-    return ctx.etx.map((t) => (paid.has(t.id) ? { ...t, kind: 'expense' as const, categoryName: CARD_BILL } : t))
-  }, [ctx.etx, data.accounts, data.transactions, data.cardStatements])
 }
 
 function Lista({ ctx, shown, rec, merchant, onClearMerchant }: { ctx: Ctx; shown: (accountId: string) => boolean; rec: Rec; merchant: string; onClearMerchant: () => void }) {

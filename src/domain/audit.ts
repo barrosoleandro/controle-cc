@@ -49,24 +49,29 @@ export interface PairTx { id: string; account_id: string; date: string; amount: 
  * row answers for one transfer only.
  */
 export function unpairedTransfers(txs: PairTx[], convert: (amount: number, from: string, to: string, date: string) => number, days = 5): PairTx[] {
+  return pairTransfers(txs, convert, days).unpaired
+}
+
+/** Same matching as unpairedTransfers, also returning each transfer with the row found as its other side. */
+export function pairTransfers<T extends PairTx>(txs: T[], convert: (amount: number, from: string, to: string, date: string) => number, days = 5): { pairs: [T, T][]; unpaired: T[] } {
   const DAY = 86_400_000
   const used = new Set<string>()
   const transfers = txs.filter((t) => t.kind === 'transfer' && Math.abs(t.amount) > 0.005).sort((a, b) => a.date.localeCompare(b.date))
-  const matches = (t: PairTx, o: PairTx) => {
+  const matches = (t: T, o: T) => {
     if (o.account_id === t.account_id || Math.sign(o.amount) === Math.sign(t.amount)) return false
     if (Math.abs(Date.parse(o.date) - Date.parse(t.date)) > days * DAY) return false
     if (o.currency === t.currency) return Math.abs(o.amount + t.amount) < 0.01
     const v = convert(t.amount, t.currency, o.currency, t.date)
     return Math.abs(v + o.amount) <= 0.03 * Math.abs(o.amount)
   }
-  const out: PairTx[] = []
+  const unpaired: T[] = [], pairs: [T, T][] = []
   for (const t of transfers) {
     if (used.has(t.id)) continue
     const other = txs.filter((o) => !used.has(o.id) && matches(t, o))
       .sort((a, b) => Number(b.kind === 'transfer') - Number(a.kind === 'transfer') || Math.abs(Date.parse(a.date) - Date.parse(t.date)) - Math.abs(Date.parse(b.date) - Date.parse(t.date)))[0]
-    if (other) { used.add(t.id); used.add(other.id) } else out.push(t)
+    if (other) { used.add(t.id); used.add(other.id); pairs.push([t, other]) } else unpaired.push(t)
   }
-  return out
+  return { pairs, unpaired }
 }
 
 /** An import as the log keeps it; `skipped` only exists for imports logged with migration 007. */
