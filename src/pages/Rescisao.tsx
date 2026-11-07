@@ -4,6 +4,7 @@ import { ALIQUOTAS_REGRESSIVAS, AVISOS, TIPOS, calcularRescisao, novaPrevidencia
 import { deleteScenario, saveScenario } from '../lib/data'
 import { money } from '../lib/format'
 import { Help } from '../components/Page'
+import { FgtsCheck } from '../components/FgtsCheck'
 
 /**
  * Estimativa da rescisão CLT no Brasil. Cada simulação é guardada com nome na tabela de
@@ -157,6 +158,8 @@ export function Rescisao({ ctx }: { ctx: Ctx }) {
         </table></div>
       </div>}
     </>}
+
+    <FgtsCheck ctx={ctx} />
 
     <div className="card" style={{ gridColumn: '1/-1' }}>
       <Help title="Como o cálculo é feito">

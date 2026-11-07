@@ -15,6 +15,8 @@ export interface DashboardPrefs {
   billMarks?: Record<string, Record<string, boolean>>
   /** Interval of recurring lines set by the user, in months, over the detected one: merchant → months (domain/monthPlan). */
   billPeriods?: Record<string, number>
+  /** FGTS deposits per competência (yyyy-mm, or yyyy-13 for the 13th), in BRL, from the FGTS statement (components/FgtsCheck). */
+  fgtsDeposits?: Record<string, number>
   payroll?: { country?: string; inflation?: Record<string, Record<string, number>> }
   /** Previdência privada no Brasil, em BRL (Investimentos; a Rescisão parte destes saldos). */
   previdencia?: PrevidenciaSaldo
