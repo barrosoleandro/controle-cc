@@ -45,8 +45,12 @@ recognised on its first visit.
   already-pulled models look gone.
 - `vercel.json` allows `localhost` and `127.0.0.1` in `connect-src`. Ollama on **another machine**
   needs that host added there too — CSP takes hosts, not IP ranges.
-- **End-of-month estimate** (Lançamentos, box next to the balance): real so far + what is still
-  expected, per category, for the ticked accounts. Without the local model it is the month plan of
+- **End-of-month estimate** (Lançamentos, box next to the balance, and Painel, in the month
+  stats): real so far + what is still expected, per category, for the ticked accounts. It is a
+  cash view: the Itaú card is one line (its bill). With the Itaú checking account not ticked, the
+  BCP → Itaú transfer counts as cash out ("Transferência para o Brasil"): the real one once made,
+  otherwise the amount of the Painel transfer alert; the model never touches it. With both ticked
+  it stays internal. Without the local model it is the month plan of
   Previsão (3-month average, recurring and manual lines). With it on, the model re-estimates each
   category's full month from 12 months of history (trend, seasonality) and runs again, debounced,
   whenever the inputs change; answers are cached per input. The model's figure is bounded in code:

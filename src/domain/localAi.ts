@@ -398,7 +398,7 @@ export interface MonthEndPromptFacts {
  * key, and bounded in code (boundEstimate) before it reaches the screen.
  */
 export function monthEndPrompt(f: MonthEndPromptFacts): { system: string; prompt: string } {
-  const cats = f.categorias.map((c) => ({
+  const cats = f.categorias.filter((c) => !c.fixed).map((c) => ({
     chave: c.key, categoria: c.name, tipo: c.kind === 'income' ? 'receita' : 'despesa',
     historico: c.history, realizadoAteHoje: c.realizado, jaPrevistoNoResto: c.known, estimativaPelaMedia: c.base,
   }))

@@ -54,3 +54,35 @@ describe('monthEnd', () => {
     for (const c of cats) expect(p.prompt).toContain(c.key)
   })
 })
+
+import { SENT_BR, transfersToBrazil } from '../src/domain/monthEnd'
+describe('transfer to Brazil', () => {
+  const p = (id: string, account_id: string, date: string, amount: number, currency: string) => ({ id, account_id, date, amount, currency, description: '', kind: 'transfer' })
+  const rate = (a: number, from: string, to: string) => (from === to ? a : from === 'EUR' ? a * 6 : a / 6)
+
+  it('finds the euro side of a transfer whose other side is Brazilian', () => {
+    const ids = transfersToBrazil([
+      p('bcp1', 'bcp', '2026-10-28', -500, 'EUR'), p('itau1', 'itau', '2026-10-29', 3000, 'BRL'),
+      p('bcp2', 'bcp', '2026-10-10', -100, 'EUR'), p('ldds', 'ldds', '2026-10-10', 100, 'EUR'), // euro ↔ euro: not Brazil
+    ], (id) => id === 'itau', rate)
+    expect([...ids]).toEqual(['bcp1'])
+  })
+
+  it('pins the expected transfer: the model cannot change it', () => {
+    const tx: PlanTx[] = [...txs, t('2026-10', -500, SENT_BR)]
+    const plan = buildMonthPlan(tx, [], '2026-11', hist)
+    const cats = monthEndFacts(plan, tx, hist, { name: SENT_BR, kind: 'expense', amount: 650 })
+    const br = cats.find((c) => c.name === SENT_BR)!
+    expect(br).toMatchObject({ fixed: true, base: 650, known: 650, realizado: 0 })
+    const e = combineMonthEnd(cats, new Map([[br.key, 1]]))
+    expect(e.rows.find((r) => r.name === SENT_BR)!.previsto).toBe(650)
+    expect(e.expense).toBe(950)
+    expect(monthEndPrompt({ moeda: 'EUR', mes: '2026-11', dia: 7, diasNoMes: 30, meses: hist, categorias: cats }).prompt).not.toContain(SENT_BR)
+  })
+
+  it('counts the real transfer once it is made', () => {
+    const tx: PlanTx[] = [...txs, t('2026-11', -700, SENT_BR)]
+    const cats = monthEndFacts(buildMonthPlan(tx, [], '2026-11', hist), tx, hist, { name: SENT_BR, kind: 'expense', amount: 0 })
+    expect(cats.find((c) => c.name === SENT_BR)).toMatchObject({ base: 700, realizado: 700 })
+  })
+})

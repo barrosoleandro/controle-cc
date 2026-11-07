@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Ctx } from '../App'
 import { byCategory, monthly } from '../domain/analytics'
@@ -10,16 +10,18 @@ import { saveSettings } from '../lib/data'
 import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
 import { countryOf } from '../domain/countries'
 import { monthWindow } from '../domain/period'
-import { CARD_PAYMENT, isTithe } from '../domain/categorize'
+import { isTithe } from '../domain/categorize'
 import { findSalaryCategory, salaryAt } from '../domain/budget'
-import { applyBillMarks, brazilCard, isCardBillPayment, markHistory, recurrenceCandidates, brazilTransfer, forecastNextMonth, monthlyBills, nextMonthOf, sentToBrazil } from '../domain/forecast'
+import { markHistory, recurrenceCandidates, forecastNextMonth } from '../domain/forecast'
 import { Menu } from './analysis/shared'
 import { VERSION, versionLabel } from '../lib/version'
 import { Icon } from '../components/Icons'
 import { AsOf, Stat } from '../components/Page'
+import { CARD_LINE, useBrazilTransfer } from '../lib/brazil'
+import { useCashTxs } from '../lib/cash'
+import { MonthEndStat } from '../components/MonthEndEstimate'
 
 // A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
-const CARD_LINE = 'Fatura do cartão Itaú'
 export const WIDGETS = [
   { id: 'transfer', label: 'Alerta: transferir do BCP para o Itaú' },
   { id: 'kpis', label: 'Saldos e totais do mês' },
@@ -56,7 +58,9 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   })
   // Unticked accounts: opens on the BCP joint account; the others are one click away.
   const [hidden, setHidden] = useState<Set<string>>(() => hiddenByDefault(data.accounts))
-  const shown = (id: string) => !hidden.has(id)
+  const shown = useCallback((id: string) => !hidden.has(id), [hidden])
+  // Same cash rows as Lançamentos, for the end-of-month estimate.
+  const cashTxs = useCashTxs(ctx, shown)
   const [editing, setEditing] = useState(false)
 
   const txs = useMemo(() => etx.filter((t) => !hidden.has(t.account_id)), [etx, hidden])
@@ -98,35 +102,8 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
     const now = today()
     const skip = (n: string) => isTithe(n)
     const mine = forecastNextMonth(txs, now, skip, 3, data.settings.dashboard?.billMarks ?? {})
-    const brIds = new Set(data.accounts.filter((a) => countryOf(a.bank) === 'Brasil').map((a) => a.id))
-    const brTx = ctx.etx.filter((t) => brIds.has(t.account_id)).map((t) => ({ ...t, value: fx.convert(t.amount, t.currency, 'BRL', t.booking_date) }))
-    // The card payment in the checking account is the bill itself, counted apart: not a recurring charge.
-    const skipBr = (n: string) => skip(n) || n === 'Cartão Itaú'
-    // Only the Itaú checking account counts here: card purchases already are in the bill, so a
-    // yearly charge on the card would be counted twice.
-    const checkingIds = new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type !== 'card').map((a) => a.id))
-    // The bill payment itself is left out (the bill is counted apart); the account's own fees stay.
-    const brChecking = brTx.filter((t) => checkingIds.has(t.account_id) && !isCardBillPayment(t))
-    const marksBr = data.settings.dashboard?.billMarks ?? {}
-    const br0 = forecastNextMonth(brChecking, now, skipBr, 3, marksBr)
-    // Monthly bills come from the checking account (health plan, power, phone, condo…), whatever
-    // the amount does from month to month; the non-monthly ones stay as detected.
-    const periodicNames = new Set(br0.periodic.map((l) => l.label))
-    const bills = applyBillMarks(monthlyBills(brChecking, now, skipBr).filter((l) => !periodicNames.has(l.label)), brChecking, marksBr)
-    const br = { ...br0, monthly: bills.reduce((a, l) => a + l.amount, 0), monthlyLines: bills }
-    // The card bill that falls in the coming month: the imported open bills, or, while none is
-    // imported, the card purchases already assigned to that month's bill (statement_due) or, failing
-    // that, made this month, which is what that bill will carry.
-    const next = nextMonthOf(now)
-    const cardIds = new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type === 'card').map((a) => a.id))
-    const openBills = brazilCard(data.cardStatements, cardIds, now.slice(0, 7)).open
-    const cardBuys = brTx.filter((t) => cardIds.has(t.account_id) && t.amount < 0 && t.bank_category !== CARD_PAYMENT)
-    const dueNext = cardBuys.filter((t) => t.statement_due?.slice(0, 7) === next)
-    const cardNext = openBills > 0 ? openBills
-      : -(dueNext.length ? dueNext : cardBuys.filter((t) => t.month === now.slice(0, 7))).reduce((a, t) => a + t.value, 0)
-    const balance = balances.filter((b) => brIds.has(b.account.id) && b.account.type === 'checking').reduce((s, b) => s + fx.convert(b.native, b.account.currency, 'BRL', now), 0)
-    return { mine, br, send: brIds.size ? { ...brazilTransfer(br, cardNext, balance, now), lines: [{ label: CARD_LINE, amount: cardNext, date: '' }, ...br.monthlyLines, ...br.periodic], sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
-  }, [txs, ctx.etx, data.accounts, data.cardStatements, data.settings.dashboard?.billMarks, balances, fx])
+    return { mine }
+  }, [txs, data.settings.dashboard?.billMarks])
   const brl = money('BRL')
   // Takes a wrong line out of the estimate for good: the merchant is marked as not recurring in its whole history.
   const notRecurring = async (merchant: string) => {
@@ -135,7 +112,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   }
   const toAsk = useMemo(() => recurrenceCandidates(ctx.etx, data.settings.dashboard?.billMarks ?? {}, today(), (n) => isTithe(n) || n === 'Cartão Itaú').length, [ctx.etx, data.settings.dashboard?.billMarks])
   const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
-  const send = nextMonth.send
+  const send = useBrazilTransfer(ctx)
   const sendEur = send ? money('EUR')(send.transfer / fx.latest()) : ''
   // A transfer already made this month settles it: the alert only asks for one when none went yet.
   const open = !!send && send.transfer > 0 && !send.sent
@@ -189,6 +166,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
             <Stat tone="neg" icon="saida" label="Despesas" value={<span className="neg">{fmt(cur?.expense ?? 0)}</span>} sub={period} />
             <Stat tone="neutral" icon="resultado" label="Sobrou" value={<span className={net >= 0 ? 'pos' : 'neg'}>{fmt(net)}</span>}
               sub={(cur?.income ?? 0) > 0 ? `${Math.round((net / cur.income) * 100)}% das receitas` : period} />
+            {mine.length > 0 && <MonthEndStat ctx={ctx} txs={cashTxs} balance={mine.filter((b) => b.account.type !== 'card').reduce((s, b) => s + b.display, 0)} />}
           </div>)
       }
       case 'transfer': return !send ? (
