@@ -1,5 +1,6 @@
 import { buildExchangeRequest, parseExchangeAnswer, type VendorQuery, type VendorSuggestion } from './claudeExchange'
 import type { LineDiff, TotalDiff } from './payroll'
+import type { MonthEndCat } from './monthEnd'
 
 /**
  * Prompts for the local model. Pure on purpose: the arithmetic is always done in code and
@@ -380,4 +381,66 @@ export function simulationPrompt(f: SimulationFacts): { system: string; prompt: 
     system: 'Você lê simulações de custo de vida entre países para uma pessoa física, em português do Brasil, de forma direta e sem moralismo.',
     prompt: linhas.filter((l) => l !== '').join('\n'),
   }
+}
+
+export interface MonthEndPromptFacts {
+  moeda: string
+  mes: string // yyyy-mm being estimated
+  dia: number // today's day of the month
+  diasNoMes: number
+  meses: string[] // the history months, oldest first
+  categorias: MonthEndCat[]
+}
+
+/**
+ * The local model estimates each category's full-month total from its history. Unlike the
+ * narrations, here the model does produce a number — so the answer is JSON only, matched by
+ * key, and bounded in code (boundEstimate) before it reaches the screen.
+ */
+export function monthEndPrompt(f: MonthEndPromptFacts): { system: string; prompt: string } {
+  const cats = f.categorias.map((c) => ({
+    chave: c.key, categoria: c.name, tipo: c.kind === 'income' ? 'receita' : 'despesa',
+    historico: c.history, realizadoAteHoje: c.realizado, jaPrevistoNoResto: c.known, estimativaPelaMedia: c.base,
+  }))
+  return {
+    system: 'Você estima o total do mês de cada categoria de finanças pessoais a partir do histórico. Responda somente com JSON válido, sem texto fora do JSON.',
+    prompt: [
+      `Mês a estimar: ${f.mes}. Hoje é o dia ${f.dia} de ${f.diasNoMes}. Moeda: ${f.moeda}.`,
+      `"historico" traz o total de cada mês completo, nesta ordem: ${f.meses.join(', ')}.`,
+      '"realizadoAteHoje" já aconteceu neste mês. "jaPrevistoNoResto" são lançamentos recorrentes ou manuais que ainda vão entrar.',
+      '"estimativaPelaMedia" é a conta simples (média dos últimos 3 meses); use-a como referência.',
+      '',
+      'Para cada categoria, estime o TOTAL do mês inteiro (realizado + o que ainda falta). Considere:',
+      '- tendência recente (subindo ou caindo) e sazonalidade (o mesmo mês do ano anterior, se estiver no histórico);',
+      '- meses atípicos isolados não são o padrão;',
+      '- quanto do mês já passou: categoria que costuma cair no começo do mês e já está realizada não deve crescer muito;',
+      '- o total nunca é menor que realizadoAteHoje + jaPrevistoNoResto.',
+      '',
+      'Categorias:',
+      JSON.stringify(cats),
+      '',
+      'Formato exato da resposta (uma linha por chave, use a chave exatamente como veio, valor positivo):',
+      JSON.stringify({ estimativas: [{ chave: 'expense/Mercado', total: 123.45 }] }),
+    ].join('\n'),
+  }
+}
+
+/** key → full-month total. Unknown keys and non-numbers are dropped; nothing usable → error. */
+export function parseMonthEndAnswer(text: string, keys: Iterable<string>): Map<string, number> {
+  const body = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+  const start = body.indexOf('{'), end = body.lastIndexOf('}')
+  let parsed: unknown
+  try { parsed = JSON.parse(start >= 0 && end > start ? body.slice(start, end + 1) : body) } catch { throw new Error('A IA local não devolveu um JSON válido.') }
+  const list = (parsed as { estimativas?: unknown })?.estimativas
+  if (!Array.isArray(list)) throw new Error('Resposta da IA local sem a lista "estimativas".')
+  const wanted = new Set(keys)
+  const out = new Map<string, number>()
+  for (const item of list) {
+    const r = (item ?? {}) as Record<string, unknown>
+    const key = typeof r.chave === 'string' ? r.chave.trim() : ''
+    const v = typeof r.total === 'number' ? r.total : Number(String(r.total ?? '').replace(',', '.'))
+    if (wanted.has(key) && Number.isFinite(v) && v >= 0) out.set(key, v)
+  }
+  if (!out.size) throw new Error('Nenhuma categoria da resposta da IA local corresponde às enviadas.')
+  return out
 }

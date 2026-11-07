@@ -45,6 +45,12 @@ recognised on its first visit.
   already-pulled models look gone.
 - `vercel.json` allows `localhost` and `127.0.0.1` in `connect-src`. Ollama on **another machine**
   needs that host added there too — CSP takes hosts, not IP ranges.
+- **End-of-month estimate** (Lançamentos, box next to the balance): real so far + what is still
+  expected, per category, for the ticked accounts. Without the local model it is the month plan of
+  Previsão (3-month average, recurring and manual lines). With it on, the model re-estimates each
+  category's full month from 12 months of history (trend, seasonality) and runs again, debounced,
+  whenever the inputs change; answers are cached per input. The model's figure is bounded in code:
+  never below real + already known, never above 1.5× the largest of history/real/average.
 - The arithmetic always stays in code. The model only puts an already-computed diff into words, or
   proposes a category from the user's own list: it cannot change a number, and a category it
   invents is rejected by the same parser the Claude file exchange uses.

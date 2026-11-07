@@ -19,6 +19,7 @@ import { CARD_PAYMENT } from '../domain/categorize'
 import { CARD_BILL, matchBillDebits, matchCardPayments } from '../domain/cards'
 import { AsOf, Tabs } from '../components/Page'
 import { skipRecurring, useRecurring } from '../lib/recurring'
+import { MonthEndEstimate } from '../components/MonthEndEstimate'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 const NEW = '__new' // select option that opens the new-category form
@@ -45,6 +46,9 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const totalBalance = mine.reduce((s, b) => s + b.display, 0)
   const nShown = accounts.filter((a) => shown(a.id)).length
   const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
+  // Same rows as the views below (the Itaú card as its bill), for the end-of-month estimate.
+  const billsEtx = useBillsAsSpending(ctx)
+  const scoped = useMemo(() => billsEtx.filter((t) => shown(t.account_id)), [billsEtx, shown])
 
   return <>
     <div className="card" style={{ marginBottom: 20 }}>
@@ -57,6 +61,7 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
           <div className="l">Total ({ctx.currency}) · {nShown} de {accounts.length} conta(s)</div>
           <div className={`v ${totalBalance < 0 ? 'neg' : ''}`}>{fmt(totalBalance)}</div>
         </div>
+        {mine.length > 0 && <MonthEndEstimate ctx={ctx} txs={scoped} balance={totalBalance} />}
         {mine.map((b) => (
           <div className="kpi" key={b.account.id}>
             <div className="l">{b.account.name}</div>
