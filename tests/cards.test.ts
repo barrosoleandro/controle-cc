@@ -160,3 +160,33 @@ describe('matchCardPayments with bill due dates', () => {
     expect(matchCardPayments(accounts, txs).map((m) => m.bankTx.id)).toEqual(['d-sep'])
   })
 })
+
+describe('conta que paga o cartão', () => {
+  it('só uma conta do país do cartão: o BCP não paga o cartão Itaú', async () => {
+    const { payerOf, matchBillDebits } = await import('../src/domain/cards')
+    const accounts = [
+      { id: 'itau-card', bank: 'ITAU', type: 'card', parent_account_id: 'bcp' },
+      { id: 'card2', bank: 'ITAU', type: 'card', parent_account_id: 'itau' },
+      { id: 'bcp', bank: 'BCP', type: 'checking', parent_account_id: null },
+      { id: 'itau', bank: 'ITAU', type: 'checking', parent_account_id: null },
+    ] as never
+    expect([...payerOf(accounts)]).toEqual([['card2', 'itau']])
+    // A BCP debit of the bill's exact amount is not taken as the bill payment.
+    const m = matchBillDebits(accounts, [{ account_id: 'itau-card', due_date: '2026-10-10', total: 500, status: 'paga' }],
+      [{ id: 'x', account_id: 'bcp', booking_date: '2026-10-09', amount: -500 }])
+    expect(m).toEqual([])
+  })
+})
+
+describe('Cartão Itaú fora do Brasil', () => {
+  it('no BCP, um lançamento "Cartão Itaú" é a transferência que cobre o Brasil, não despesa', async () => {
+    const { enrich } = await import('../src/domain/analytics')
+    const fx = { convert: (v: number) => v } as never
+    const cats = [{ id: 'c', name: 'Cartão Itaú', kind: 'expense' }] as never
+    const accounts = [{ id: 'bcp', name: 'BCP', bank: 'BCP' }, { id: 'itau', name: 'Itaú', bank: 'ITAU' }] as never
+    const t = (id: string, account_id: string) => ({ id, account_id, booking_date: '2026-10-05', amount: -900, currency: 'EUR', category_id: 'c' })
+    const [bcp, itau] = enrich([t('1', 'bcp'), t('2', 'itau')] as never, cats, accounts, fx, 'EUR')
+    expect(bcp.kind).toBe('transfer')
+    expect(itau.kind).toBe('expense')
+  })
+})

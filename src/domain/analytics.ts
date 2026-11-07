@@ -1,5 +1,7 @@
 import type { Account, Category, Currency, Transaction } from './types'
 import type { FxTable } from './fx'
+import { CARD_BILL } from './cards'
+import { countryOf } from './countries'
 
 export interface EnrichedTx extends Transaction {
   month: string // yyyy-mm
@@ -16,13 +18,17 @@ export function enrich(
   const acc = new Map(accounts.map((a) => [a.id, a]))
   return txs.map((t) => {
     const c = t.category_id ? cat.get(t.category_id) : undefined
+    const a = acc.get(t.account_id)
+    // The Itaú card is paid in Brazil. Outside Brazil (BCP) a row filed as "Cartão Itaú" is the
+    // monthly transfer that funds Brazil, card included: a transfer, not spending there.
+    const fundsBrazil = c?.name === CARD_BILL && !!a && countryOf(a.bank) !== 'Brasil'
     return {
       ...t,
       month: t.booking_date.slice(0, 7),
       value: fx.convert(Number(t.amount), t.currency, display, t.booking_date),
       categoryName: c?.name ?? (t.amount >= 0 ? 'Outras receitas' : 'Outros'),
-      kind: c?.kind ?? (t.amount >= 0 ? 'income' : 'expense'),
-      accountName: acc.get(t.account_id)?.name ?? '?',
+      kind: fundsBrazil ? 'transfer' as const : c?.kind ?? (t.amount >= 0 ? 'income' : 'expense'),
+      accountName: a?.name ?? '?',
     }
   })
 }

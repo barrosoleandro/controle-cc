@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useMemo, useState } from 'react'
+import { payerOf as cardPayers } from '../domain/cards'
 import type { Ctx } from '../App'
 import { nextMonth, type ManualLine, type PlanRow, type RecurringExpect } from '../domain/monthPlan'
 import { useMonthPlans } from '../lib/plan'
@@ -24,7 +25,7 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
   const accounts = useMemo(() => data.accounts.filter((a) => a.type !== 'card'), [data.accounts])
   const [hidden, setHidden] = useState<Set<string>>(() => hiddenByDefault(accounts))
   const shown = useCallback((id: string) => accounts.some((a) => a.id === id) && !hidden.has(id), [accounts, hidden])
-  const payerOf = useMemo(() => new Map(data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!])), [data.accounts])
+  const payerOf = useMemo(() => cardPayers(data.accounts), [data.accounts])
   const inScope = useCallback((id: string) => shown(id) || (payerOf.has(id) && shown(payerOf.get(id)!)), [shown, payerOf])
   const nShown = accounts.filter((a) => shown(a.id)).length
   const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
