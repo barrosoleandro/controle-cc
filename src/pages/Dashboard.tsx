@@ -19,6 +19,7 @@ import { VERSION, versionLabel } from '../lib/version'
 import { Icon } from '../components/Icons'
 import { AsOf, Stat } from '../components/Page'
 import { MonthEndBox } from '../components/MonthEnd'
+import { shiftSalary } from '../domain/monthEnd'
 
 // A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
 const CARD_LINE = 'Fatura do cartão Itaú'
@@ -66,13 +67,16 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   const [editing, setEditing] = useState(false)
 
   const txs = useMemo(() => etx.filter((t) => !hidden.has(t.account_id)), [etx, hidden])
-  const series = useMemo(() => monthly(txs).slice(-12), [txs])
+  // Month totals: the salary credited at the end of a month is the next month's (as in the month-end box).
+  const salaryName = useMemo(() => findSalaryCategory(data.categories)?.name, [data.categories])
+  const byMonth = useMemo(() => shiftSalary(txs, salaryName), [txs, salaryName])
+  const series = useMemo(() => monthly(byMonth).slice(-12), [byMonth])
   const cur = useMemo(() => {
-    const ms = monthly(txs).filter((m) => selSet.has(m.month))
+    const ms = monthly(byMonth).filter((m) => selSet.has(m.month))
     const income = ms.reduce((s, m) => s + m.income, 0), expense = ms.reduce((s, m) => s + m.expense, 0)
     return { income, expense, net: income - expense }
-  }, [txs, selSet])
-  const cats = useMemo(() => byCategory(txs, selSet), [txs, selSet])
+  }, [byMonth, selSet])
+  const cats = useMemo(() => byCategory(byMonth, selSet), [byMonth, selSet])
   const balances = useBalances(ctx)
   const subs = useSubscriptions(ctx)
   const budgets = useMemo(() => {
@@ -91,9 +95,9 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
       name: cat.name,
       b: planned.reduce<number>((s, v) => s + (v ?? 0), 0) * rate,
       missing: selMonths.filter((_, i) => planned[i] === undefined),
-      a: txs.filter((t) => t.category_id === cat.id && t.kind === 'income' && selSet.has(t.month)).reduce((s, t) => s + t.value, 0),
+      a: byMonth.filter((t) => t.category_id === cat.id && t.kind === 'income' && selSet.has(t.month)).reduce((s, t) => s + t.value, 0),
     }
-  }, [data, currency, fx, selMonths, selSet, txs])
+  }, [data, currency, fx, selMonths, selSet, byMonth])
   const checking = balances.filter((b) => b.account.type === 'checking' && b.account.currency === 'EUR').reduce((s, b) => s + b.display, 0)
   const insights = useMemo(() => savingsInsights({ txs: txs.filter((t) => !isTithe(t.categoryName)), last3: last3(), current: today().slice(0, 7), budgets, subs, checkingBalance: checking, fmt }), [txs, subs, checking, fmt, budgets])
   const alerts = subscriptionAlerts(subs, today(), fmt).filter((a) => !data.settings.dismissed_alerts.includes(a.key))
