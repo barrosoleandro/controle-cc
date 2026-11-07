@@ -38,10 +38,10 @@ export function MonthEndBox({ ctx, inScope }: { ctx: Ctx; inScope: (accountId: s
   const saldoHoje = balances.filter((b) => inScope(b.account.id)).reduce((s, b) => s + b.display, 0)
   const nomes = data.accounts.filter((a) => a.type !== 'card' && inScope(a.id)).map((a) => a.name)
 
-  // Next month's salary comes in at the end of this one: in the bank's balance, not in this month's result.
+  // Next month's salary, paid at the end of this one, is left out: not in this month's result, and
+  // taken out of today's balance once it is in.
   const next = nextMonth(cur)
-  const salaryIn = !!salary && txs.some((t) => t.kind === 'income' && t.categoryName === salary && t.month === next && t.booking_date.slice(0, 7) === cur)
-  const proximoSalario = bcpIn && salary && !salaryIn ? plan.income.find((r) => r.name === salary)?.media ?? 0 : 0
+  const salarioSeguinte = salary ? txs.filter((t) => t.kind === 'income' && t.categoryName === salary && t.month === next && t.booking_date.slice(0, 7) === cur).reduce((s, t) => s + t.value, 0) : 0
 
   const day = Number(today().slice(8, 10))
   const [y, m] = cur.split('-').map(Number)
@@ -96,8 +96,8 @@ export function MonthEndBox({ ctx, inScope }: { ctx: Ctx; inScope: (accountId: s
   }, [ready, mine, facts]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const aiMap = useMemo(() => (mine ? new Map(mine.falta) : undefined), [mine])
-  const app = useMemo(() => monthEnd(plan, saldoHoje, proximoSalario), [plan, saldoHoje, proximoSalario])
-  const withAi = useMemo(() => (aiMap ? monthEnd(plan, saldoHoje, proximoSalario, aiMap) : null), [plan, saldoHoje, proximoSalario, aiMap])
+  const app = useMemo(() => monthEnd(plan, saldoHoje, salarioSeguinte), [plan, saldoHoje, salarioSeguinte])
+  const withAi = useMemo(() => (aiMap ? monthEnd(plan, saldoHoje, salarioSeguinte, aiMap) : null), [plan, saldoHoje, salarioSeguinte, aiMap])
   const e = useAi && withAi ? withAi : app
   const sign = (v: number) => (v < 0 ? 'neg' : 'pos')
   const parts = (s: { real: number; estimado: number }) => `real ${fmt(s.real)} + estimativa ${fmt(s.estimado)}`
@@ -118,7 +118,7 @@ export function MonthEndBox({ ctx, inScope }: { ctx: Ctx; inScope: (accountId: s
         <Stat tone="neg" icon="saida" label="Despesas" value={<span className="neg">{fmt(e.despesas.total)}</span>} sub={parts(e.despesas)} />
         <Stat tone="accent" icon="carteira" label="Saldo no fim do mês" value={<span className={e.saldoFim < 0 ? 'neg' : ''}>{fmt(e.saldoFim)}</span>}
           sub={`hoje ${fmt(e.saldoHoje)} ${e.receitas.estimado - e.despesas.estimado >= 0 ? '+' : '−'} ${fmt(Math.abs(e.receitas.estimado - e.despesas.estimado))} até o dia ${diasNoMes}`}>
-          {e.proximoSalario > 0 && <div className="stat-sub">como no banco, com o salário de {monthLabel(next).split(' ')[0]} creditado: <strong>{fmt(e.saldoFimBanco)}</strong></div>}
+          {e.salarioSeguinte > 0 && <div className="stat-sub">sem o salário de {monthLabel(next).split(' ')[0]} já creditado ({fmt(e.salarioSeguinte)})</div>}
         </Stat>
       </div>
 
@@ -159,7 +159,7 @@ export function MonthEndBox({ ctx, inScope }: { ctx: Ctx; inScope: (accountId: s
       <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
         Contas: {nomes.join(', ') || 'nenhuma marcada'}. Receitas só do BCP (as outras contas recebem por transferência). Hoje é dia {day} de {diasNoMes}.
         Falta (app) = o que a Previsão espera pela média de {monthLabel(avgMonths[0])} a {monthLabel(avgMonths.at(-1)!)} e pelos recorrentes que ainda não caíram, mais as linhas manuais.
-        {salary && ' O salário que cai a partir do dia 20 conta no mês seguinte, a que se refere.'}
+        {salary && ' O salário que cai a partir do dia 20 é do mês seguinte: fica fora do resultado e do saldo do fim do mês.'}
         {' '}O saldo no fim do mês supõe que tudo o que falta sai destas contas ainda neste mês.
       </p>
     </div>

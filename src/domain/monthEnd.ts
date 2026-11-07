@@ -28,20 +28,20 @@ export interface MonthEnd {
   despesas: MonthEndSide
   resultado: MonthEndSide
   saldoHoje: number
-  /** Today's balance plus what is still to come in, less what is still to go out, this month. */
+  /** The next month's salary already credited this month (paid at the end of the month): left out of saldoFim. */
+  salarioSeguinte: number
+  /** Today's balance, without the next month's salary, plus what is still to come in, less what is still to go out, this month. */
   saldoFim: number
-  /** The next month's salary, when it is expected before the month ends and is not in yet. */
-  proximoSalario: number
-  /** saldoFim as the bank will show it: with the next month's salary already credited. */
-  saldoFimBanco: number
   rows: MonthEndRow[]
 }
 
 /**
  * `estimate`: what is still expected per category (rowKey → value ≥ 0), replacing the app's `falta`;
  * a category it does not name keeps the app's. Manual lines are counted as still to come.
+ * `salarioSeguinte`: the next month's salary already in today's balance; the one still to come
+ * at the end of the month is not counted either (it is the next month's, see shiftSalary).
  */
-export function monthEnd(plan: MonthPlan, saldoHoje: number, proximoSalario = 0, estimate?: Map<string, number>): MonthEnd {
+export function monthEnd(plan: MonthPlan, saldoHoje: number, salarioSeguinte = 0, estimate?: Map<string, number>): MonthEnd {
   const rows: MonthEndRow[] = [...plan.income, ...plan.expense].map((r) => {
     const app = r.manual + r.falta
     const own = estimate?.get(rowKey(r))
@@ -54,6 +54,6 @@ export function monthEnd(plan: MonthPlan, saldoHoje: number, proximoSalario = 0,
   }
   const receitas = side('income'), despesas = side('expense')
   const resultado = { real: receitas.real - despesas.real, estimado: receitas.estimado - despesas.estimado, total: receitas.total - despesas.total }
-  const saldoFim = saldoHoje + receitas.estimado - despesas.estimado
-  return { month: plan.month, receitas, despesas, resultado, saldoHoje, saldoFim, proximoSalario, saldoFimBanco: saldoFim + proximoSalario, rows }
+  const saldoFim = saldoHoje - salarioSeguinte + receitas.estimado - despesas.estimado
+  return { month: plan.month, receitas, despesas, resultado, saldoHoje, salarioSeguinte, saldoFim, rows }
 }

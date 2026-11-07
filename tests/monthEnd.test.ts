@@ -13,14 +13,15 @@ describe('month end', () => {
   ]
   const plan = buildMonthPlan(txs, [{ month: '2026-11', value: -150, kind: 'expense', categoryName: 'Carro' }], '2026-11', AVG)
 
-  it('real + estimativa, e o saldo de hoje mais o que ainda falta', () => {
+  it('real + estimativa, e o saldo de hoje mais o que ainda falta, sem o salário do mês seguinte', () => {
     const e = monthEnd(plan, 3000, 4800)
     expect(e.receitas).toEqual({ real: 5000, estimado: 0, total: 5000 })
     // Mercado: 200 real + 400 falta; Carro: 150 manual, still to come.
     expect(e.despesas).toEqual({ real: 200, estimado: 550, total: 750 })
     expect(e.resultado.total).toBe(4250)
-    expect(e.saldoFim).toBe(3000 - 550)
-    expect(e.saldoFimBanco).toBe(3000 - 550 + 4800)
+    expect(e.saldoHoje).toBe(3000)
+    expect(e.saldoFim).toBe(3000 - 4800 - 550)
+    expect(monthEnd(plan, 3000).saldoFim).toBe(3000 - 550)
   })
 
   it('a estimativa da IA troca só a falta das categorias que ela nomeou', () => {
