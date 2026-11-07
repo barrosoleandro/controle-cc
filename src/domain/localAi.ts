@@ -381,3 +381,98 @@ export function simulationPrompt(f: SimulationFacts): { system: string; prompt: 
     prompt: linhas.filter((l) => l !== '').join('\n'),
   }
 }
+
+export interface MonthEndFacts {
+  moeda: string
+  mes: string // e.g. "novembro 2026"
+  dia: number // today's day of the month
+  diasNoMes: number
+  mediaDe: string // first and last month of the average
+  mediaAte: string
+  categorias: {
+    tipo: 'receita' | 'despesa'
+    nome: string
+    media: number // average of the last 3 complete months
+    realizado: number // already in this month
+    manual: number // lines the user added by hand for the month
+    recorrentesPendentes: number // recurring lines not in yet
+    estimativaApp: number // what the app expects still to come (falta)
+  }[]
+}
+
+export interface MonthEndAnswer {
+  /** rowKey (income/<name> or expense/<name>) → what is still to come, ≥ 0. */
+  falta: Map<string, number>
+  comentario: string
+  /** Categories the model answered with a value that was not usable; they keep the app's. */
+  ignoradas: string[]
+}
+
+/**
+ * The local model estimates what is still to come in each category until the end of the month.
+ * It sees the same facts as the app (average, real so far, recurring still due, the app's own
+ * figure) and answers one number per category; parseMonthEndAnswer checks every one of them.
+ */
+export function monthEndPrompt(f: MonthEndFacts): { system: string; prompt: string } {
+  const n = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false })
+  const linhas = [
+    `Estimativa do fim do mês de ${f.mes} das contas de uma pessoa física, em ${f.moeda}. Hoje é dia ${f.dia} de ${f.diasNoMes}.`,
+    'As receitas entram só pelo banco BCP; as outras contas recebem por transferência, por isso só há receitas do BCP abaixo.',
+    `Média = média mensal de ${f.mediaDe} a ${f.mediaAte}. Realizado = o que já entrou ou saiu neste mês. Manual = linhas já previstas pela pessoa (contam como certas).`,
+    'Recorrentes pendentes = cobranças ou receitas recorrentes que ainda não caíram neste mês. Estimativa do app = o que o aplicativo espera que ainda falte.',
+    '',
+    'Categorias (tipo | nome | média | realizado | manual | recorrentes pendentes | estimativa do app):',
+    ...f.categorias.map((c) => `- ${c.tipo} | ${c.nome} | ${n(c.media)} | ${n(c.realizado)} | ${n(c.manual)} | ${n(c.recorrentesPendentes)} | ${n(c.estimativaApp)}`),
+    '',
+    'Tarefa: para cada categoria, estime quanto AINDA FALTA entrar (receita) ou sair (despesa) de hoje até o último dia do mês, além do realizado e do manual.',
+    'Como estimar:',
+    '- Leve em conta quanto do mês já passou: um gasto do dia a dia que segue o ritmo da média ainda deve gastar a parte proporcional dos dias que faltam.',
+    '- Os recorrentes pendentes ainda vão cair: a estimativa da categoria não deve ficar abaixo deles.',
+    '- Se o realizado já passou da média e a categoria não é do dia a dia, o que falta pode ser 0.',
+    '- Se não tiver motivo para mudar, repita a estimativa do app.',
+    '- Valores sempre maiores ou iguais a zero, com no máximo 2 casas decimais, em número (sem símbolo de moeda).',
+    '',
+    'Responda somente com JSON válido, sem texto fora do JSON, exatamente neste formato:',
+    JSON.stringify({ categorias: [{ tipo: 'despesa', nome: 'Mercado', falta: 123.45 }], comentario: 'até 60 palavras: o que mais muda em relação à estimativa do app e por quê' }),
+    'Use exatamente os nomes e tipos da lista. Não crie categoria nova.',
+    '',
+    'Limites, importante:',
+    '- Não dê conselho financeiro e não faça julgamento moral de gasto nenhum.',
+    '- O comentário só descreve a estimativa; não comente doações.',
+  ]
+  return {
+    system: 'Você estima o fechamento do mês das contas de uma pessoa física, em português do Brasil. Responda somente com JSON válido.',
+    prompt: linhas.join('\n'),
+  }
+}
+
+/**
+ * Reads the model's answer defensively: the first JSON object in the text, only the categories
+ * that were asked (same name and type), values that are finite, ≥ 0 and not absurd (more than
+ * 5× the larger of the average, the app's figure and the recurring still due). Anything else is
+ * dropped and that category keeps the app's estimate.
+ */
+export function parseMonthEndAnswer(text: string, asked: MonthEndFacts['categorias']): MonthEndAnswer {
+  const start = text.indexOf('{'), end = text.lastIndexOf('}')
+  if (start < 0 || end <= start) throw new Error('A IA não devolveu um JSON.')
+  let body: unknown
+  try { body = JSON.parse(text.slice(start, end + 1)) } catch { throw new Error('A resposta da IA não é um JSON válido.') }
+  const list = (body as { categorias?: unknown })?.categorias
+  if (!Array.isArray(list)) throw new Error('A resposta da IA não tem a lista "categorias".')
+  const byKey = new Map(asked.map((c) => [`${c.tipo}/${c.nome.trim().toLowerCase()}`, c]))
+  const falta = new Map<string, number>()
+  const ignoradas: string[] = []
+  for (const item of list) {
+    const r = item as { tipo?: unknown; nome?: unknown; falta?: unknown }
+    if (typeof r.nome !== 'string' || (r.tipo !== 'receita' && r.tipo !== 'despesa')) continue
+    const c = byKey.get(`${r.tipo}/${r.nome.trim().toLowerCase()}`)
+    if (!c) continue
+    const v = typeof r.falta === 'number' ? r.falta : typeof r.falta === 'string' ? Number(r.falta.replace(',', '.')) : NaN
+    const cap = 5 * Math.max(Math.abs(c.media), c.estimativaApp, c.recorrentesPendentes, 1)
+    if (!Number.isFinite(v) || v < 0 || v > cap) { ignoradas.push(c.nome); continue }
+    falta.set(`${c.tipo === 'receita' ? 'income' : 'expense'}/${c.nome}`, Math.round(v * 100) / 100)
+  }
+  if (!falta.size) throw new Error('A IA não devolveu nenhum valor utilizável para as categorias pedidas.')
+  const comentario = typeof (body as { comentario?: unknown }).comentario === 'string' ? ((body as { comentario: string }).comentario).trim().slice(0, 600) : ''
+  return { falta, comentario, ignoradas }
+}

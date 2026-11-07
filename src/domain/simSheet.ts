@@ -22,6 +22,7 @@ import type { Cell } from 'write-excel-file/browser'
 import { nextMonth, recurringExpectations, steadyIncomes, type PlanTx } from './monthPlan'
 import { isCardBillPayment, sentToBrazil } from './forecast'
 import { EXTERNAL } from './audit'
+import { SALARY_FROM_DAY } from './monthEnd'
 
 export type Kind = 'income' | 'expense' | 'transfer'
 export interface SimTx { account_id: string; month: string; amount: number; kind: Kind; categoryName: string; merchant: string; booking_date: string; description?: string; bank_category?: string | null }
@@ -35,7 +36,6 @@ export interface BrazilLink { from: string; to: string; rate: number; bill: (mon
 export type { Cell }
 export const OTHERS = '(demais, média 3 meses)'
 export const BILL = 'Fatura do cartão Itaú'
-const SALARY_FROM_DAY = 20 // a salary credited from this day on is the next month's
 export const SENT = 'Transferência para o Itaú (estimada)'
 export const RECEIVED = 'Transferência do exterior (estimada)'
 const NUM = '#,##0.00;[Red]-#,##0.00'

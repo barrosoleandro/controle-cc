@@ -19,6 +19,7 @@ import { CARD_PAYMENT } from '../domain/categorize'
 import { CARD_BILL, matchBillDebits, matchCardPayments } from '../domain/cards'
 import { AsOf, Tabs } from '../components/Page'
 import { skipRecurring, useRecurring } from '../lib/recurring'
+import { MonthEndBox } from '../components/MonthEnd'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 const NEW = '__new' // select option that opens the new-category form
@@ -45,6 +46,9 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const totalBalance = mine.reduce((s, b) => s + b.display, 0)
   const nShown = accounts.filter((a) => shown(a.id)).length
   const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
+  // Month-end box: the ticked accounts, and a card with the account that pays its bill.
+  const payerOf = useMemo(() => new Map(ctx.data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!])), [ctx.data.accounts])
+  const inScope = useCallback((id: string) => shown(id) || (payerOf.has(id) && shown(payerOf.get(id)!)), [shown, payerOf])
 
   return <>
     <div className="card" style={{ marginBottom: 20 }}>
@@ -67,6 +71,7 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
         {mine.length === 0 && <p className="muted">Nenhuma conta marcada.</p>}
       </div>
     </div>
+    <div style={{ marginBottom: 20 }}><MonthEndBox ctx={ctx} inScope={inScope} /></div>
 
     <div className="toolbar" style={{ borderBottom: '1px solid var(--line)', marginBottom: 20 }}>
       <Tabs label="Como ver os lançamentos" items={VIEWS} value={view} onChange={(v) => { setView(v); setMerchant('') }} />
