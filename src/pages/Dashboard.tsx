@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
+import { payerOf as cardPayers } from '../domain/cards'
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Ctx } from '../App'
 import { byCategory, monthly } from '../domain/analytics'
@@ -60,7 +61,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   const [hidden, setHidden] = useState<Set<string>>(() => hiddenByDefault(data.accounts))
   const shown = (id: string) => !hidden.has(id)
   // Month-end box: the ticked accounts, and a card also with the account that pays its bill.
-  const payerOf = useMemo(() => new Map(data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!])), [data.accounts])
+  const payerOf = useMemo(() => cardPayers(data.accounts), [data.accounts])
   const inScope = useCallback((id: string) => !hidden.has(id) || (payerOf.has(id) && !hidden.has(payerOf.get(id)!)), [hidden, payerOf])
   const [editing, setEditing] = useState(false)
 

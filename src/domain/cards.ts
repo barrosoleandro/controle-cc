@@ -1,5 +1,23 @@
 import type { Account } from './types'
 import { CARD_PAYMENT } from './categorize'
+import { countryOf } from './countries'
+
+/** An account can pay a card's bill only in the card's own country (a BCP account never pays the Itaú bill directly: it sends a transfer to Brazil). */
+export const canPay = (card: Pick<Account, 'bank'>, account: Pick<Account, 'bank' | 'type'>) => account.type !== 'card' && countryOf(account.bank) === countryOf(card.bank)
+
+/**
+ * Card → the account that pays its bill. A link to an account of another country is ignored:
+ * a euro account does not pay the Itaú card, it funds Brazil with one transfer a month.
+ */
+export function payerOf(accounts: Account[]): Map<string, string> {
+  const byId = new Map(accounts.map((a) => [a.id, a]))
+  const out = new Map<string, string>()
+  for (const a of accounts) {
+    const p = a.type === 'card' && a.parent_account_id ? byId.get(a.parent_account_id) : undefined
+    if (p && canPay(a, p)) out.set(a.id, p.id)
+  }
+  return out
+}
 
 export interface StoredCardStatement {
   account_id: string
@@ -30,7 +48,7 @@ const WINDOW_DAYS = 5 // the card may credit the payment a day or two after the 
  * (Cards whose purchases carry no bill due date, imported before migration 004, are not checked.)
  */
 export function matchCardPayments(accounts: Account[], txs: PayTx[]) {
-  const parentOf = new Map(accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!]))
+  const parentOf = payerOf(accounts)
   const used = new Set<string>()
   const out: { cardTx: PayTx; bankTx: PayTx }[] = []
   const dues = new Map<string, number[]>() // per card: due dates of the bills whose purchases are imported
@@ -63,7 +81,7 @@ export function matchCardPayments(accounts: Account[], txs: PayTx[]) {
  * so the debit is a transfer, not a second expense.
  */
 export function matchBillDebits(accounts: Account[], bills: StoredCardStatement[], txs: PayTx[], alreadyUsed: Set<string> = new Set()) {
-  const parentOf = new Map(accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!]))
+  const parentOf = payerOf(accounts)
   const used = new Set(alreadyUsed)
   const out: { bill: StoredCardStatement; bankTx: PayTx }[] = []
   for (const bill of [...bills].sort((a, b) => a.due_date.localeCompare(b.due_date))) {

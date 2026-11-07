@@ -3,7 +3,7 @@ import { supabase } from './supabase'
 import type { Account, AccountHint, BankMapEntry, Category, Currency, ParseResult, ParsedTransaction, Rule, Transaction } from '../domain/types'
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/defaults'
 import { categorize, merchantKey, ruleMatches, TRANSFER } from '../domain/categorize'
-import { CARD_BILL, matchBillDebits, matchCardPayments, type StoredCardStatement } from '../domain/cards'
+import { CARD_BILL, matchBillDebits, matchCardPayments, payerOf, type StoredCardStatement } from '../domain/cards'
 import { dedupeKey, markDuplicates, sameVendor, withFingerprints } from '../domain/fingerprint'
 import { withAiNote } from '../domain/claudeExchange'
 import type { ContractItem } from '../domain/payroll'
@@ -415,7 +415,8 @@ export async function linkCardPayments(data: AppData): Promise<number> {
   if (ids.length) await setCategoryForTransactions(ids, transfer.id)
   // Only rows the rules file as a card bill ("Cartão Itaú") go back: transfers picked by hand stay.
   const matched = new Set([...viaPayment, ...viaBill])
-  const payers = new Map(data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.parent_account_id!, a]))
+  const cardById = new Map(data.accounts.map((a) => [a.id, a]))
+  const payers = new Map([...payerOf(data.accounts)].map(([card, payer]) => [payer, cardById.get(card)!]))
   const billCat = data.categories.find((c) => c.name === CARD_BILL)
   let unlinked = 0
   if (billCat) for (const t of data.transactions) {

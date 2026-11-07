@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { billPayment, futureInstalments, matchCardPayments } from '../domain/cards'
+import { billPayment, canPay, futureInstalments, matchCardPayments } from '../domain/cards'
 import { linkCardPayments, loadAll, updateAccount } from '../lib/data'
 import { money } from '../lib/format'
 import { Empty, Help } from '../components/Page'
@@ -17,7 +17,6 @@ interface Bill { due: string; status: 'paga' | 'aberta' | 'sem fatura'; total: n
 export function Cards({ ctx }: { ctx: Ctx }) {
   const { data } = ctx
   const cards = data.accounts.filter((a) => a.type === 'card')
-  const payers = data.accounts.filter((a) => a.type !== 'card')
   const [cardId, setCardId] = useState(cards[0]?.id ?? '')
   const [due, setDue] = useState<string>('')
   const [busy, setBusy] = useState(false)
@@ -25,6 +24,9 @@ export function Cards({ ctx }: { ctx: Ctx }) {
   const [catFilter, setCatFilter] = useState<string | null>(null) // category picked in the selected bill
   const [openFuture, setOpenFuture] = useState<string | null>(null) // future bill whose parcelas are shown
   const card = cards.find((c) => c.id === cardId) ?? cards[0]
+  // Only an account of the card's country pays it: the BCP funds Brazil with a transfer, it does not pay the Itaú bill.
+  const payers = card ? data.accounts.filter((a) => canPay(card, a)) : []
+  const wrongPayer = card?.parent_account_id && !payers.some((p) => p.id === card.parent_account_id) ? data.accounts.find((a) => a.id === card.parent_account_id) : undefined
 
   const catById = useMemo(() => new Map(data.categories.map((c) => [c.id, c])), [data.categories])
   const rows = useMemo(() => (card ? data.transactions.filter((t) => t.account_id === card.id) : []), [data.transactions, card])
@@ -100,13 +102,15 @@ export function Cards({ ctx }: { ctx: Ctx }) {
           </select>}
           <h3 style={{ margin: 0 }}>{card.name}</h3>
           <label className="inline">Paga pela conta
-            <select value={card.parent_account_id ?? ''} disabled={busy} onChange={(e) => link(e.target.value)}>
+            <select value={wrongPayer ? '' : card.parent_account_id ?? ''} disabled={busy} onChange={(e) => link(e.target.value)}>
               <option value="">— não vinculado —</option>
               {payers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </label>
         </div>
-        {!card.parent_account_id && <div className="alert warn">Vincule a conta que paga este cartão para não contar a fatura duas vezes.</div>}
+        {wrongPayer
+          ? <div className="alert warn">Este cartão estava vinculado a {wrongPayer.name}, que não paga a fatura direto (a fatura sai da conta do mesmo país; {wrongPayer.name} só manda a transferência para lá). Esse vínculo é ignorado: escolha a conta que paga a fatura.</div>
+          : !card.parent_account_id && <div className="alert warn">Vincule a conta que paga este cartão para não contar a fatura duas vezes.</div>}
         {msg && <div className="alert ok">{msg}</div>}
         <Help title="Como o cartão é contado">
           <p>As compras entram como despesa no cartão. Cada pagamento que aparece numa fatura importada é casado com o débito em

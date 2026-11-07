@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { payerOf as cardPayers } from '../domain/cards'
 import type { Ctx } from '../App'
 import { monthLabel } from '../lib/format'
 import { today, useFmt } from '../lib/hooks'
@@ -86,7 +87,7 @@ export function Analysis({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const periodMonths = useMemo(() => monthsOf(range), [range.from, range.to]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Accounts: a card with a paying account follows it (ticking Itaú Conta brings the Itaú card's purchases).
-  const payerOf = useMemo(() => new Map(data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!])), [data.accounts])
+  const payerOf = useMemo(() => cardPayers(data.accounts), [data.accounts])
   const listed = data.accounts.filter((a) => !payerOf.has(a.id))
   const hidden = useMemo(() => new Set(st.hidden), [st.hidden])
   const inScope = useCallback((id: string) => !hidden.has(payerOf.get(id) ?? id), [hidden, payerOf])

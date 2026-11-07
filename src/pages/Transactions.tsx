@@ -16,7 +16,7 @@ import { nextMonth } from '../domain/monthPlan'
 import { buildSimSheet, projectCardBill, type BrazilLink } from '../domain/simSheet'
 import { findSalaryCategory } from '../domain/budget'
 import { CARD_PAYMENT } from '../domain/categorize'
-import { CARD_BILL, matchBillDebits, matchCardPayments } from '../domain/cards'
+import { CARD_BILL, matchBillDebits, matchCardPayments, payerOf as cardPayers } from '../domain/cards'
 import { AsOf, Tabs } from '../components/Page'
 import { skipRecurring, useRecurring } from '../lib/recurring'
 import { MonthEndBox } from '../components/MonthEnd'
@@ -47,7 +47,7 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const nShown = accounts.filter((a) => shown(a.id)).length
   const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
   // Month-end box: the ticked accounts, and a card with the account that pays its bill.
-  const payerOf = useMemo(() => new Map(ctx.data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!])), [ctx.data.accounts])
+  const payerOf = useMemo(() => cardPayers(ctx.data.accounts), [ctx.data.accounts])
   const inScope = useCallback((id: string) => shown(id) || (payerOf.has(id) && shown(payerOf.get(id)!)), [shown, payerOf])
 
   return <>
