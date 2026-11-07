@@ -1,11 +1,10 @@
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { buildMonthPlan, nextMonth, recurringExpectations, steadyIncomes, type ManualLine, type PlanRow, type RecurringExpect } from '../domain/monthPlan'
-import { billEffective } from '../domain/forecast'
-import { useRecurring } from '../lib/recurring'
+import { nextMonth, type ManualLine, type PlanRow, type RecurringExpect } from '../domain/monthPlan'
+import { useMonthPlans } from '../lib/plan'
 import { countryOf } from '../domain/countries'
 import { monthLabel } from '../lib/format'
-import { currentMonth, hiddenByDefault, last3, today, useExternalized, useFmt } from '../lib/hooks'
+import { currentMonth, hiddenByDefault, today, useFmt } from '../lib/hooks'
 import { CategorySelect } from '../components/CategorySelect'
 import { Help, Tabs } from '../components/Page'
 import { Menu } from './analysis/shared'
@@ -16,11 +15,10 @@ import { Menu } from './analysis/shared'
  */
 export function Previsao({ ctx }: { ctx: Ctx }) {
   const fmt = useFmt(ctx)
-  const { data, fx } = ctx
+  const { data } = ctx
   const cur = currentMonth()
   const months = [cur, nextMonth(cur)] as const
   const [month, setMonth] = useState<string>(cur)
-  const avgMonths = useMemo(() => last3(), [])
 
   // Same account menu as Lançamentos: opens on the main account; a card counts with the account that pays it.
   const accounts = useMemo(() => data.accounts.filter((a) => a.type !== 'card'), [data.accounts])
@@ -32,24 +30,8 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
   const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
 
   // A transfer with no other side in the user's accounts (a resgate from savings not in the app) is money in or out here.
-  const all = useExternalized(ctx)
-  const txs = useMemo(() => all.filter((t) => inScope(t.account_id)), [all, inScope])
-  const lines = useMemo(() => data.settings.dashboard?.manualLines ?? [], [data.settings.dashboard?.manualLines])
+  const { txs, lines, manual, plans, avgMonths } = useMonthPlans(ctx, inScope, months)
   const catById = useMemo(() => new Map(data.categories.map((c) => [c.id, c])), [data.categories])
-  // A manual line takes its sign from its category: an income category adds, the rest subtract.
-  const manual = useMemo(() => lines.map((l) => {
-    const c = catById.get(l.category_id)
-    const kind = c?.kind ?? 'expense'
-    const v = fx.convert(Math.abs(l.amount), l.currency, ctx.currency, l.date)
-    return { line: l, month: l.month, kind, categoryName: c?.name ?? 'Outros', value: kind === 'income' ? v : -v, merchant: l.merchant }
-  }), [lines, catById, fx, ctx.currency])
-  // Recurring lines not in the month yet show as expected: expenses by the flag of Lançamentos,
-  // incomes by that flag or, unmarked, by having come in every one of the last 3 months (salary).
-  const { isBill, marks } = useRecurring(ctx)
-  const steady = useMemo(() => steadyIncomes(txs, avgMonths), [txs, avgMonths])
-  const recurring = useMemo(() => recurringExpectations(txs,
-    (m, kind) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), avgMonths), [txs, isBill, marks, steady, avgMonths])
-  const plans = useMemo(() => months.map((m) => buildMonthPlan(txs, manual, m, avgMonths, recurring)), [txs, manual, months[0], avgMonths, recurring]) // eslint-disable-line react-hooks/exhaustive-deps
   const plan = plans[months.indexOf(month as typeof months[number])] ?? plans[0]
 
   const [open, setOpen] = useState<Set<string>>(() => new Set())

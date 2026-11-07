@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Ctx } from '../App'
 import { byCategory, monthly } from '../domain/analytics'
@@ -17,12 +17,14 @@ import { Menu } from './analysis/shared'
 import { VERSION, versionLabel } from '../lib/version'
 import { Icon } from '../components/Icons'
 import { AsOf, Stat } from '../components/Page'
+import { MonthEndBox } from '../components/MonthEnd'
 
 // A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
 const CARD_LINE = 'Fatura do cartão Itaú'
 export const WIDGETS = [
   { id: 'transfer', label: 'Alerta: transferir do BCP para o Itaú' },
   { id: 'kpis', label: 'Saldos e totais do mês' },
+  { id: 'monthEnd', label: 'Fim do mês: real + estimativa' },
   { id: 'nextMonth', label: 'Mês seguinte: gastos estimados' },
   { id: 'monthly', label: 'Receitas e despesas por mês' },
   { id: 'categories', label: 'Gastos por categoria' },
@@ -57,6 +59,9 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   // Unticked accounts: opens on the BCP joint account; the others are one click away.
   const [hidden, setHidden] = useState<Set<string>>(() => hiddenByDefault(data.accounts))
   const shown = (id: string) => !hidden.has(id)
+  // Month-end box: the ticked accounts, and a card also with the account that pays its bill.
+  const payerOf = useMemo(() => new Map(data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!])), [data.accounts])
+  const inScope = useCallback((id: string) => !hidden.has(id) || (payerOf.has(id) && !hidden.has(payerOf.get(id)!)), [hidden, payerOf])
   const [editing, setEditing] = useState(false)
 
   const txs = useMemo(() => etx.filter((t) => !hidden.has(t.account_id)), [etx, hidden])
@@ -191,6 +196,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
               sub={(cur?.income ?? 0) > 0 ? `${Math.round((net / cur.income) * 100)}% das receitas` : period} />
           </div>)
       }
+      case 'monthEnd': return <MonthEndBox ctx={ctx} inScope={inScope} />
       case 'transfer': return !send ? (
         <div className="alert" style={{ display: 'block', gridColumn: '1/-1' }}>Transferência para o Brasil: ainda não há conta do Itaú no app. Importe um extrato do Itaú para eu estimar quanto enviar do BCP.</div>
       ) : (
