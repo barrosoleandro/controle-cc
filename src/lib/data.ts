@@ -18,7 +18,11 @@ export interface DashboardPrefs {
   previdencia?: PrevidenciaSaldo
   /** Previsão: lines added by hand to the current or next month (domain/monthPlan). */
   manualLines?: ManualLine[]
+  /** Fim do mês: what the user planned is still to come per category, by month (domain/monthEnd). */
+  monthEndPlan?: Record<string, MonthEndPlan>
 }
+/** Planned "still to come" per category (rowKey → value ≥ 0, manual lines included), in `currency`. */
+export interface MonthEndPlan { currency: Currency; falta: Record<string, number> }
 export interface PrevidenciaSaldo {
   suas: number // saldo das suas contribuições
   empresa: number // saldo das contribuições da empresa
