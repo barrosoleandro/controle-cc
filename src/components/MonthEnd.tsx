@@ -95,10 +95,28 @@ export function MonthEndBox({ ctx, inScope }: { ctx: Ctx; inScope: (accountId: s
     void estimar()
   }, [ready, mine, facts]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // What you planned per category for the month, saved in your account: it wins over the estimates.
+  const saved = data.settings.dashboard?.monthEndPlan?.[cur]
+  const planned = useMemo(() => (saved ? new Map(Object.entries(saved.falta).map(([k, v]) =>
+    [k, saved.currency === ctx.currency ? v : round(ctx.fx.convert(v, saved.currency, ctx.currency, today()))])) : undefined), [saved, ctx.currency, ctx.fx])
+  async function savePlan(falta: Map<string, number>) {
+    setErro(null)
+    const all = { ...data.settings.dashboard?.monthEndPlan }
+    if (falta.size) all[cur] = { currency: ctx.currency, falta: Object.fromEntries(falta) }
+    else delete all[cur]
+    try { await ctx.patchSettings({ dashboard: { ...data.settings.dashboard, monthEndPlan: all } }) }
+    catch (err) { setErro(`Não foi possível salvar o planejado: ${(err as Error).message}`) }
+  }
+  const setPlanned = (key: string, v: number | null) => {
+    const next = new Map(planned)
+    if (v === null) next.delete(key); else next.set(key, round(Math.max(0, v)))
+    return savePlan(next)
+  }
+
   const aiMap = useMemo(() => (mine ? new Map(mine.falta) : undefined), [mine])
-  const app = useMemo(() => monthEnd(plan, saldoHoje, salarioSeguinte), [plan, saldoHoje, salarioSeguinte])
   const withAi = useMemo(() => (aiMap ? monthEnd(plan, saldoHoje, salarioSeguinte, aiMap) : null), [plan, saldoHoje, salarioSeguinte, aiMap])
-  const e = useAi && withAi ? withAi : app
+  const e = useMemo(() => monthEnd(plan, saldoHoje, salarioSeguinte, useAi ? aiMap : undefined, planned), [plan, saldoHoje, salarioSeguinte, useAi, aiMap, planned])
+  const nAjustes = e.rows.filter((r) => r.ajustado).length
   const sign = (v: number) => (v < 0 ? 'neg' : 'pos')
   const parts = (s: { real: number; estimado: number }) => `real ${fmt(s.real)} + estimativa ${fmt(s.estimado)}`
 
@@ -122,6 +140,7 @@ export function MonthEndBox({ ctx, inScope }: { ctx: Ctx; inScope: (accountId: s
         </Stat>
       </div>
 
+      {nAjustes > 0 && <p className="muted" style={{ fontSize: 13, margin: '8px 0 0' }}>Inclui {nAjustes} categoria(s) com o planejado ajustado por você (veja e altere na tabela por categoria).</p>}
       <div className="row" style={{ marginTop: 12 }}>
         <button onClick={estimar} disabled={busy || !ready} title={ready ? 'Roda neste computador; nada é enviado para fora' : 'Configure em Ajustes → IA local'}>
           {busy ? 'Estimando…' : mine ? 'Estimar de novo com a IA local' : 'Estimar com a IA local'}</button>
@@ -137,20 +156,31 @@ export function MonthEndBox({ ctx, inScope }: { ctx: Ctx; inScope: (accountId: s
           {mine.ignoradas.length > 0 && ` Valor da IA descartado (fora do razoável) em: ${mine.ignoradas.join(', ')} — fica a estimativa do app.`}</p>
       </div>}
 
-      <details style={{ marginTop: 8 }}>
-        <summary className="muted" style={{ fontSize: 13 }}>Ver por categoria</summary>
+      <details style={{ marginTop: 8 }} open={nAjustes > 0 || undefined}>
+        <summary className="muted" style={{ fontSize: 13 }}>{withAi ? 'Ver o que a IA estimou e ajustar o planejado, por categoria' : 'Ver e ajustar o planejado, por categoria'}</summary>
+        <div className="row" style={{ margin: '8px 0' }}>
+          {withAi && <button onClick={() => savePlan(new Map(withAi.rows.map((r) => [r.key, round(r.usado)])))}
+            title="Grava o que a IA estimou como o seu planejado em todas as categorias; depois ajuste o que quiser">Usar a estimativa da IA no planejado</button>}
+          {nAjustes > 0 && <button onClick={() => savePlan(new Map())}>Desfazer meus ajustes</button>}
+          <span className="muted" style={{ fontSize: 12 }}>Planejado = quanto ainda falta entrar ou sair até o fim do mês (inclui as linhas manuais). Salvo na sua conta, vale só para {monthLabel(cur)}.</span>
+        </div>
         <div className="scroll"><table>
-          <thead><tr><th>Categoria</th><th className="num">Real</th><th className="num">Falta (app)</th>{withAi && <th className="num">Falta (IA)</th>}<th className="num">Fim do mês</th></tr></thead>
+          <thead><tr><th>Categoria</th><th className="num">Real</th><th className="num">Falta (app)</th>{withAi && <th className="num">Falta (IA)</th>}<th className="num">Planejado</th><th className="num">Fim do mês</th></tr></thead>
           <tbody>
             {(['income', 'expense'] as const).map((kind) => {
               const list = e.rows.filter((r) => r.kind === kind)
               if (!list.length) return null
               const ai = new Map(withAi?.rows.map((r) => [r.key, r.usado]))
-              return [<tr key={kind} className="section"><th colSpan={withAi ? 5 : 4}>{kind === 'income' ? 'Receitas' : 'Despesas'}</th></tr>,
+              return [<tr key={kind} className="section"><th colSpan={withAi ? 6 : 5}>{kind === 'income' ? 'Receitas' : 'Despesas'}</th></tr>,
                 ...list.map((r) => (
                   <tr key={r.key}><td>{r.name}</td><td className="num">{fmt(r.real)}</td>
                     <td className="num muted">{r.app ? fmt(r.app) : '·'}</td>
                     {withAi && <td className={`num ${Math.abs((ai.get(r.key) ?? 0) - r.app) > 0.5 ? 'warn' : 'muted'}`}>{ai.get(r.key) ? fmt(ai.get(r.key)!) : '·'}</td>}
+                    <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                      <input key={`${r.key}/${r.usado}`} type="number" min={0} step="any" inputMode="decimal" defaultValue={round(r.usado)} style={{ width: 100, fontWeight: r.ajustado ? 700 : undefined }}
+                        aria-label={`Planejado para ${r.name}`} title={r.ajustado ? 'Ajustado por você' : 'Estimativa; altere para planejar outro valor'}
+                        onBlur={(ev) => { const v = Number(ev.target.value); if (ev.target.value !== '' && Number.isFinite(v) && Math.abs(v - r.usado) > 0.005) void setPlanned(r.key, v) }} />
+                      {r.ajustado && <button className="link" style={{ fontSize: 12, marginLeft: 4 }} onClick={() => setPlanned(r.key, null)} aria-label={`Voltar ${r.name} para a estimativa`} title="Voltar para a estimativa">↺</button>}</td>
                     <td className="num"><strong>{fmt(r.real + r.usado)}</strong></td></tr>))]
             })}
           </tbody>

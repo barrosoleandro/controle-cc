@@ -21,7 +21,7 @@ export function shiftSalary<T extends { kind: string; categoryName: string; book
 export const rowKey = (r: Pick<PlanRow, 'kind' | 'name'>) => `${r.kind}/${r.name}`
 
 export interface MonthEndSide { real: number; estimado: number; total: number }
-export interface MonthEndRow { key: string; name: string; kind: 'income' | 'expense'; real: number; app: number; usado: number }
+export interface MonthEndRow { key: string; name: string; kind: 'income' | 'expense'; real: number; app: number; usado: number; /** Set by the user: replaces the estimate. */ ajustado: boolean }
 export interface MonthEnd {
   month: string
   receitas: MonthEndSide
@@ -40,12 +40,16 @@ export interface MonthEnd {
  * a category it does not name keeps the app's. Manual lines are counted as still to come.
  * `salarioSeguinte`: the next month's salary already in today's balance; the one still to come
  * at the end of the month is not counted either (it is the next month's, see shiftSalary).
+ * `planned`: what the user set as still to come (rowKey → value, manual lines included); it wins
+ * over any estimate.
  */
-export function monthEnd(plan: MonthPlan, saldoHoje: number, salarioSeguinte = 0, estimate?: Map<string, number>): MonthEnd {
+export function monthEnd(plan: MonthPlan, saldoHoje: number, salarioSeguinte = 0, estimate?: Map<string, number>, planned?: Map<string, number>): MonthEnd {
   const rows: MonthEndRow[] = [...plan.income, ...plan.expense].map((r) => {
     const app = r.manual + r.falta
     const own = estimate?.get(rowKey(r))
-    return { key: rowKey(r), name: r.name, kind: r.kind, real: r.realizado, app, usado: own === undefined ? app : r.manual + own }
+    const mine = planned?.get(rowKey(r))
+    const usado = mine !== undefined ? mine : own === undefined ? app : r.manual + own
+    return { key: rowKey(r), name: r.name, kind: r.kind, real: r.realizado, app, usado, ajustado: mine !== undefined }
   })
   const side = (kind: 'income' | 'expense'): MonthEndSide => {
     const list = rows.filter((r) => r.kind === kind)

@@ -31,6 +31,13 @@ describe('month end', () => {
     expect(e.despesas.estimado).toBe(400)
   })
 
+  it('o planejado por você vale por cima da estimativa da IA e do app', () => {
+    const e = monthEnd(plan, 3000, 0, new Map([['expense/Mercado', 250]]), new Map([['expense/Mercado', 100], ['expense/Carro', 0]]))
+    expect(e.rows.find((r) => r.name === 'Mercado')).toMatchObject({ usado: 100, ajustado: true })
+    expect(e.rows.find((r) => r.name === 'Carro')).toMatchObject({ app: 150, usado: 0, ajustado: true })
+    expect(e.despesas.estimado).toBe(100)
+  })
+
   it('salário creditado a partir do dia 20 conta no mês seguinte', () => {
     const s = shiftSalary([
       { kind: 'income', categoryName: 'Salario', booking_date: '2026-10-28', month: '2026-10' },
