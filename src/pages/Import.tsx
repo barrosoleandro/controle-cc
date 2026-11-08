@@ -12,6 +12,7 @@ import { ImportHistory } from '../components/ImportHistory'
 import { ImportAudit } from '../components/ImportAudit'
 import { Icon } from '../components/Icons'
 import { Help } from '../components/Page'
+import { depositsByMonth } from '../domain/fgts'
 
 const SUPPORTED = /\.(csv|pdf|xlsx)$/i
 // Phone browsers (Safari on iPhone, most on Android) open no folder picker: the button would do nothing there.
@@ -44,6 +45,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   const [plans, setPlans] = useState<ImportPlan[]>([])
   const [errors, setErrors] = useState<string[]>([])
   const [payslips, setPayslips] = useState<string[]>([]) // payslips found in the selection, already saved
+  const [fgtsFiles, setFgtsFiles] = useState<string[]>([]) // FGTS extracts found in the selection, deposits already saved
   const [skipped, setSkipped] = useState<{ ignored: number; duplicateFiles: number }>({ ignored: 0, duplicateFiles: 0 })
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
@@ -111,8 +113,9 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
   async function onFiles(files: FileList | File[] | null, from?: Map<string, Origin & { file: File }>) {
     if (!files?.length) return
     origins.current = from ?? new Map(); setSeenNames([])
-    setBusy(true); setDone(null); setErrors([]); setPayslips([]); setPlans([]); setChoices({}); setDupDecision('skip'); setKeepDups(new Set())
+    setBusy(true); setDone(null); setErrors([]); setPayslips([]); setFgtsFiles([]); setPlans([]); setChoices({}); setDupDecision('skip'); setKeepDups(new Set())
     const ps: ImportPlan[] = [], errs: string[] = [], slips: string[] = []
+    const fgts: Record<string, number> = {}, fgtsFiles: string[] = []
     // Anything failing outside a single file must still end with a message, not a stuck spinner.
     try {
       const pending: Pending[] = [] // rows of the files planned so far
@@ -143,16 +146,23 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
           const { loadPdf } = await import('../lib/pdf') // pdf.js is loaded only when importing
           const res = await parseStatement(f.name, bytes, loadPdf)
           if (res.payslip) { await savePayslip(res.payslip, hash); slips.push(`${f.name} (${res.payslip.period})`); already.push(f.name); continue }
+          if (res.fgts) {
+            if (!res.fgts.length) throw new Error('extrato do FGTS sem nenhum depósito reconhecido')
+            Object.assign(fgts, depositsByMonth(res.fgts))
+            fgtsFiles.push(`${f.name} (${res.fgts.length} depósito(s))`); already.push(f.name); continue
+          }
           const plan = planImport(f.name, hash, res, ctx.data, pending)
           ps.push(plan)
           pending.push(...pendingOf(plan))
         } catch (e) { errs.push(`${f.name}: ${(e as Error).message}`) }
       }
+      // FGTS deposits: one write for the whole selection, over what is already saved (a newer extract wins).
+      if (Object.keys(fgts).length) await ctx.patchSettings({ dashboard: { ...ctx.data.settings.dashboard, fgtsDeposits: { ...ctx.data.settings.dashboard?.fgtsDeposits, ...fgts } } })
       setPlans(ps); setSkipped({ ignored, duplicateFiles }); setSeenNames(already)
       // Nothing left to import (all already in, or payslips): those files are done, move them now.
       if (!ps.length && already.length) setDone(await archive(already) || null)
     } catch (e) { errs.push((e as Error).message) }
-    finally { setErrors(errs); setPayslips(slips); setProgress(null); setBusy(false) }
+    finally { setErrors(errs); setPayslips(slips); setFgtsFiles(fgtsFiles); setProgress(null); setBusy(false) }
   }
 
   async function run() {
@@ -273,6 +283,11 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
           <div className="alert ok" style={{ display: 'block', margin: '8px 0' }}>
             <strong>✔ {payslips.length} holerite(s) salvo(s):</strong> {payslips.join(', ')}.{' '}
             <button className="link" onClick={() => ctx.go('Holerites')}>Ver em Holerites</button></div>
+        )}
+        {fgtsFiles.length > 0 && !busy && (
+          <div className="alert ok" style={{ display: 'block', margin: '8px 0' }}>
+            <strong>✔ Extrato do FGTS lido:</strong> {fgtsFiles.join(', ')}. Os depósitos foram salvos para a conferência.{' '}
+            <button className="link" onClick={() => ctx.go('Rescisão')}>Ver em Rescisão</button></div>
         )}
         {errors.length > 0 && <details>
           <summary className="err">{errors.length} arquivo(s) com problema</summary>
