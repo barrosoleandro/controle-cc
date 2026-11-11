@@ -110,6 +110,19 @@ export function billPayment<T extends PayTx>(bill: StoredCardStatement, cardTxs:
     .sort((a, b) => a.gap - b.gap)[0]?.t
 }
 
+/**
+ * Bills with their status as of today: one imported while still open ("aberta") is paid once its
+ * payment shows, either as the debit of the bill total in the paying account (matchBillDebits) or
+ * as the payment recorded on the card, which comes on a later bill (billPayment). The stored
+ * status is the one printed when the bill was imported and is not updated by later statements.
+ */
+export function withPaidStatus<B extends StoredCardStatement>(accounts: Account[], bills: B[], txs: PayTx[]): B[] {
+  const open = bills.filter((b) => b.status === 'aberta')
+  if (!open.length) return bills
+  const byDebit = new Set(matchBillDebits(accounts, open, txs).map((m) => m.bill))
+  return bills.map((b) => (b.status === 'aberta' && (byDebit.has(b) || billPayment(b, txs)) ? { ...b, status: 'paga' as const } : b))
+}
+
 /** What the instalment estimate needs from a card transaction. */
 export interface InstalmentTx { description: string; amount: number; statement_due?: string | null; category_id?: string | null }
 

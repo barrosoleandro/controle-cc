@@ -3,7 +3,7 @@ import { supabase } from './supabase'
 import type { Account, AccountHint, BankMapEntry, Category, Currency, ParseResult, ParsedTransaction, Rule, Transaction } from '../domain/types'
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/defaults'
 import { categorize, merchantKey, ruleMatches, TRANSFER } from '../domain/categorize'
-import { CARD_BILL, matchBillDebits, matchCardPayments, payerOf, type StoredCardStatement } from '../domain/cards'
+import { CARD_BILL, matchBillDebits, matchCardPayments, payerOf, type StoredCardStatement, withPaidStatus } from '../domain/cards'
 import { dedupeKey, markDuplicates, sameVendor, withFingerprints } from '../domain/fingerprint'
 import { withAiNote } from '../domain/claudeExchange'
 import type { ContractItem } from '../domain/payroll'
@@ -95,18 +95,21 @@ export async function loadAll(): Promise<AppData> {
     selectOptional<StoredCardStatement>('card_statements', 'due_date'),
   ])
   const catName = new Map(categories.map((c) => [c.id, c.name]))
+  const accs = accounts.map((a) => ({ ...a, opening_balance: Number(a.opening_balance) }))
+  const txs = transactions.map((t) => ({ ...t, amount: Number(t.amount) }))
   return {
-    accounts: accounts.map((a) => ({ ...a, opening_balance: Number(a.opening_balance) })),
+    accounts: accs,
     categories,
     rules: rulesRaw.map((r) => ({ ...r, category: catName.get(r.category_id) ?? '' })),
     bankMap: mapRaw.map((m) => ({ ...m, category: catName.get(m.category_id) ?? '' })),
-    transactions: transactions.map((t) => ({ ...t, amount: Number(t.amount) })),
+    transactions: txs,
     checkpoints: checkpoints.map((c) => ({ ...c, balance: Number(c.balance) })),
     budgets: budgets.map((b) => ({ ...b, amount: Number(b.amount) })),
     fx: new Map(fxRows.filter((r) => r.quote === 'BRL').map((r) => [r.date, Number(r.rate)])),
     settings: settingsRows[0] ?? { display_currency: 'EUR', dashboard: { widgets: [] }, dismissed_alerts: [] },
     scenarios,
-    cardStatements: cardStatements.map((c) => ({ ...c, total: Number(c.total) })),
+    // A bill imported while open shows as paid once its payment was imported (see withPaidStatus).
+    cardStatements: withPaidStatus(accs, cardStatements.map((c) => ({ ...c, total: Number(c.total) })), txs),
   }
 }
 
