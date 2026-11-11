@@ -558,7 +558,8 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
         {receitas.length > 0 && <div className="kpi"><div className="l">Resultado</div>
           <div className={`v ${receitaGrand - grand < 0 ? 'neg' : 'pos'}`}>{fmt(receitaGrand - grand)}</div>
           {n > 1 && <div className="sub">{fmt((receitaGrand - grand) / months.length)}/mês</div>}</div>}
-        <div className="kpi"><div className="l">Saldo no fim de {monthLabel(months.at(-1)!)}</div>
+        {/* The month is still running: the balance is today's (up to the last imported line), not its end. */}
+        <div className="kpi"><div className="l">{months.at(-1) === currentMonth() ? 'Saldo atual' : `Saldo no fim de ${monthLabel(months.at(-1)!)}`}</div>
           <div className={`v ${(saldos.closing.at(-1) ?? 0) < 0 ? 'neg' : ''}`}>{fmt(saldos.closing.at(-1) ?? 0)}</div></div>
         {n > 1 && <div className="kpi"><div className="l">Despesa média/mês</div><div className="v">{fmt(grand / months.length)}</div></div>}
       </div>
