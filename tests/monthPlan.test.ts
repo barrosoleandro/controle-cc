@@ -174,3 +174,19 @@ describe('a line that is not a category (the transfer that pays the bills abroad
     expect(withExpenseLine(plan, 'Envio', 0, 0)).toBe(plan)
   })
 })
+
+describe('tithe: 10% of the salary of the month', () => {
+  it('expects 10% of the salary previsto, less what was paid, and adds the row when there is none', async () => {
+    const { shareOfSalary } = await import('../src/domain/monthPlan')
+    const tithe = (month: string, value: number): PlanTx => ({ month, value, kind: 'expense', categoryName: 'Dízimo', booking_date: `${month}-28` })
+    const history = [...avg.map((m) => salary(m, 3000)), ...avg.map((m) => tithe(m, -250)), salary('2026-10', 3200), tithe('2026-10', -100)]
+    const plan = shareOfSalary(buildMonthPlan(history, [], '2026-10', avg), 'Salário', 'Dízimo', 0.1)
+    expect(plan.expense.find((r) => r.name === 'Dízimo')).toMatchObject({ realizado: 100, falta: 220, previsto: 320 })
+    expect(plan.totals.expense.previsto).toBe(320)
+    expect(plan.resultado).toBe(3200 - 320)
+    const fresh = shareOfSalary(buildMonthPlan([salary('2026-10', 3000)], [], '2026-10', avg), 'Salário', 'Dízimo', 0.1)
+    expect(fresh.expense).toMatchObject([{ name: 'Dízimo', falta: 300, previsto: 300 }])
+    const noSalary = buildMonthPlan([tithe('2026-10', -100)], [], '2026-10', avg)
+    expect(shareOfSalary(noSalary, 'Salário', 'Dízimo', 0.1)).toBe(noSalary)
+  })
+})

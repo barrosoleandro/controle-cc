@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
 import type { Ctx } from '../App'
-import { buildMonthPlan, recurringExpectations, steadyIncomes, withExpenseLine } from '../domain/monthPlan'
+import { buildMonthPlan, recurringExpectations, shareOfSalary, steadyIncomes, withExpenseLine } from '../domain/monthPlan'
+import { isTithe } from '../domain/categorize'
+import { TITHE_RATE } from '../domain/simulation'
 import { countryOf } from '../domain/countries'
 import { useBrazilSend, WISE, WISE_LINE } from './brazil'
 import { coveredMonth } from '../domain/forecast'
@@ -102,10 +104,13 @@ export function useMonthPlans(ctx: Ctx, inScope: (accountId: string) => boolean,
       }
     }
   }, [send, data.accounts, inScope, txs, fx, ctx.currency])
+  // The tithe is always 10% of the salary of the month: expected from the salary, not from its average.
+  const tithe = useMemo(() => data.categories.find((c) => c.kind === 'expense' && isTithe(c.name))?.name, [data.categories])
   const plans = useMemo(() => months.map((m) => {
-    const plan = buildMonthPlan(txs, manual, m, avgMonths, recurring)
+    const built = buildMonthPlan(txs, manual, m, avgMonths, recurring)
+    const plan = tithe ? shareOfSalary(built, salary, tithe, TITHE_RATE) : built
     const w = wise?.(m)
     return w ? withExpenseLine(plan, WISE_LINE, w.realizado, w.falta) : plan
-  }), [txs, manual, key, avgMonths, recurring, wise]) // eslint-disable-line react-hooks/exhaustive-deps
+  }), [txs, manual, key, avgMonths, recurring, wise, tithe, salary]) // eslint-disable-line react-hooks/exhaustive-deps
   return { txs, lines, manual, plans, avgMonths, recurring, periods, send, wise }
 }

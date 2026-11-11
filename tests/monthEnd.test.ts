@@ -112,3 +112,15 @@ describe('salary paid ahead', () => {
     expect(salaryAhead(rows, undefined, '2026-11')).toBe(0)
   })
 })
+
+describe('tithe paid with the salary', () => {
+  it('moves with the salary to the month after when paid from the 20th on', () => {
+    const rows = shiftSalary([
+      { kind: 'income', categoryName: 'Salário', booking_date: '2026-10-28', month: '2026-10' },
+      { kind: 'expense', categoryName: 'Dízimo', booking_date: '2026-10-28', month: '2026-10' },
+      { kind: 'expense', categoryName: 'Dízimo', booking_date: '2026-10-05', month: '2026-10' },
+      { kind: 'expense', categoryName: 'Mercado', booking_date: '2026-10-28', month: '2026-10' },
+    ], 'Salário')
+    expect(rows.map((r) => r.month)).toEqual(['2026-11', '2026-11', '2026-10', '2026-10'])
+  })
+})

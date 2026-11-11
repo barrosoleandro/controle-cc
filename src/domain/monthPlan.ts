@@ -145,6 +145,25 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
 }
 
 /**
+ * The plan with the expense `name` expected at `rate` of the salary of the month (the salary row's
+ * previsto), instead of its own average: what is still to pay is that share less what was paid.
+ * The row is added when the month has none yet. Without a salary in the month, the plan as it is.
+ */
+export function shareOfSalary(plan: MonthPlan, salary: string | undefined, name: string, rate: number): MonthPlan {
+  const pay = plan.income.find((r) => r.name === salary)
+  if (!pay || pay.previsto <= 0.005) return plan
+  const due = pay.previsto * rate
+  const old = plan.expense.find((r) => r.name === name)
+  const base = old ?? { name, kind: 'expense' as const, media: 0, realizado: 0, manual: 0, recorrente: 0, pendentes: [], falta: 0, previsto: 0 }
+  const falta = Math.max(0, due - base.realizado - base.manual)
+  const row: PlanRow = { ...base, falta, previsto: base.realizado + base.manual + falta }
+  const expense = [...plan.expense.filter((r) => r !== old), row].sort((a, b) => b.previsto - a.previsto)
+  const t = plan.totals.expense
+  const totals = { income: plan.totals.income, expense: { ...t, falta: t.falta - (old?.falta ?? 0) + row.falta, previsto: t.previsto - (old?.previsto ?? 0) + row.previsto } }
+  return { ...plan, expense, totals, resultado: totals.income.previsto - totals.expense.previsto }
+}
+
+/**
  * The plan with one more expense line that is not a category: money that leaves the accounts in
  * scope for another account of the user (the transfer that pays the bills in Brazil).
  * `realizado`: already sent in the month; `falta`: still to send. Totals and result follow.
