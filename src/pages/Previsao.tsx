@@ -2,6 +2,8 @@ import { Fragment, useCallback, useMemo, useState } from 'react'
 import { payerOf as cardPayers } from '../domain/cards'
 import type { Ctx } from '../App'
 import { nextMonth, type ManualLine, type PlanRow, type RecurringExpect } from '../domain/monthPlan'
+import { SALARY_FROM_DAY } from '../domain/monthEnd'
+import { findSalaryCategory } from '../domain/budget'
 import { useMonthPlans } from '../lib/plan'
 import { countryOf } from '../domain/countries'
 import { monthLabel } from '../lib/format'
@@ -31,7 +33,17 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
   const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
 
   // A transfer with no other side in the user's accounts (a resgate from savings not in the app) is money in or out here.
-  const { txs, lines, manual, plans, avgMonths, recurring, periods } = useMonthPlans(ctx, inScope, months)
+  // Same rule as the month-end box on Painel: the salary paid at the end of a month is the next month's.
+  const salary = findSalaryCategory(data.categories)?.name
+  const opts = useMemo(() => ({ salary }), [salary])
+  const { txs, lines, manual, plans, avgMonths, recurring, periods } = useMonthPlans(ctx, inScope, months, opts)
+  /** Day and month a pending recurring line is expected on: the salary of a month comes at the end of the one before. */
+  const expectedOn = (e: RecurringExpect, m: string) => {
+    const early = e.kind === 'income' && e.categoryName === salary && e.day >= SALARY_FROM_DAY
+    const mo = Number(m.slice(5, 7))
+    const mm = early ? (mo === 1 ? 12 : mo - 1) : mo
+    return `${String(e.day).padStart(2, '0')}/${String(mm).padStart(2, '0')}`
+  }
   const catById = useMemo(() => new Map(data.categories.map((c) => [c.id, c])), [data.categories])
   const plan = plans[months.indexOf(month as typeof months[number])] ?? plans[0]
 
@@ -125,7 +137,7 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
               ))}
               {r.pendentes.map((e) => (
                 <tr key={`rec/${e.merchant}`} className="muted" style={{ fontSize: 13 }}>
-                  <td style={{ paddingLeft: 24 }} title="Recorrente ainda não lançado neste mês: valor pela média dele nos últimos meses">↻ previsto ~{String(e.day).padStart(2, '0')}/{plan.month.slice(5, 7)} · {e.merchant}{e.period > 1 && <span style={{ fontSize: 12 }}> · {everyLabel(e.period)}</span>}
+                  <td style={{ paddingLeft: 24 }} title="Recorrente ainda não lançado neste mês: valor pela média dele nos últimos meses">↻ previsto ~{expectedOn(e, plan.month)} · {e.merchant}{e.period > 1 && <span style={{ fontSize: 12 }}> · {everyLabel(e.period)}</span>}
                     {' '}<button className="link" style={{ fontSize: 12 }} onClick={() => adoptRecurring(e)}>ajustar</button></td>
                   <td /><td /><td /><td className="num warn">{fmt(e.amount)}</td><td />
                 </tr>
@@ -245,6 +257,8 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
           O intervalo de cada um (mensal, bimestral, trimestral…) é lido dos últimos 12 meses: um bimestral só aparece nos meses em que vence, pelo valor cheio, e fica fora da média da categoria. Confira e corrija em <strong>Intervalo dos recorrentes</strong>.
           Na categoria, o que falta é pelo menos a soma desses recorrentes, mesmo que a média da categoria seja menor.
           <strong> ajustar</strong> transforma o previsto numa linha manual do mês, com data, descrição e valor editáveis; para um mês em que ele não vai acontecer, ajuste o valor para 0.</p>
+        <p><strong>Salário</strong>: o que cai do dia {SALARY_FROM_DAY} em diante conta como receita do mês seguinte (é pago no fim do mês anterior), igual ao Painel.
+          Por isso o salário recebido no fim do mês passado aparece no realizado deste mês com a data de lá, e o que ainda vai cair no fim deste mês está na previsão do próximo.</p>
         <p>As linhas manuais valem para qualquer conta marcada. Quando o lançamento de verdade for importado, exclua a linha manual correspondente.</p>
       </Help>
     </div>
