@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Ctx } from '../App'
 import { saveSettings, sha256 } from '../lib/data'
-import { deletePayslip, listPayslips, savePayslip, type Payslip } from '../lib/payroll'
+import { deletePayslip, listPayslips, savePayslip, type Payslip, type SaveOutcome } from '../lib/payroll'
 import { money, monthLabel } from '../lib/format'
 import { checkContract, comparePayslips, DEFAULT_CONTRACT, type ContractItem, type LineDiff } from '../domain/payroll'
 import { inflationPrompt, payslipPrompt } from '../domain/localAi'
@@ -13,16 +13,23 @@ import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
 import { DEFAULT_INFLATION, ESTIMATED_FROM, payVsInflation, type InflationTable } from '../domain/inflation'
 import { monthWindow } from '../domain/period'
 import { today } from '../lib/hooks'
-import { looksLikePayslip, parsePayslipRows } from '../parsers/payslipPdf'
+import { looksLikePayslip, parsePayslipRows, type PayCurrency } from '../parsers/payslipPdf'
+import { looksLikeUsPayStatement, parseUsStatements, usPayslipsByMonth } from '../parsers/usPayStatementPdf'
 import { Help } from '../components/Page'
 
 const eur = money('EUR', 2)
 const f = (n: number | null | undefined) => (n === null || n === undefined ? '' : eur(n))
+/** Formatters in the payslip's own currency. */
+const fmt = (c: PayCurrency) => {
+  const m = money(c, 2)
+  return { m, f: (n: number | null | undefined) => (n === null || n === undefined ? '' : m(n)) }
+}
+const tag = (p: Payslip) => (p.currency === 'USD' ? ' · US$' : '')
 const STATUS = { ok: ['✔ OK', 'pos'], changed: ['≠ Mudou', 'neg'], missing: ['✖ Ausente', 'neg'] } as const
 
-type Outcome = 'importado' | 'substituído' | 'já existia' | 'não é holerite' | 'erro'
+type Outcome = SaveOutcome | 'não é holerite' | 'erro'
 interface FileResult { file: string; outcome: Outcome; detail: string }
-const OUTCOMES: Outcome[] = ['importado', 'substituído', 'já existia', 'não é holerite', 'erro']
+const OUTCOMES: Outcome[] = ['importado', 'atualizado', 'substituído', 'já existia', 'não é holerite', 'erro']
 
 /** Monthly payslips (bulletins de paie): detail + check against the contract amounts. */
 export function Payslips({ ctx }: { ctx: Ctx }) {
@@ -67,7 +74,7 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
     if (!pdfs.length) { setResults([]); setProgress('Nenhum PDF na seleção.'); return }
     setBusy(true); setResults([])
     const out: FileResult[] = []
-    const existing = new Map((list ?? []).map((p) => [p.period.slice(0, 7), p.file_sha256]))
+    const saved = [...(list ?? [])] // savePayslip keeps it current, so overlapping US files merge
     let lastPeriod = ''
     // Anything failing outside a single file (loading pdf.js, reloading the list) must still end
     // the import with a message instead of leaving "Lendo…" on screen.
@@ -79,17 +86,27 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
           const bytes = new Uint8Array(await file.arrayBuffer())
           const hash = await sha256(bytes)
           const pages = await pdfToRows(bytes, loadPdf)
+          if (looksLikeUsPayStatement(pages)) {
+            // One file holds many biweekly statements: one payslip per month, in dollars.
+            const statements = parseUsStatements(pages)
+            const months = usPayslipsByMonth(statements)
+            const got: SaveOutcome[] = []
+            for (const p of months) got.push(await savePayslip(p, hash, saved))
+            const n = (o: SaveOutcome) => got.filter((g) => g === o).length
+            const outcome: Outcome = n('importado') ? 'importado' : n('atualizado') ? 'atualizado' : 'já existia'
+            const warn = months.flatMap((p) => p.warnings)
+            if (outcome !== 'já existia' && months.at(-1)!.period > lastPeriod) lastPeriod = months.at(-1)!.period
+            out.push({
+              file: file.name, outcome,
+              detail: `EUA, ${statements.length} contracheque(s), ${months[0].period} a ${months.at(-1)!.period}: ${n('importado')} mês(es) novo(s), ${n('atualizado')} completado(s), ${n('já existia')} já existia(m)${warn.length ? ` — conferir: ${warn.join('; ')}` : ''}`,
+            })
+            continue
+          }
           if (!looksLikePayslip(pages)) { out.push({ file: file.name, outcome: 'não é holerite', detail: '' }); continue }
           const p = parsePayslipRows(pages)
-          const prev = existing.get(p.period)
-          if (prev === hash) { out.push({ file: file.name, outcome: 'já existia', detail: p.period }); continue }
-          await savePayslip(p, hash)
-          existing.set(p.period, hash)
-          if (p.period > lastPeriod) lastPeriod = p.period
-          out.push({
-            file: file.name, outcome: prev ? 'substituído' : 'importado',
-            detail: `${p.period}${p.warnings.length ? ` — conferir: ${p.warnings.join('; ')}` : ''}`,
-          })
+          const outcome = await savePayslip(p, hash, saved)
+          if (outcome !== 'já existia' && p.period > lastPeriod) lastPeriod = p.period
+          out.push({ file: file.name, outcome, detail: `${p.period}${p.warnings.length ? ` — conferir: ${p.warnings.join('; ')}` : ''}` })
         } catch (e) { out.push({ file: file.name, outcome: 'erro', detail: (e as Error).message }) }
       }
       const fresh = await load()
@@ -103,9 +120,16 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
   const counts = OUTCOMES.map((o) => [o, results.filter((r) => r.outcome === o).length] as const).filter(([, n]) => n > 0)
 
   const cur = list?.find((p) => p.id === sel)
-  const prev = list && cur ? list[list.indexOf(cur) + 1] : undefined
-  const check = useMemo(() => (cur ? checkContract(cur.lines, contract) : null), [cur, contract])
-  const checks = useMemo(() => new Map((list ?? []).map((p) => [p.id, checkContract(p.lines, contract).ok])), [list, contract])
+  const prev = list && cur ? list.slice(list.indexOf(cur) + 1).find((p) => p.currency === cur.currency) : undefined
+  // The contract amounts are the French ones: US months are not checked against them.
+  const check = useMemo(() => (cur && cur.currency === 'EUR' ? checkContract(cur.lines, contract) : null), [cur, contract])
+  const checks = useMemo(() => new Map((list ?? []).map((p) => [p.id, p.currency === 'EUR' ? checkContract(p.lines, contract).ok : null])), [list, contract])
+  const mark = (id: string) => ({ true: '✔', false: '⚠', null: '' })[String(checks.get(id) ?? null) as 'true' | 'false' | 'null']
+  const sameCurrency = useMemo(() => (list ?? []).filter((p) => p.currency === (cur?.currency ?? 'EUR')), [list, cur?.currency])
+  const euros = useMemo(() => (list ?? []).filter((p) => p.currency === 'EUR'), [list])
+  const usd = cur?.currency === 'USD'
+  const c = fmt(cur?.currency ?? 'EUR')
+  const statements = usd && cur ? new Set(cur.lines.map((l) => l.doc)).size : 0
 
   if (error) return <div className="card err">{error}</div>
   if (!list) return <div className="card muted">Carregando…</div>
@@ -117,11 +141,11 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
           <div className="toolbar-group">
             <label className="inline"><span className="muted">Mês</span>
               <select value={sel} onChange={(e) => setSel(e.target.value)} disabled={!list.length}>
-                {list.map((p) => <option key={p.id} value={p.id}>{monthLabel(p.period.slice(0, 7))} {checks.get(p.id) ? '✔' : '⚠'}</option>)}
+                {list.map((p) => <option key={p.id} value={p.id}>{monthLabel(p.period.slice(0, 7))}{tag(p)} {mark(p.id)}</option>)}
               </select></label>
-            <button onClick={() => setComparing((v) => !v)} disabled={list.length < 2}
-              title={list.length < 2 ? 'Precisa de dois holerites importados' : undefined}>{comparing ? 'Fechar comparação' : 'Comparar dois meses'}</button>
-            {cur && <button onClick={async () => { if (confirm(`Excluir o holerite de ${cur.period.slice(0, 7)}?`)) { await deletePayslip(cur.id); await load() } }}>Excluir</button>}
+            <button onClick={() => setComparing((v) => !v)} disabled={sameCurrency.length < 2}
+              title={sameCurrency.length < 2 ? 'Precisa de dois holerites importados na mesma moeda' : undefined}>{comparing ? 'Fechar comparação' : 'Comparar dois meses'}</button>
+            {cur && <button onClick={async () => { if (confirm(`Excluir o holerite de ${cur.period.slice(0, 7)}${tag(cur)}?`)) { await deletePayslip(cur.id); await load() } }}>Excluir</button>}
           </div>
           <div className="toolbar-group">
             <button className="primary" onClick={() => fileRef.current?.click()} disabled={busy}>Importar PDFs</button>
@@ -133,6 +157,9 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
         <Help title="Como importar holerites">
           <p>Selecione vários PDFs de uma vez, ou a pasta inteira (subpastas incluídas; o que não for holerite é pulado).
             Os PDFs são lidos no navegador e nunca enviados; só valores e rótulos são guardados. Um holerite por mês: reimportar o mesmo mês substitui o anterior.</p>
+          <p>Também aceita o histórico de contracheques dos EUA (<em>Pay Statement</em>, “EEPayrollCheckHistory”, em dólar): cada PDF traz vários pagamentos quinzenais,
+            que viram um holerite em US$ por mês do pagamento. Arquivos que se sobrepõem podem ser importados em qualquer ordem: cada contracheque entra uma vez só, pelo número do documento.
+            Um mês pode ter um holerite em € e outro em US$ (mês da transferência, ações pagas pelos EUA depois da mudança).</p>
         </Help>
         {progress && <p className="muted">{progress}</p>}
         {counts.length > 0 && <>
@@ -147,27 +174,31 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
             ))}
           </details>
         </>}
-        {!list.length && <p>Nenhum holerite ainda — importe seus bulletins de paie (PDF).</p>}
+        {!list.length && <p>Nenhum holerite ainda — importe seus bulletins de paie ou os Pay Statements dos EUA (PDF).</p>}
       </div>
 
-      <PayEvolution ctx={ctx} list={list} />
+      <PayEvolution ctx={ctx} list={euros} />
 
-      {cur && check && <>
+      {cur && <>
         <div className="card">
-          <h3>{monthLabel(cur.period.slice(0, 7))} · {cur.employer} · pago em {cur.transfer_date ?? cur.pay_date ?? ''}</h3>
+          <h3>{monthLabel(cur.period.slice(0, 7))} · {cur.employer} · {usd ? `${statements} contracheque(s) em US$, último pago em ${cur.pay_date ?? ''}` : `pago em ${cur.transfer_date ?? cur.pay_date ?? ''}`}</h3>
           <div className="kpis">
-            {([['Bruto', cur.gross, prev?.gross], ['Líquido social', cur.net_social, prev?.net_social], ['Base tributável', cur.net_taxable, prev?.net_taxable],
-              ['IR retido (PAS)', cur.pas_amount, prev?.pas_amount], ['Líquido pago', cur.net_paid, prev?.net_paid], ['Custo do empregador', cur.employer_cost, prev?.employer_cost]] as const)
+            {(usd
+              ? [['Bruto', cur.gross, prev?.gross], ['Descontos', cur.employee_contrib, prev?.employee_contrib], ['IR retido (federal)', cur.pas_amount, prev?.pas_amount], ['Líquido pago', cur.net_paid, prev?.net_paid]] as const
+              : [['Bruto', cur.gross, prev?.gross], ['Líquido social', cur.net_social, prev?.net_social], ['Base tributável', cur.net_taxable, prev?.net_taxable],
+                ['IR retido (PAS)', cur.pas_amount, prev?.pas_amount], ['Líquido pago', cur.net_paid, prev?.net_paid], ['Custo do empregador', cur.employer_cost, prev?.employer_cost]] as const)
               .map(([l, v, p]) => (
-                <div className="kpi" key={l}><div className="l">{l}</div><div className="v">{f(v)}</div>
-                  {p !== undefined && p !== null && v !== null && Math.abs(v - p) > 0.01 && <div className={`l ${v > p ? 'pos' : 'neg'}`}>{v > p ? '+' : ''}{eur(v - p)} vs mês anterior</div>}
+                <div className="kpi" key={l}><div className="l">{l}</div><div className="v">{c.f(v)}</div>
+                  {p !== undefined && p !== null && v !== null && Math.abs(v - p) > 0.01 && <div className={`l ${v > p ? 'pos' : 'neg'}`}>{v > p ? '+' : ''}{c.m(v - p)} vs mês anterior</div>}
                 </div>))}
-            <div className="kpi"><div className="l">Alíquota PAS</div><div className={`v ${(cur.pas_rate ?? 0) < 5 ? 'warn' : ''}`}>{cur.pas_rate ?? '–'}%</div></div>
-            <div className="kpi"><div className="l">Acumulado tributável (ano)</div><div className="v">{f(cur.cumul_taxable)}</div></div>
+            {!usd && <div className="kpi"><div className="l">Alíquota PAS</div><div className={`v ${(cur.pas_rate ?? 0) < 5 ? 'warn' : ''}`}>{cur.pas_rate ?? '–'}%</div></div>}
+            {!usd && <div className="kpi"><div className="l">Acumulado tributável (ano)</div><div className="v">{f(cur.cumul_taxable)}</div></div>}
           </div>
+          {usd && <p className="muted" style={{ fontSize: 12 }}>Descontos negativos (entre parênteses no contracheque, ex.: Housing Allow) são valores pagos a você e somam no líquido.
+            Ganhos sem dinheiro (Share Vesting, Fringe) entram no bruto e saem de volta em Miscellaneous / Fringe Benefit, por isso o líquido desses contracheques é zero.</p>}
         </div>
 
-        <div className="card">
+        {check && <div className="card">
           <h3>Conferência do contrato {check.ok ? <span className="pos">✔ bate</span> : <span className="neg">⚠ diferenças</span>}</h3>
           <div className="scroll"><table>
             <thead><tr><th>Código</th><th>Item</th><th className="num">Contrato</th><th className="num">Holerite</th><th className="num">Diferença</th><th>Situação</th></tr></thead>
@@ -201,7 +232,7 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
               <button onClick={() => setContract(DEFAULT_CONTRACT)}>Voltar ao padrão</button>
             </div>
           </details>
-        </div>
+        </div>}
 
         <div className="card">
           <h3>Detalhe do holerite</h3>
@@ -214,31 +245,34 @@ export function Payslips({ ctx }: { ctx: Ctx }) {
                 {head && <tr><td colSpan={7} className="muted"><b>{l.section}</b></td></tr>}
                 <tr style={strong ? { fontWeight: 600 } : undefined}>
                   <td>{l.code}</td><td>{l.label}{l.nonTaxable ? ' *' : ''}</td>
-                  <td className="num hide-sm">{f(l.base)}</td><td className="num hide-sm">{l.rate ?? ''}</td>
-                  <td className="num">{f(l.gain)}</td><td className="num">{f(l.deduction)}</td><td className="num hide-sm">{f(l.employer)}</td>
+                  <td className="num hide-sm">{c.f(l.base)}</td><td className="num hide-sm">{l.rate ?? ''}</td>
+                  <td className="num">{c.f(l.gain)}</td><td className="num">{c.f(l.deduction)}</td><td className="num hide-sm">{c.f(l.employer)}</td>
                 </tr>
               </Fragment>)
             })}
-              <tr><td></td><td>Líquido antes do IR</td><td className="hide-sm" /><td className="hide-sm" /><td className="num">{f(cur.net_before_tax)}</td><td /><td className="hide-sm" /></tr>
-              <tr><td></td><td>IR retido na fonte (PAS {cur.pas_rate ?? '–'}% on {f(cur.net_taxable)})</td><td className="hide-sm" /><td className="hide-sm" /><td /><td className="num">{f(cur.pas_amount)}</td><td className="hide-sm" /></tr>
-              <tr style={{ fontWeight: 600 }}><td></td><td>Líquido pago</td><td className="hide-sm" /><td className="hide-sm" /><td className="num">{f(cur.net_paid)}</td><td /><td className="hide-sm" /></tr>
+              <tr><td></td><td>Líquido antes do IR</td><td className="hide-sm" /><td className="hide-sm" /><td className="num">{c.f(cur.net_before_tax)}</td><td /><td className="hide-sm" /></tr>
+              <tr><td></td><td>{usd ? 'IR retido na fonte (federal)' : `IR retido na fonte (PAS ${cur.pas_rate ?? '–'}% on ${f(cur.net_taxable)})`}</td><td className="hide-sm" /><td className="hide-sm" /><td /><td className="num">{c.f(cur.pas_amount)}</td><td className="hide-sm" /></tr>
+              <tr style={{ fontWeight: 600 }}><td></td><td>Líquido pago</td><td className="hide-sm" /><td className="hide-sm" /><td className="num">{c.f(cur.net_paid)}</td><td /><td className="hide-sm" /></tr>
             </tbody>
           </table></div>
-          <p className="muted">* ganhos não sujeitos ao IR / descontos não dedutíveis.</p>
+          {!usd && <p className="muted">* ganhos não sujeitos ao IR / descontos não dedutíveis.</p>}
         </div>
       </>}
 
-      {comparing && <Comparar list={list} />}
+      {comparing && <Comparar key={cur?.currency} list={sameCurrency} />}
 
       {list.length > 0 && <div className="card">
         <h3>Todos os meses</h3>
         <div className="scroll"><table>
-          <thead><tr><th>Mês</th><th className="num">Bruto</th><th className="num hide-sm">Base tributável</th><th className="num">PAS</th><th className="num">Líquido pago</th><th>Contrato</th></tr></thead>
-          <tbody>{list.map((p) => (
+          <thead><tr><th>Mês</th><th className="num">Bruto</th><th className="num hide-sm">Base tributável</th><th className="num">IR retido</th><th className="num">Líquido pago</th><th>Contrato</th></tr></thead>
+          <tbody>{list.map((p) => {
+            const pf = fmt(p.currency).f
+            return (
             <tr key={p.id} onClick={() => setSel(p.id)} style={{ cursor: 'pointer', fontWeight: p.id === sel ? 600 : undefined }}>
-              <td>{monthLabel(p.period.slice(0, 7))}</td><td className="num">{f(p.gross)}</td><td className="num hide-sm">{f(p.net_taxable)}</td>
-              <td className="num">{f(p.pas_amount)}</td><td className="num">{f(p.net_paid)}</td>
-              <td className={checks.get(p.id) ? 'pos' : 'neg'}>{checks.get(p.id) ? '✔' : '⚠'}</td></tr>))}
+              <td>{monthLabel(p.period.slice(0, 7))}{tag(p)}</td><td className="num">{pf(p.gross)}</td><td className="num hide-sm">{pf(p.net_taxable)}</td>
+              <td className="num">{pf(p.pas_amount)}</td><td className="num">{pf(p.net_paid)}</td>
+              <td className={checks.get(p.id) ? 'pos' : checks.get(p.id) === false ? 'neg' : 'muted'}>{mark(p.id) || '–'}</td></tr>)
+          })}
           </tbody>
         </table></div>
       </div>}
@@ -252,6 +286,7 @@ const FIELD_PT: Record<LineDiff['field'], string> = {
 
 /** Side-by-side diff of two payslips: which totals moved and which lines moved them. */
 function Comparar({ list }: { list: Payslip[] }) {
+  const { m: eur, f } = fmt(list[0]?.currency ?? 'EUR') // every payslip in the list shares one currency
   const [aId, setAId] = useState(() => list[1]?.id ?? '')
   const [bId, setBId] = useState(() => list[0]?.id ?? '')
   const a = list.find((p) => p.id === aId)

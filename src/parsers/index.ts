@@ -9,6 +9,7 @@ import { looksLikeItauMonthlyPdf, parseItauMonthlyPdf } from './itauMonthlyPdf'
 import { looksLikeCcfPdf, parseCcfPdf } from './ccfPdf'
 import { pdfToRows, rowsToLines, type PdfLoader } from './pdfText'
 import { looksLikePayslip, parsePayslipRows } from './payslipPdf'
+import { looksLikeUsPayStatement, parseUsStatements, usPayslipsByMonth } from './usPayStatementPdf'
 import { looksLikeFgtsExtract, parseFgtsExtract } from '../domain/fgts'
 
 /** Reads the first sheet of an .xlsx; injected so tests and the browser can supply their own. */
@@ -34,8 +35,9 @@ export async function parseStatement(fileName: string, bytes: Uint8Array, loadPd
     if (looksLikeItauMonthlyPdf(lines)) return parseItauMonthlyPdf(pages, lines)
     if (looksLikeCcfPdf(lines)) return parseCcfPdf(pages, lines)
     if (looksLikeFgtsExtract(lines)) return { ...ignored('Extrato do FGTS: depósitos salvos em Rescisão → Conferir o FGTS.'), fgts: parseFgtsExtract(lines) }
-    if (looksLikePayslip(pages)) return { ...ignored('Holerite: salvo na página Holerites.'), payslip: parsePayslipRows(pages) }
-    throw new Error(`${fileName}: PDF não reconhecido (esperado extrato ou fatura Itaú, relevé BCP ou CCF, extrato combinado Millennium, holerite ou extrato do FGTS)`)
+    if (looksLikePayslip(pages)) return { ...ignored('Holerite: salvo na página Holerites.'), payslips: [parsePayslipRows(pages)] }
+    if (looksLikeUsPayStatement(pages)) return { ...ignored('Holerites dos EUA: salvos na página Holerites.'), payslips: usPayslipsByMonth(parseUsStatements(pages)) }
+    throw new Error(`${fileName}: PDF não reconhecido (esperado extrato ou fatura Itaú, relevé BCP ou CCF, extrato combinado Millennium, holerite da França ou dos EUA, ou extrato do FGTS)`)
   }
   if (/\.xlsx$/i.test(fileName)) {
     const rows = await loadXlsx(bytes)

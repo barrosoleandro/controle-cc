@@ -1,16 +1,22 @@
+import type { PayCurrency, PayslipLine } from '../parsers/payslipPdf'
+
 /**
  * FGTS de expatriado (CLT ativa, transferido, Lei 7.064/82, art. 3º, parágrafo único): os 8% incidem
  * sobre a remuneração total, inclusive a paga no exterior. O esperado de cada competência vem do
- * bruto do holerite francês convertido em reais; o depositado vem do extrato do FGTS (app FGTS).
+ * bruto dos holerites (França em euros, EUA em dólares) convertido em reais; o depositado vem do
+ * extrato do FGTS (app FGTS).
  */
 export const FGTS_RATE = 0.08
 
-export interface FgtsPayslip { period: string; gross: number | null; pay_date: string | null }
+export interface FgtsPayslip { period: string; gross: number | null; pay_date: string | null; currency?: PayCurrency; lines?: PayslipLine[] }
 export interface FgtsRow {
   competencia: string // yyyy-mm
-  brutoEur: number
-  taxa: number // EUR→BRL usada
-  dataTaxa: string
+  bruto: Partial<Record<PayCurrency, number>> // na base, por moeda
+  /** Ganhos sem dinheiro dos contracheques dos EUA (Share Vesting, Fringe…), fora da base, em US$. */
+  foraDaBase: number
+  taxa: number | null // cotação usada (média ponderada se houve vários pagamentos); null se misturou moedas
+  dataTaxa: string // último pagamento da competência
+  semTaxa: boolean // faltou a cotação de algum pagamento: base incompleta
   baseBrl: number
   esperado: number
   depositado: number | null
@@ -23,25 +29,70 @@ export interface FgtsCheck {
   depositado: number
   diferenca: number
   semDeposito: string[]
-  /** Depósitos de competências sem holerite francês (ex.: antes da transferência, ou 13º). */
+  /** Depósitos de competências sem holerite (ex.: antes de ir para fora, ou 13º). */
   outros: { competencia: string; valor: number }[]
 }
 
 const round = (v: number) => Math.round(v * 100) / 100
 const lastDay = (ym: string) => { const [y, m] = ym.split('-').map(Number); return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}` }
 
-/** `eurBrl(date)`: the rate of that day. The pay date is used; without one, the last day of the month. */
-export function checkFgts(payslips: FgtsPayslip[], deposits: Record<string, number>, eurBrl: (date: string) => number): FgtsCheck {
-  const rows = payslips.filter((p) => p.gross && p.gross > 0).map((p) => {
+/** One payment that enters the FGTS base: amount, currency, the day of the rate, and what was left out. */
+interface Part { currency: PayCurrency; amount: number; date: string; excluded: number }
+
+/**
+ * The cash pay of each US statement. Earnings with no money behind them are left out: share
+ * vesting, and amounts the statement takes back as a deduction of the same name and value
+ * (Auto Allowance, Gift / Prize) or that leave the statement with no net pay (yearly Fringe).
+ */
+export function usCashParts(lines: PayslipLine[]): Part[] {
+  const byDoc = new Map<string, PayslipLine[]>()
+  for (const l of lines) byDoc.set(l.doc ?? l.payDate ?? '', [...(byDoc.get(l.doc ?? l.payDate ?? '') ?? []), l])
+  return [...byDoc.values()].map((ls) => {
+    const earn = ls.filter((l) => l.section.endsWith('· Ganhos'))
+    const ded = ls.filter((l) => !l.section.endsWith('· Ganhos'))
+    const gross = earn.reduce((s, l) => s + (l.gain ?? 0), 0)
+    const net = gross - ded.reduce((s, l) => s + (l.deduction ?? 0), 0)
+    const nonCash = (l: PayslipLine) => net < 0.01 || /share vesting/i.test(l.label)
+      || ded.some((d) => d.label === l.label && Math.abs((d.deduction ?? 0) - (l.gain ?? 0)) < 0.01)
+    const cash = round(earn.filter((l) => !nonCash(l)).reduce((s, l) => s + (l.gain ?? 0), 0))
+    return { currency: 'USD' as const, amount: cash, date: ls[0].payDate ?? '', excluded: round(gross - cash) }
+  })
+}
+
+/**
+ * `toBrl(currency, date)`: the rate of that day, or null when it is not known. The pay date is used;
+ * without one, the last day of the month. Payslips of the same month (a French one and US
+ * statements in the transfer month) add up in one competência.
+ */
+export function checkFgts(payslips: FgtsPayslip[], deposits: Record<string, number>, toBrl: (currency: PayCurrency, date: string) => number | null): FgtsCheck {
+  const parts = new Map<string, Part[]>()
+  for (const p of payslips) {
     const competencia = p.period.slice(0, 7)
-    const dataTaxa = p.pay_date ?? lastDay(competencia)
-    const taxa = eurBrl(dataTaxa)
-    const baseBrl = round(p.gross! * taxa)
+    const list = p.currency === 'USD'
+      ? usCashParts(p.lines ?? [])
+      : p.gross && p.gross > 0 ? [{ currency: 'EUR' as const, amount: p.gross, date: p.pay_date ?? lastDay(competencia), excluded: 0 }] : []
+    parts.set(competencia, [...(parts.get(competencia) ?? []), ...list])
+  }
+  const rows = [...parts.entries()].filter(([, ps]) => ps.some((x) => x.amount > 0)).map(([competencia, ps]): FgtsRow => {
+    const bruto: Partial<Record<PayCurrency, number>> = {}
+    let baseBrl = 0, semTaxa = false
+    for (const x of ps) {
+      if (x.amount <= 0) continue
+      bruto[x.currency] = round((bruto[x.currency] ?? 0) + x.amount)
+      const r = toBrl(x.currency, x.date)
+      if (r === null) semTaxa = true; else baseBrl += x.amount * r
+    }
+    baseBrl = round(baseBrl)
+    const moedas = Object.keys(bruto) as PayCurrency[]
     const esperado = round(baseBrl * FGTS_RATE)
     const dep = deposits[competencia]
     const depositado = dep === undefined ? null : dep
-    return { competencia, brutoEur: p.gross!, taxa, dataTaxa, baseBrl, esperado, depositado,
-      diferenca: depositado === null ? null : round(depositado - esperado), baseImplicita: depositado === null ? null : round(depositado / FGTS_RATE) }
+    return {
+      competencia, bruto, foraDaBase: round(ps.reduce((s, x) => s + x.excluded, 0)),
+      taxa: moedas.length === 1 && !semTaxa ? Math.round((baseBrl / bruto[moedas[0]]!) * 10000) / 10000 : null,
+      dataTaxa: ps.map((x) => x.date).sort().at(-1)!, semTaxa, baseBrl, esperado, depositado,
+      diferenca: depositado === null ? null : round(depositado - esperado), baseImplicita: depositado === null ? null : round(depositado / FGTS_RATE),
+    }
   }).sort((a, b) => a.competencia.localeCompare(b.competencia))
   const mine = new Set(rows.map((r) => r.competencia))
   const esperado = round(rows.reduce((s, r) => s + r.esperado, 0))

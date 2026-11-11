@@ -7,7 +7,7 @@ describe('FGTS de expatriado', () => {
       { period: '2026-09-01', gross: 10000, pay_date: '2026-09-30' },
       { period: '2026-10-01', gross: 10000, pay_date: null },
       { period: '2026-08-01', gross: null, pay_date: null },
-    ], { '2026-09': 2000, '2025-05': 900 }, (d) => (d === '2026-09-30' ? 6 : 6.5))
+    ], { '2026-09': 2000, '2025-05': 900 }, (_c, d) => (d === '2026-09-30' ? 6 : 6.5))
     expect(c.rows.map((r) => [r.competencia, r.baseBrl, r.esperado, r.depositado, r.diferenca])).toEqual([
       ['2026-09', 60000, 4800, 2000, -2800],
       ['2026-10', 65000, 5200, null, null],

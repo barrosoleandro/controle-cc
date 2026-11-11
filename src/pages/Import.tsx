@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Ctx } from '../App'
-import { savePayslip } from '../lib/payroll'
+import { listPayslips, savePayslip, type Payslip } from '../lib/payroll'
 import { addRule, deriveOpening, ensureAccounts, executeImport, importedHashes, linkCardPayments, loadAll, pendingOf, planImport, sha256, updateAccount, type ImportPlan, type Pending } from '../lib/data'
 import { money } from '../lib/format'
 import { saveMerchantProfiles } from '../lib/ai'
@@ -136,6 +136,7 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
       // CSVs first: they carry the bank's own categories.
       const ordered = candidates.sort((a, b) => Number(/\.pdf$/i.test(a.name)) - Number(/\.pdf$/i.test(b.name)))
       let i = 0
+      let savedSlips: Payslip[] | undefined // loaded once, when the first payslip shows up
       for (const f of ordered) {
         setProgress(`Lendo ${++i} de ${ordered.length}: ${f.name}`)
         try {
@@ -145,7 +146,13 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
           seen.add(hash)
           const { loadPdf } = await import('../lib/pdf') // pdf.js is loaded only when importing
           const res = await parseStatement(f.name, bytes, loadPdf)
-          if (res.payslip) { await savePayslip(res.payslip, hash); slips.push(`${f.name} (${res.payslip.period})`); already.push(f.name); continue }
+          if (res.payslips) {
+            savedSlips ??= await listPayslips().catch(() => [])
+            for (const p of res.payslips) await savePayslip(p, hash, savedSlips)
+            const months = res.payslips.map((p) => p.period)
+            slips.push(`${f.name} (${months.length > 1 ? `${months[0]} a ${months.at(-1)}, ${months.length} meses` : months[0]}${res.payslips[0].currency === 'USD' ? ', US$' : ''})`)
+            already.push(f.name); continue
+          }
           if (res.fgts) {
             if (!res.fgts.length) throw new Error('extrato do FGTS sem nenhum depósito reconhecido')
             Object.assign(fgts, depositsByMonth(res.fgts))
