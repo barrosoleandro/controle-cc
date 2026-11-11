@@ -89,6 +89,22 @@ describe('recurring lines in the month plan', () => {
     const plan = buildMonthPlan([...txs, salary('2026-10', 3100)], [], '2026-10', avg, rec)
     expect(plan.income.find((r) => r.name === 'Salário')).toMatchObject({ pendentes: [], realizado: 3100, previsto: 3100 })
   })
+
+  it('a salary lower than the average is the whole month: nothing is added to reach the average', () => {
+    const history = [salary('2026-07', 4000), salary('2026-08', 4000), salary('2026-09', 3000), salary('2026-10', 2900)]
+    const rec = recurringExpectations(history, isRec(new Set(['ACME'])), avg)
+    expect(buildMonthPlan(history, [], '2026-10', avg, rec).income[0]).toMatchObject({ realizado: 2900, falta: 0, previsto: 2900 })
+  })
+
+  it('expects a monthly income at its latest full month, passing over a month with only a small extra', () => {
+    const history = [salary('2026-07', 4000), salary('2026-08', 4000), salary('2026-09', 3000)]
+    const expected = (list: PlanTx[]) => recurringExpectations(list, isRec(new Set(['ACME'])), avg)[0].amount
+    expect(expected(history)).toBe(3000)
+    expect(expected([...history, salary('2026-10', 150)])).toBe(3000)
+    expect(expected([...history, salary('2026-10', 3200)])).toBe(3200)
+    // The month after still expects the salary, at that value, not at the average.
+    expect(buildMonthPlan(history, [], '2026-11', avg, recurringExpectations(history, isRec(new Set(['ACME'])), avg)).income[0]).toMatchObject({ falta: 3000, previsto: 3000 })
+  })
 })
 
 describe('money from or to outside', () => {

@@ -78,6 +78,8 @@ const signed = (kind: 'income' | 'expense', v: number) => (kind === 'income' ? v
  * `recurring`: expected recurring lines; one due in the month (see isDue) and still missing (not
  * imported, not replaced by a manual line of the same merchant) counts in its category, so
  * falta = max(0, max(recorrentes mensais pendentes, média − realizado) + recorrentes de intervalo maior pendentes − manual).
+ * An income category with a monthly recurring line (salary) follows that line alone, not the average:
+ * once the salary of the month is in, nothing more is expected there.
  * A line paid every 2 months or more is left out of the average and of the realizado it is compared
  * with: it counts only in the months it is due, at its full value, not as a share every month.
  */
@@ -114,7 +116,9 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
     ...txs.filter((t) => t.month === month && t.kind !== 'transfer' && t.merchant).map((t) => `${t.kind}/${t.merchant}`),
     ...manual.filter((m) => m.month === month && m.merchant).map((m) => `${m.kind}/${m.merchant}`),
   ])
+  const byRecurring = new Set<PlanRow>() // income rows driven by their monthly recurring lines
   for (const e of recurring) {
+    if (e.kind === 'income' && e.period <= 1) byRecurring.add(row(e.categoryName, e.kind))
     if (done.has(`${e.kind}/${e.merchant}`) || !isDue(e, month)) continue
     const r = row(e.categoryName, e.kind)
     r.recorrente += e.amount
@@ -123,7 +127,9 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
   }
   const all = [...rows.values()].map((r) => {
     const x = extra.get(r) ?? { realPeriodic: 0, recPeriodic: 0 }
-    const falta = Math.max(0, Math.max(r.recorrente - x.recPeriodic, r.media - (r.realizado - x.realPeriodic)) + x.recPeriodic - r.manual)
+    const pending = r.recorrente - x.recPeriodic
+    const base = byRecurring.has(r) ? pending : Math.max(pending, r.media - (r.realizado - x.realPeriodic))
+    const falta = Math.max(0, base + x.recPeriodic - r.manual)
     return { ...r, falta, previsto: r.realizado + r.manual + falta, pendentes: r.pendentes.sort((a, b) => a.day - b.day) }
   }).filter((r) => Math.abs(r.media) > 0.005 || Math.abs(r.realizado) > 0.005 || Math.abs(r.manual) > 0.005 || r.recorrente > 0.005)
   const pick = (kind: 'income' | 'expense') => all.filter((r) => r.kind === kind).sort((a, b) => b.previsto - a.previsto)
@@ -140,7 +146,8 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
  * What each recurring merchant is expected to bring in or charge, and how often. The interval is
  * read from the last PERIOD_HISTORY complete months (see detectPeriod), unless the user set one.
  * Monthly ones: the average over the months of `avgMonths` they appeared in, left out when they
- * did not appear in any (nothing to base the value on). Every 2 months or more: the average of
+ * did not appear in any (nothing to base the value on). A monthly income (salary) is expected at
+ * its latest full month instead (see latestFull): a raise or the end of a bonus shows at once. Every 2 months or more: the average of
  * their last 3 payments, left out when the latest is more than two intervals old (stopped).
  * Category and day are the latest entry's.
  */
@@ -172,6 +179,7 @@ export function recurringExpectations(txs: PlanTx[], isRecurring: (merchant: str
       const vals = [...m.perMonth].filter(([mo]) => avgSet.has(mo)).map(([, v]) => v)
       if (!vals.length) continue
       amount = vals.reduce((s, v) => s + v, 0) / vals.length
+      if (m.kind === 'income') amount = latestFull(m.perMonth, amount, (mo) => avgSet.has(mo) || mo === current)
     } else {
       if (monthsBetween(lastMonth, current) > 2 * period) continue
       const vals = paid.slice(-3).map((mo) => m.perMonth.get(mo)!)
@@ -181,6 +189,15 @@ export function recurringExpectations(txs: PlanTx[], isRecurring: (merchant: str
     out.push({ merchant, kind: m.kind, categoryName: m.last.categoryName, amount, day: Number((m.last.booking_date ?? '').slice(8, 10)) || 1, period, lastMonth, ...(mine ? { periodSet: true } : {}) })
   }
   return out
+}
+
+/**
+ * The total of the latest month that looks like a full payment: at least half of `average`, so a
+ * month that so far has only a small extra (an expense refund before the salary) is passed over.
+ */
+function latestFull(perMonth: Map<string, number>, average: number, counts: (month: string) => boolean): number {
+  const full = [...perMonth].filter(([mo, v]) => counts(mo) && v >= average / 2).sort(([a], [b]) => a.localeCompare(b)).at(-1)
+  return full ? full[1] : average
 }
 
 /**
