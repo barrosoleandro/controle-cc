@@ -9,3 +9,6 @@ alter table public.payslips add constraint payslips_currency_check check (curren
 
 alter table public.payslips drop constraint if exists payslips_user_id_period_key;
 create unique index if not exists payslips_user_period_currency on public.payslips (user_id, period, currency);
+
+-- Makes the API (PostgREST) see the new column right away, instead of failing until its cache refreshes.
+notify pgrst, 'reload schema';
