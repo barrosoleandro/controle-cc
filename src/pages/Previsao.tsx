@@ -38,7 +38,7 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
   // Same rule as the month-end box on Painel: the salary paid at the end of a month is the next month's.
   const salary = findSalaryCategory(data.categories)?.name
   const opts = useMemo(() => ({ salary }), [salary])
-  const { txs, lines, manual, plans: appPlans, avgMonths, recurring, periods, send } = useMonthPlans(ctx, inScope, months, opts)
+  const { txs, lines, manual, plans: appPlans, avgMonths, recurring, periods, send, wise } = useMonthPlans(ctx, inScope, months, opts)
   // "Falta" typed by the user, per month and category: the same figures the month-end box of Painel uses.
   const mineNow = usePlanned(ctx, months[0]), mineNext = usePlanned(ctx, months[1])
   const plannedNow = mineNow.planned, plannedNext = mineNext.planned
@@ -157,15 +157,17 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
                   <td /><td className="num">{fmt(kind === 'income' ? x.value : -x.value)}</td><td /><td /><td />
                 </tr>
               ))}
-              {r.name === WISE_LINE && send && (
+              {r.name === WISE_LINE && send && (() => {
+                const w = wise?.(plan.month)
+                return (
                 <tr className="muted" style={{ fontSize: 13 }}><td colSpan={6} style={{ paddingLeft: 24 }}>
-                  {plan.month === months[0]
-                    ? <>Para cobrir {monthLabel(send.month)} no Itaú: fatura do cartão {brl(send.card)} + recorrentes {brl(send.recurring)} − saldo hoje {brl(send.balance)} = {brl(send.transfer)} a enviar até {send.by.slice(8, 10)}/{send.by.slice(5, 7)}.
-                      {send.sent && <> Já chegou no Itaú neste mês: {brl(send.sent.amount)}.</>}</>
-                    : <>Estimativa pelo que o Itaú paga num mês: fatura do cartão {brl(send.card)} + recorrentes {brl(send.recurring)}. Ajuste na coluna Falta quando souber o valor.</>}
+                  {w?.sentOn
+                    ? <>A transferência que paga {monthLabel(plan.month)} já foi feita em {w.sentOn.slice(8, 10)}/{w.sentOn.slice(5, 7)}{w.arrivedBrl > 0 && <> e chegou no Itaú ({brl(w.arrivedBrl)})</>}: nada mais a enviar para este mês.</>
+                    : <>Para pagar {monthLabel(plan.month)} no Itaú: fatura do cartão {brl(send.card)} + recorrentes {brl(send.recurring)} − saldo hoje {brl(send.balance)} = {brl(send.transfer)}
+                      {plan.month === send.month && <>, a enviar até {send.by.slice(8, 10)}/{send.by.slice(5, 7)} com o salário</>}. Ajuste na coluna Falta quando souber o valor.</>}
                   {' '}O detalhe das contas está no Painel (Transferência para o Brasil).
-                </td></tr>
-              )}
+                </td></tr>)
+              })()}
               {r.pendentes.map((e) => (
                 <tr key={`rec/${e.merchant}`} className="muted" style={{ fontSize: 13 }}>
                   <td style={{ paddingLeft: 24 }} title="Recorrente ainda não lançado neste mês: valor pela média dele nos últimos meses">↻ previsto ~{expectedOn(e, plan.month)} · {e.merchant}{e.period > 1 && <span style={{ fontSize: 12 }}> · {everyLabel(e.period)}</span>}
@@ -293,7 +295,7 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
         <p><strong>Saldo previsto no fim do mês</strong> = saldo de hoje das contas marcadas + o que ainda entra − o que ainda sai (as colunas Manual e Falta). O do mês seguinte parte dele e soma o resultado previsto daquele mês.
           Transferências para contas suas que não estão marcadas não entram na conta: se você costuma mandar dinheiro para outra conta, insira uma linha manual ou marque a conta de destino.</p>
         <p><strong>{WISE_LINE}</strong>: o que sai das contas marcadas para pagar a fatura do cartão e os recorrentes da conta do Itaú, menos o saldo que já está lá — o mesmo valor do aviso do Painel.
-          No mês atual, zera quando a transferência do mês já foi feita; no mês seguinte é uma estimativa pelo que o Itaú paga num mês. Some quando uma conta do Brasil está marcada, porque aí os gastos de lá já aparecem nas categorias.</p>
+          Ela conta no mês que paga: a feita do dia 20 em diante, junto com o salário, é do mês seguinte (a de 28/10 paga novembro). Zera quando a transferência daquele mês já saiu daqui ou chegou no Itaú. Some quando uma conta do Brasil está marcada, porque aí os gastos de lá já aparecem nas categorias.</p>
         <p>As linhas manuais valem para qualquer conta marcada. Quando o lançamento de verdade for importado, exclua a linha manual correspondente.</p>
       </Help>
     </div>
