@@ -209,3 +209,27 @@ describe('bill status after the payment is imported', () => {
     expect(withPaidStatus(accounts, [bill('2026-09-10', 100, 'paga')], [])).toEqual([bill('2026-09-10', 100, 'paga')])
   })
 })
+
+describe('bill paid by the Personnalité debit in the Itaú account', () => {
+  const accounts = [
+    { id: 'card', bank: 'ITAU', type: 'card', parent_account_id: 'itau' },
+    { id: 'itau', bank: 'ITAU', type: 'checking', parent_account_id: null },
+  ] as never
+  const tx = (id: string, booking_date: string, amount: number, description: string) => ({ id, account_id: 'itau', booking_date, amount, description, bank_category: null })
+  it('takes the card debit near the due date even when the stored total was exported before the bill closed', async () => {
+    const { billDebit, withPaidStatus } = await import('../src/domain/cards')
+    const { isCardBillPayment } = await import('../src/domain/forecast')
+    const bill = { account_id: 'card', due_date: '2026-11-11', total: 6717.21, status: 'aberta' as const }
+    const txs = [tx('seguro', '2026-11-04', -26.09, 'SEGURO CARTAO 0000'), tx('pers', '2026-11-11', -7231.51, 'PERS INFINIT 7609-0945'), tx('pix', '2026-11-10', -500, 'PIX TRANSF FULANO')]
+    expect(billDebit(accounts, bill, txs, isCardBillPayment)?.id).toBe('pers')
+    expect(withPaidStatus(accounts, [bill], txs, isCardBillPayment)[0].status).toBe('paga')
+    // Without a card debit nor the exact total, the bill stays open.
+    expect(billDebit(accounts, bill, [txs[0], txs[2]], isCardBillPayment)).toBeUndefined()
+  })
+  it('recognises the Personnalité debits as card bill payments, not the card insurance', async () => {
+    const { isCardBillPayment } = await import('../src/domain/forecast')
+    const is = (description: string) => isCardBillPayment({ bank_category: null, description })
+    expect(['PERS INFINIT 7609-0945', 'Pers Black 4002-9666', 'Fatura Paga PERSONNALITE'].map(is)).toEqual([true, true, true])
+    expect(['SEGURO CARTAO 0000', 'PIX TRANSF Wise Br28/10'].map(is)).toEqual([false, false])
+  })
+})

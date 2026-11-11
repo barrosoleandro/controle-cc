@@ -1,13 +1,14 @@
 import { Fragment, useMemo, useState } from 'react'
 import type { Ctx } from '../App'
-import { billPayment, canPay, futureInstalments, matchCardPayments } from '../domain/cards'
+import { billDebit, billPayment, canPay, futureInstalments, matchCardPayments } from '../domain/cards'
+import { isCardBillPayment } from '../domain/forecast'
 import { linkCardPayments, loadAll, updateAccount } from '../lib/data'
 import { money } from '../lib/format'
 import { Empty, Help } from '../components/Page'
 
 const dateBR = (iso: string) => iso.split('-').reverse().join('/')
 
-interface Bill { due: string; status: 'paga' | 'aberta' | 'sem fatura'; total: number | null; spent: number; paidOn?: string; debitFound?: boolean }
+interface Bill { due: string; status: 'paga' | 'aberta' | 'sem fatura'; total: number | null; spent: number; paidOn?: string; debitFound?: boolean; debit?: number }
 
 /**
  * Credit cards linked to the account that pays them, in three equal columns: the bills
@@ -37,8 +38,11 @@ export function Cards({ ctx }: { ctx: Ctx }) {
     const matched = new Set(matchCardPayments(data.accounts, data.transactions).map((m) => m.cardTx.id))
     const map = new Map<string, Bill>()
     for (const s of data.cardStatements.filter((x) => x.account_id === card.id)) {
+      // Paid: the payment on the card (it comes on the next bill) or the debit in the paying account.
       const p = billPayment(s, rows)
-      map.set(s.due_date, { due: s.due_date, status: s.status, total: s.total, spent: 0, paidOn: p?.booking_date, debitFound: p ? matched.has(p.id) : undefined })
+      const d = billDebit(data.accounts, s, data.transactions, isCardBillPayment)
+      map.set(s.due_date, { due: s.due_date, status: s.status, total: s.total, spent: 0, paidOn: p?.booking_date ?? d?.booking_date,
+        debitFound: p ? matched.has(p.id) || !!d : d ? true : undefined, debit: d ? -Number(d.amount) : undefined })
     }
     for (const t of rows) {
       if (!t.statement_due || isTransfer(t.category_id)) continue
@@ -132,7 +136,9 @@ export function Cards({ ctx }: { ctx: Ctx }) {
                 <td>{dateBR(b.due)}</td>
                 <td><span className={`badge ${b.status === 'aberta' ? 'b-open' : b.status === 'paga' ? 'b-paid' : ''}`}>{b.status}</span></td>
                 <td className="num">{f(b.total ?? b.spent)}</td>
-                <td title={!b.paidOn ? 'Sem pagamento na fatura' : b.debitFound ? `Pago em ${dateBR(b.paidOn)}: débito achado na conta` : `Pago em ${dateBR(b.paidOn)}: débito não achado na conta`}
+                <td title={!b.paidOn ? 'Sem pagamento: nem na fatura seguinte nem débito na conta vinculada'
+                  : b.debitFound ? `Pago em ${dateBR(b.paidOn)}: débito achado na conta${b.debit !== undefined && b.total !== null && Math.abs(b.debit - b.total) > 0.005 ? ` (${f(b.debit)}; o total desta fatura foi importado antes de ela fechar)` : ''}`
+                  : `Pago em ${dateBR(b.paidOn)}: débito não achado na conta`}
                   className={b.paidOn && !b.debitFound ? 'warn' : 'pos'}>{!b.paidOn ? '—' : b.debitFound ? '✓' : '⚠'}</td>
               </tr>
             ))}</tbody>
