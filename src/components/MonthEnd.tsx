@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Ctx } from '../App'
-import { monthEnd } from '../domain/monthEnd'
+import { monthEnd, salaryAhead } from '../domain/monthEnd'
 import { nextMonth } from '../domain/monthPlan'
 import { monthEndPrompt, parseMonthEndAnswer, type MonthEndFacts } from '../domain/localAi'
 import { findSalaryCategory } from '../domain/budget'
@@ -42,7 +42,7 @@ export function MonthEndBox({ ctx, inScope }: { ctx: Ctx; inScope: (accountId: s
   // Next month's salary, paid at the end of this one, is left out: not in this month's result, and
   // taken out of today's balance once it is in.
   const next = nextMonth(cur)
-  const salarioSeguinte = salary ? txs.filter((t) => t.kind === 'income' && t.categoryName === salary && t.month === next && t.booking_date.slice(0, 7) === cur).reduce((s, t) => s + t.value, 0) : 0
+  const salarioSeguinte = salaryAhead(txs, salary, cur)
 
   const day = Number(today().slice(8, 10))
   const [y, m] = cur.split('-').map(Number)
