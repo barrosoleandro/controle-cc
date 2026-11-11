@@ -1,4 +1,5 @@
 import type { Category, CategoryKind } from './types'
+import { unaccent } from './util'
 
 /** A category that absorbs others. Names used by the code ("Transfer", "Salario", "Outros"…) stay as they are. */
 export interface MergeGroup { target: string; kind: CategoryKind; sources: string[]; note?: string }
@@ -19,7 +20,7 @@ export const SIMPLIFICATION: MergeGroup[] = [
   { target: 'Salario', kind: 'income', sources: ['Salario', 'Allowance'] },
 ]
 
-const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase()
+const fold = (s: string) => unaccent(s).trim().toLowerCase()
 
 export interface MergeStep {
   target: string

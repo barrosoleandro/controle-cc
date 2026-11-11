@@ -23,6 +23,7 @@ import { isDue, nextMonth, recurringExpectations, steadyIncomes, type PlanTx, ty
 import { isCardBillPayment, sentToBrazil } from './forecast'
 import { EXTERNAL } from './audit'
 import { SALARY_FROM_DAY } from './monthEnd'
+import { round2 } from './util'
 
 export type Kind = 'income' | 'expense' | 'transfer'
 export interface SimTx { account_id: string; month: string; amount: number; kind: Kind; categoryName: string; merchant: string; booking_date: string; description?: string; bank_category?: string | null }
@@ -48,7 +49,7 @@ const colName = (n: number): string => (n > 26 ? colName(Math.floor((n - 1) / 26
 const col = (i: number) => colName(i + 3) // month i → C, D, … (any number of months)
 /** A merchant row is shown only when it has a value in the period; the estimated transfers always are. */
 const keep = (m: string, v: number[]) => m === SENT || m === RECEIVED || v.some((x) => Math.abs(x) > 0.005)
-const round = (v: number) => Math.round(v * 100) / 100
+const round = round2
 /** Sign that makes a value positive for its kind: income counts up, the rest counts down. */
 const mag = (kind: Kind, v: number) => (kind === 'income' ? v : -v)
 

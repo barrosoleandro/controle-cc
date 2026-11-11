@@ -1,4 +1,5 @@
 import type { Basis, BenchmarkRole, Currency } from './market'
+import { unaccent } from './util'
 
 /**
  * Reading a benchmark base from a file. The layout is deliberately plain so a table
@@ -25,7 +26,7 @@ const BASIS_WORDS: Record<string, Basis> = {
   remuneracao_total: 'total_comp_year', total: 'total_comp_year', total_comp_year: 'total_comp_year',
 }
 
-const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase()
+const fold = (s: string) => unaccent(s).trim().toLowerCase()
 
 /** '185 000,50', '185.000,50', '185000.50' and '€185,000' all mean the same number. */
 export function parseAmount(raw: string): number | null {

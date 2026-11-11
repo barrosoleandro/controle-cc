@@ -20,6 +20,7 @@ import { CARD_BILL, matchBillDebits, matchCardPayments, payerOf as cardPayers } 
 import { AsOf, Tabs } from '../components/Page'
 import { skipRecurring, useRecurring } from '../lib/recurring'
 import { MonthEndBox } from '../components/MonthEnd'
+import { AccountMenu } from '../components/AccountMenu'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 const NEW = '__new' // select option that opens the new-category form
@@ -45,7 +46,6 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const mine = balances.filter((b) => shown(b.account.id))
   const totalBalance = mine.reduce((s, b) => s + b.display, 0)
   const nShown = accounts.filter((a) => shown(a.id)).length
-  const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
   // Month-end box: the ticked accounts, and a card with the account that pays its bill.
   const payerOf = useMemo(() => cardPayers(ctx.data.accounts), [ctx.data.accounts])
   const inScope = useCallback((id: string) => shown(id) || (payerOf.has(id) && shown(payerOf.get(id)!)), [shown, payerOf])
@@ -83,22 +83,7 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
         <option value="yes">Só recorrentes</option>
         <option value="no">Só não recorrentes</option>
       </select>}
-      <Menu align="right" active={nShown < accounts.length}
-        label={nShown === accounts.length ? 'Todas as contas' : nShown === 1 ? accounts.find((a) => shown(a.id))?.name ?? '1 conta' : `${nShown} de ${accounts.length} contas`}>
-        <div className="row" style={{ marginBottom: 8 }}>
-          {countries.map((c) => (
-            <button key={c} onClick={() => setHidden(new Set(accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
-          ))}
-          <button onClick={() => setHidden(new Set())}>Todas</button>
-        </div>
-        <div className="opts">
-          {accounts.map((a) => (
-            <label key={a.id} className="inline opt"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
-              const next = new Set(prev); if (next.has(a.id)) next.delete(a.id); else next.add(a.id); return next
-            })} />{a.name} <span className="muted" style={{ fontSize: 12 }}>· {countryOf(a.bank)}</span></label>
-          ))}
-        </div>
-      </Menu>
+      <AccountMenu align="right" accounts={accounts} hidden={hidden} onChange={setHidden} />
       <ExcelExport ctx={ctx} accounts={accounts.filter((a) => shown(a.id))} />
     </div>
     {view === 'Lista'

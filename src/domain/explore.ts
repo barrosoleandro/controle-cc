@@ -1,6 +1,7 @@
 import type { EnrichedTx } from './analytics'
 import { purchaseDate } from './simplify'
 import { linearTrend } from './trend'
+import { unaccent } from './util'
 
 /**
  * The Análises page: one filter (dates, accounts, measure, categories, text, minimum) sliced
@@ -28,7 +29,7 @@ export interface Filter {
 export type Row<T extends ExTx = ExTx> = T & { amt: number; day: string }
 
 const DAY = 86400000
-export const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase()
+export const fold = (s: string) => unaccent(s).trim().toUpperCase()
 export const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10)
 export const daysIn = (r: Range) => Math.round((Date.parse(r.to) - Date.parse(r.from)) / DAY) + 1
 export const lastDayOf = (month: string) => { const [y, m] = month.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10) }

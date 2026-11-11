@@ -1,5 +1,6 @@
 import { rowsToLines, type Row } from './pdfText'
 import type { ParsedPayslip, PayslipLine, PayslipTotals } from './payslipPdf'
+import { round2 } from '../domain/util'
 
 /**
  * US "Pay Statement" history (Vallourec USA, "EEPayrollCheckHistory_*.pdf"): one statement per
@@ -34,7 +35,7 @@ const mdyToIso = (s: string) => {
   const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(s)
   return m ? `${m[3]}-${m[1]}-${m[2]}` : null
 }
-const cents = (v: number) => Math.round(v * 100) / 100
+const cents = round2
 /** Text before the first number or amount: the row's label. */
 const labelOf = (l: string) => l.split(/\s{3}/)[0].trim()
 

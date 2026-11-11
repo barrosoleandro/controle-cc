@@ -14,12 +14,12 @@ import { monthWindow } from '../domain/period'
 import { CARD_PAYMENT, isTithe } from '../domain/categorize'
 import { findSalaryCategory, salaryAt } from '../domain/budget'
 import { applyBillMarks, brazilCard, isCardBillPayment, markHistory, recurrenceCandidates, brazilTransfer, forecastNextMonth, monthlyBills, nextMonthOf, sentToBrazil } from '../domain/forecast'
-import { Menu } from './analysis/shared'
 import { VERSION, versionLabel } from '../lib/version'
 import { Icon } from '../components/Icons'
 import { AsOf, Stat } from '../components/Page'
 import { MonthEndBox } from '../components/MonthEnd'
 import { shiftSalary } from '../domain/monthEnd'
+import { AccountMenu } from '../components/AccountMenu'
 
 // A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
 const CARD_LINE = 'Fatura do cartão Itaú'
@@ -365,19 +365,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
             ))}
           </div>
         </details>
-        <Menu label={`Contas: ${hidden.size ? `${data.accounts.length - hidden.size} de ${data.accounts.length}` : 'todas'}`} active={hidden.size > 0}>
-          <div className="row" style={{ marginBottom: 8 }}>
-            {[...new Set(data.accounts.map((a) => countryOf(a.bank)))].map((c) => (
-              <button key={c} onClick={() => setHidden(new Set(data.accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
-            ))}
-            <button onClick={() => setHidden(new Set())}>Todas</button>
-          </div>
-          {data.accounts.map((a) => (
-            <label key={a.id} className="inline opt"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
-              const s = new Set(prev); if (s.has(a.id)) s.delete(a.id); else s.add(a.id); return s
-            })} />{a.name}</label>
-          ))}
-        </Menu>
+        <AccountMenu compact accounts={data.accounts} hidden={hidden} onChange={setHidden} />
         <AsOf data={data} ids={data.accounts.filter((a) => a.type !== 'card' && shown(a.id)).map((a) => a.id)} onImport={() => ctx.go('Importar')} />
         </div>
         <button className={editing ? 'primary' : ''} onClick={() => setEditing(!editing)}><Icon name="editar" size={16} /> {editing ? 'Pronto' : 'Personalizar painel'}</button>

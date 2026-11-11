@@ -1,4 +1,5 @@
 import type { Cell, Row } from './pdfText'
+import { unaccent } from '../domain/util'
 
 /**
  * French "bulletin de paie" (layout used by Vallourec / SAP HR: columns RUBRIQUE, BASE/HEURES,
@@ -104,7 +105,7 @@ export function parsePayslipRows(pages: Row[][]): ParsedPayslip {
       const s = text(r.cells)
       const per = /PERIODE DE PAIE\s+(\S+)\s+(\d{4})/.exec(s)
       if (per) {
-        const mm = MONTHS[per[1].normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()]
+        const mm = MONTHS[unaccent(per[1]).toLowerCase()]
         if (mm) period = `${per[2]}-${mm}`
       }
       const pd = /DATE DE PAIE\s+(\d{2}\.\d{2}\.\d{4})/.exec(s)

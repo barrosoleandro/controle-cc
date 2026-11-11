@@ -1,4 +1,5 @@
 import type { BankMapEntry, Rule } from './types'
+import { unaccent } from './util'
 
 export interface CategorizableTx {
   description: string
@@ -22,7 +23,7 @@ export const isTithe = (categoryName: string) => /d[ií]zimo/i.test(categoryName
 
 export const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })
 
-const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
+const norm = (s: string) => unaccent(s).toUpperCase()
 
 /**
  * Returns the personal category name for a transaction.

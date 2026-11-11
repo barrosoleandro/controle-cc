@@ -1,3 +1,4 @@
+import { round2 } from './util'
 /**
  * Gross-yearly → net-monthly salary estimators for employees.
  * These are SIMPLIFIED models for scenario comparison, not payroll-grade calculations:
@@ -152,4 +153,4 @@ export function grossToNet(country: Country, grossYear: number, h: Household): N
   }
 }
 
-const round = (n: number) => Math.round(n * 100) / 100
+const round = round2
