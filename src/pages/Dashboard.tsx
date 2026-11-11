@@ -20,6 +20,9 @@ import { MonthEndBox } from '../components/MonthEnd'
 import { shiftSalary } from '../domain/monthEnd'
 import { AccountMenu } from '../components/AccountMenu'
 import { CARD_LINE, useBrazilSend } from '../lib/brazil'
+import { ExplicarIA } from '../components/ExplicarIA'
+import { avgByCategory } from '../domain/analytics'
+import { savingsPrompt, type SavingsFacts } from '../domain/localAi'
 
 // A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
 export const WIDGETS = [
@@ -99,6 +102,30 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   }, [data, currency, fx, selMonths, selSet, byMonth])
   const checking = balances.filter((b) => b.account.type === 'checking' && b.account.currency === 'EUR').reduce((s, b) => s + b.display, 0)
   const insights = useMemo(() => savingsInsights({ txs: txs.filter((t) => !isTithe(t.categoryName)), last3: last3(), current: today().slice(0, 7), budgets, subs, checkingBalance: checking, fmt }), [txs, subs, checking, fmt, budgets])
+  // What the local model gets for its savings suggestions: the averages of the last 3 complete months.
+  const savingFacts = useMemo((): SavingsFacts => {
+    const months = last3()
+    const spend = txs.filter((t) => !isTithe(t.categoryName))
+    const avg = avgByCategory(spend, months)
+    const income = spend.filter((t) => t.kind === 'income' && months.includes(t.month)).reduce((s, t) => s + t.value, 0) / months.length
+    const active = subs.filter((s) => s.status !== 'possibly_cancelled' && !isTithe(s.merchant))
+    const recurring = new Set(active.map((s) => s.merchant))
+    const byMerchant = new Map<string, { total: number; n: number }>()
+    for (const t of spend) {
+      if (t.kind !== 'expense' || !months.includes(t.month) || recurring.has(t.merchant)) continue
+      const m = byMerchant.get(t.merchant) ?? { total: 0, n: 0 }
+      m.total -= t.value; m.n++
+      byMerchant.set(t.merchant, m)
+    }
+    return {
+      moeda: currency, meses: `${monthLabel(months[0])} a ${monthLabel(months.at(-1)!)}`,
+      receitaMedia: income, despesaMedia: [...avg.values()].reduce((s, v) => s + v, 0),
+      categorias: [...avg].filter(([, v]) => v > 1).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([nome, media]) => ({ nome, media, orcamento: budgets.get(nome) ?? null })),
+      recorrentes: active.sort((a, b) => b.monthlyCost - a.monthlyCost).slice(0, 12).map((s) => ({ nome: s.merchant, mensal: s.monthlyCost })),
+      estabelecimentos: [...byMerchant].sort((a, b) => b[1].total - a[1].total).slice(0, 10).map(([nome, m]) => ({ nome, media: m.total / months.length, vezes: m.n })),
+      sinais: insights.slice(0, 8).map((i) => i.title),
+    }
+  }, [txs, subs, budgets, currency, insights])
   const alerts = subscriptionAlerts(subs, today(), fmt).filter((a) => !data.settings.dismissed_alerts.includes(a.key))
 
   // What to send to Brazil before next month starts; it ignores the account filter (see useBrazilSend).
@@ -212,6 +239,10 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
               <div className="muted" style={{ fontSize: 13 }}>{i.detail}</div>
             </div>
           ))}
+          {savingFacts.categorias.length > 0 && <ExplicarIA label="Sugerir cortes com a IA local"
+            signature={JSON.stringify([savingFacts.meses, Math.round(savingFacts.despesaMedia), savingFacts.categorias.length, savingFacts.recorrentes.length])}
+            build={() => savingsPrompt(savingFacts)}
+            note="Sugestões escritas por um modelo que roda neste computador, a partir das médias dos últimos 3 meses das contas marcadas; nada sai daqui. Os valores vêm do app; a escolha dos cortes é do modelo e pode não servir para você." />}
         </div>)
       case 'monthly': return (
         <div className="card"><h3>Receitas e despesas</h3>

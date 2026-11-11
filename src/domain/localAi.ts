@@ -161,6 +161,49 @@ export function analysisPrompt(f: AnalysisFacts): { system: string; prompt: stri
   return { system: 'Você resume gastos e receitas de uma pessoa física, em português do Brasil, de forma direta e sem moralismo.', prompt: linhas.filter((l) => l !== '').join('\n') }
 }
 
+/** What the savings suggestions are built from: monthly averages already computed by the app. */
+export interface SavingsFacts {
+  moeda: string
+  meses: string // e.g. "ago/26 a out/26"
+  receitaMedia: number
+  despesaMedia: number
+  categorias: { nome: string; media: number; orcamento: number | null }[] // biggest first
+  recorrentes: { nome: string; mensal: number }[]
+  estabelecimentos: { nome: string; media: number; vezes: number }[] // biggest monthly spend, not recurring
+  sinais: string[] // the app's own rule-based findings, as shown on screen
+}
+
+/**
+ * Savings suggestions from the local model. It only picks and words cuts among the categories,
+ * recurring charges and merchants listed, with the figures given; it adds no number of its own.
+ */
+export function savingsPrompt(f: SavingsFacts): { system: string; prompt: string } {
+  const n = (v: number) => `${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${f.moeda}`
+  const linhas = [
+    `Gastos de uma pessoa física, média por mês de ${f.meses}.`,
+    `Receitas: ${n(f.receitaMedia)}/mês · despesas: ${n(f.despesaMedia)}/mês · sobra: ${n(f.receitaMedia - f.despesaMedia)}/mês.`,
+    '',
+    'Categorias de despesa (média por mês):',
+    ...f.categorias.map((c) => `- ${c.nome}: ${n(c.media)}${c.orcamento !== null ? ` (orçamento ${n(c.orcamento)})` : ''}`),
+  ]
+  if (f.recorrentes.length) linhas.push('', 'Cobranças recorrentes (por mês):', ...f.recorrentes.map((r) => `- ${r.nome}: ${n(r.mensal)}`))
+  if (f.estabelecimentos.length) linhas.push('', 'Estabelecimentos com mais gasto, fora os recorrentes (média por mês):', ...f.estabelecimentos.map((e) => `- ${e.nome}: ${n(e.media)} (${e.vezes} compra(s) no período)`))
+  if (f.sinais.length) linhas.push('', 'O que o app já apontou:', ...f.sinais.map((s) => `- ${s}`))
+  linhas.push(
+    '',
+    'Proponha de 3 a 5 cortes concretos, do maior ganho para o menor, em no máximo 180 palavras. Para cada um:',
+    '- diga em qual categoria, cobrança ou estabelecimento da lista mexer e o que fazer (cancelar, trocar, reduzir a frequência);',
+    '- use só os valores da lista para dizer de quanto é o gasto hoje.',
+    '',
+    'Limites, importante:',
+    '- Os números acima são fatos já conferidos. NÃO refaça contas, NÃO estime percentuais nem economia, e NÃO cite número que não esteja na lista.',
+    '- Só sugira cortes em itens que estão na lista. Não invente estabelecimento, serviço ou preço.',
+    '- Não dê conselho de investimento, fiscal ou de crédito.',
+    '- Não faça julgamento moral de gasto nenhum, nem comente estilo de vida.',
+  )
+  return { system: 'Você sugere cortes de gastos de uma pessoa física, em português do Brasil, de forma direta, prática e sem moralismo.', prompt: linhas.join('\n') }
+}
+
 export interface InflationFacts {
   pais: string
   moeda: string
