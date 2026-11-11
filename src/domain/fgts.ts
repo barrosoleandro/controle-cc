@@ -122,7 +122,9 @@ export function parseFgtsExtract(lines: string[]): FgtsDeposit[] {
   const out: FgtsDeposit[] = []
   for (const raw of lines) {
     const l = fold(raw)
-    if (!/\bDEP/.test(l) || /JAM|SAQUE|ESTORNO|SALDO ANTERIOR|TOTAL/.test(l)) continue
+    // Only what the employer deposited: money moved between FGTS accounts (TRANSFERENCIA … DEP),
+    // a withdrawal put back (AC REPOSICAO DEP) and any debit (-R$) are not deposits.
+    if (!/\bDEP/.test(l) || /JAM|SAQUE|ESTORNO|SALDO ANTERIOR|TOTAL|TRANSFERENCIA|REPOSICAO|REGULARIZACAO|-\s*R\$/.test(l)) continue
     const date = l.match(/\b(\d{2})\/(\d{2})\/(\d{4})\b/)
     let rest = date ? l.replace(date[0], ' ') : l
     let competencia: string | null = null
@@ -149,6 +151,12 @@ export function parseFgtsExtract(lines: string[]): FgtsDeposit[] {
     out.push({ competencia, valor, linha: raw.trim(), inferida })
   }
   return out
+}
+
+/** The Caixa "Extrato completo" (app FGTS): monthly JAM credits and/or the rescisão value header. */
+export function looksLikeFgtsExtract(lines: string[]): boolean {
+  const t = fold(lines.slice(0, 60).join('\n'))
+  return /CREDITO DE JAM|VALOR PARA FINS RESCISORIOS/.test(t) && /\bDEP/.test(t)
 }
 
 /** Soma os depósitos por competência (uma competência pode ter mais de um depósito, ex.: complemento). */
