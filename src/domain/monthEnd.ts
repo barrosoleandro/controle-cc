@@ -18,6 +18,13 @@ export function shiftSalary<T extends { kind: string; categoryName: string; book
     ? { ...t, month: nextMonth(t.month) } : t))
 }
 
+/** The salary of the month after `month` already credited in `month` (rows as shiftSalary leaves them): in today's balance, but not this month's money. */
+export function salaryAhead(txs: { kind: string; categoryName: string; booking_date: string; month: string; value: number }[], salary: string | undefined, month: string): number {
+  if (!salary) return 0
+  const next = nextMonth(month)
+  return txs.filter((t) => t.kind === 'income' && t.categoryName === salary && t.month === next && t.booking_date.slice(0, 7) === month).reduce((s, t) => s + t.value, 0)
+}
+
 export const rowKey = (r: Pick<PlanRow, 'kind' | 'name'>) => `${r.kind}/${r.name}`
 
 export interface MonthEndSide { real: number; estimado: number; total: number }

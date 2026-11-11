@@ -98,3 +98,17 @@ describe('falta typed by the user', () => {
     expect(applyPlanned(plan, new Map([['expense/Mercado', 200]])).expense[0]).toMatchObject({ manual: 150, falta: 50, previsto: 500 })
   })
 })
+
+describe('salary paid ahead', () => {
+  it('is the next month salary already credited this month, and nothing else', async () => {
+    const { salaryAhead } = await import('../src/domain/monthEnd')
+    const rows = shiftSalary([
+      { kind: 'income', categoryName: 'Salário', booking_date: '2026-10-28', month: '2026-10', value: 3000 },
+      { kind: 'income', categoryName: 'Salário', booking_date: '2026-11-27', month: '2026-11', value: 3100 },
+      { kind: 'income', categoryName: 'Salário', booking_date: '2026-11-05', month: '2026-11', value: 50 },
+      { kind: 'income', categoryName: 'Outros', booking_date: '2026-11-28', month: '2026-11', value: 70 },
+    ], 'Salário')
+    expect(salaryAhead(rows, 'Salário', '2026-11')).toBe(3100)
+    expect(salaryAhead(rows, undefined, '2026-11')).toBe(0)
+  })
+})

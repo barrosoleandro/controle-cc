@@ -2,11 +2,11 @@ import { Fragment, useCallback, useMemo, useState } from 'react'
 import { payerOf as cardPayers } from '../domain/cards'
 import type { Ctx } from '../App'
 import { nextMonth, type ManualLine, type PlanRow, type RecurringExpect } from '../domain/monthPlan'
-import { applyPlanned, rowKey, SALARY_FROM_DAY } from '../domain/monthEnd'
+import { applyPlanned, monthEnd, rowKey, salaryAhead, SALARY_FROM_DAY } from '../domain/monthEnd'
 import { findSalaryCategory } from '../domain/budget'
 import { useMonthPlans, usePlanned } from '../lib/plan'
 import { monthLabel } from '../lib/format'
-import { currentMonth, hiddenByDefault, today, useFmt } from '../lib/hooks'
+import { currentMonth, hiddenByDefault, today, useBalances, useFmt } from '../lib/hooks'
 import { CategorySelect } from '../components/CategorySelect'
 import { Help, Tabs } from '../components/Page'
 import { AccountMenu } from '../components/AccountMenu'
@@ -44,6 +44,12 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
     const early = e.kind === 'income' && e.categoryName === salary && e.day >= SALARY_FROM_DAY
     return `${String(e.day).padStart(2, '0')}/${(early ? prevMonth(m) : m).slice(5, 7)}`
   }
+  // Balance each month is expected to end with: today's balance of the ticked accounts plus what is
+  // still to come in, less what is still to go out; the month after starts from there.
+  const balances = useBalances(ctx)
+  const saldoHoje = balances.filter((b) => shown(b.account.id)).reduce((s, b) => s + b.display, 0)
+  const fim = monthEnd(plans[0], saldoHoje, salaryAhead(txs, salary, cur))
+  const saldoFim = [fim.saldoFim, fim.saldoFim + plans[1].resultado]
   const catById = useMemo(() => new Map(data.categories.map((c) => [c.id, c])), [data.categories])
   const plan = plans[months.indexOf(month as typeof months[number])] ?? plans[0]
 
@@ -197,6 +203,17 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
             <div className="sub">receitas {fmt(p.totals.income.previsto)} · despesas {fmt(p.totals.expense.previsto)}</div>
           </div>
         ))}
+        <div className="kpi" title="Saldo de hoje das contas marcadas, mais o que ainda entra, menos o que ainda sai neste mês">
+          <div className="l">Saldo previsto no fim de {monthLabel(months[0])}</div>
+          <div className={`v ${saldoFim[0] < 0 ? 'neg' : ''}`}>{fmt(saldoFim[0])}</div>
+          <div className="sub">hoje {fmt(fim.saldoHoje)} · entra {fmt(fim.receitas.estimado)} · sai {fmt(fim.despesas.estimado)}
+            {fim.salarioSeguinte > 0 && ` · sem o salário de ${monthLabel(months[1]).split(' ')[0]} já creditado (${fmt(fim.salarioSeguinte)})`}</div>
+        </div>
+        <div className="kpi" title="Saldo previsto no fim deste mês mais o resultado previsto do mês seguinte">
+          <div className="l">Saldo previsto no fim de {monthLabel(months[1])}</div>
+          <div className={`v ${saldoFim[1] < 0 ? 'neg' : ''}`}>{fmt(saldoFim[1])}</div>
+          <div className="sub">{fmt(saldoFim[0])} {plans[1].resultado < 0 ? '−' : '+'} {fmt(Math.abs(plans[1].resultado))} do resultado do mês</div>
+        </div>
         <div className="kpi"><div className="l">Ainda falta pagar em {monthLabel(plan.month)}</div><div className="v warn">{fmt(plan.totals.expense.falta)}</div>
           <div className="sub">pela média de {monthLabel(avgMonths[0])} a {monthLabel(avgMonths.at(-1)!)}</div></div>
       </div>
@@ -260,6 +277,8 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
           <strong> ajustar</strong> transforma o previsto numa linha manual do mês, com data, descrição e valor editáveis; para um mês em que ele não vai acontecer, ajuste o valor para 0.</p>
         <p><strong>Salário</strong>: o que cai do dia {SALARY_FROM_DAY} em diante conta como receita do mês seguinte (é pago no fim do mês anterior), igual ao Painel.
           Por isso o salário recebido no fim do mês passado aparece no realizado deste mês com a data de lá, e o que ainda vai cair no fim deste mês está na previsão do próximo.</p>
+        <p><strong>Saldo previsto no fim do mês</strong> = saldo de hoje das contas marcadas + o que ainda entra − o que ainda sai (as colunas Manual e Falta). O do mês seguinte parte dele e soma o resultado previsto daquele mês.
+          Transferências para contas suas que não estão marcadas não entram na conta: se você costuma mandar dinheiro para outra conta, insira uma linha manual ou marque a conta de destino.</p>
         <p>As linhas manuais valem para qualquer conta marcada. Quando o lançamento de verdade for importado, exclua a linha manual correspondente.</p>
       </Help>
     </div>
