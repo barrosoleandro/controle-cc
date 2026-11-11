@@ -33,10 +33,15 @@ export function vendorWords(description: string): Set<string> {
   return new Set((plain.match(/[A-Z]+|\d+/g) ?? []).filter((w) => w.length >= 3 && !GENERIC.has(w)))
 }
 
-/** Same vendor when the descriptions share a word (or one of them has no usable word). */
+// A transfer described only by where it went, with no name: the BCP CSV writes "VIR. VERS CPT DEPOT
+// PART." where its PDF names the person ("VIR SEPA M DUPONT"), so the two share no word.
+const NAMELESS = new Set([...MOVEMENT, 'CPT', 'COMPTE', 'DEPOT', 'PART'])
+
+/** Same vendor when the descriptions share a word (or one of them names nobody). */
 export function sameVendor(a: string, b: string): boolean {
   const wa = vendorWords(a), wb = vendorWords(b)
-  if (!wa.size || !wb.size) return true
+  const named = (ws: Set<string>) => [...ws].some((w) => !NAMELESS.has(w))
+  if (!named(wa) || !named(wb)) return true
   for (const w of wa) if (wb.has(w)) return true
   return false
 }
