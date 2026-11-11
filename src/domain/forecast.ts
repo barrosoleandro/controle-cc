@@ -133,6 +133,22 @@ const ARRIVAL = /OP REC EXT|WISE|REVOLUT|EXTERIOR|C[AÂ]MBIO|REMESSA/i
 
 export interface SentToBrazil { amount: number; date: string }
 
+/** A transfer to Brazil made from this day on goes with the salary paid at the end of the month: it pays for the month after. */
+export const COVER_FROM_DAY = 20
+
+/** The month a transfer to Brazil pays for (yyyy-mm): its own, or the next one when made from COVER_FROM_DAY on. */
+export function coveredMonth(date: string): string {
+  const month = date.slice(0, 7)
+  if (Number(date.slice(8, 10)) < COVER_FROM_DAY) return month
+  const [y, m] = month.split('-').map(Number)
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`
+}
+
+/** Every transfer received in the Brazilian accounts from abroad (txs: Brazilian accounts only, value in BRL). */
+export function arrivalsInBrazil(txs: { booking_date: string; value: number; kind: string; description: string }[]): SentToBrazil[] {
+  return txs.filter((t) => t.kind === 'transfer' && t.value > 0 && ARRIVAL.test(t.description)).map((t) => ({ amount: t.value, date: t.booking_date }))
+}
+
 /** Transfers already received in Brazil during `month` (txs: Brazilian accounts only, value in BRL). */
 export function sentToBrazil(txs: { booking_date: string; month: string; value: number; kind: string; description: string }[], month: string): SentToBrazil | null {
   const hits = txs.filter((t) => t.month === month && t.kind === 'transfer' && t.value > 0 && ARRIVAL.test(t.description))

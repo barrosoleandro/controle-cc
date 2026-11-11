@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import type { Ctx } from '../App'
 import { CARD_PAYMENT, isTithe } from '../domain/categorize'
 import { countryOf } from '../domain/countries'
-import { applyBillMarks, brazilCard, brazilTransfer, forecastNextMonth, isCardBillPayment, monthlyBills, nextMonthOf, sentToBrazil } from '../domain/forecast'
+import { applyBillMarks, arrivalsInBrazil, brazilCard, brazilTransfer, forecastNextMonth, isCardBillPayment, monthlyBills, nextMonthOf, sentToBrazil } from '../domain/forecast'
 import { today, useBalances } from './hooks'
 
 export const CARD_LINE = 'Fatura do cartão Itaú'
@@ -55,6 +55,7 @@ export function useBrazilSend(ctx: Ctx) {
       ...brazilTransfer(br, cardNext, balance, now),
       lines: [{ label: CARD_LINE, amount: cardNext, date: '' }, ...br.monthlyLines, ...br.periodic],
       sent: sentToBrazil(brTx, now.slice(0, 7)),
+      arrivals: arrivalsInBrazil(brTx),
     }
   }, [ctx.etx, data.accounts, data.cardStatements, data.settings.dashboard?.billMarks, balances, fx])
 }
