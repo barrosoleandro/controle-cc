@@ -126,7 +126,7 @@ export function brazilCard(bills: CardBill[], cardIds: Set<string>, month: strin
 
 /** The card bill paid from the checking account: counted apart from the account's own bills. */
 export const isCardBillPayment = (t: { bank_category: string | null; description: string }) =>
-  t.bank_category === CARD_PAYMENT || /FATURA|ITAUCARD|PAG(TO|AMENTO)? CART/i.test(t.description)
+  t.bank_category === CARD_PAYMENT || /FATURA|ITAUCARD|PAG(TO|AMENTO)? CART|\bPERS (INFINIT|BLACK)\b|PERSONNALITE/i.test(t.description)
 
 /** Money that arrived from abroad in the Brazilian accounts: what a transfer from the French account looks like there. */
 const ARRIVAL = /OP REC EXT|WISE|REVOLUT|EXTERIOR|C[AÂ]MBIO|REMESSA/i

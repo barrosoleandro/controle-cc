@@ -7,6 +7,7 @@ import { CARD_BILL, matchBillDebits, matchCardPayments, payerOf, type StoredCard
 import { dedupeKey, markDuplicates, sameVendor, withFingerprints } from '../domain/fingerprint'
 import { withAiNote } from '../domain/claudeExchange'
 import type { ContractItem } from '../domain/payroll'
+import { isCardBillPayment } from '../domain/forecast'
 
 export interface DashboardPrefs {
   widgets: { id: string; visible: boolean }[]
@@ -109,7 +110,7 @@ export async function loadAll(): Promise<AppData> {
     settings: settingsRows[0] ?? { display_currency: 'EUR', dashboard: { widgets: [] }, dismissed_alerts: [] },
     scenarios,
     // A bill imported while open shows as paid once its payment was imported (see withPaidStatus).
-    cardStatements: withPaidStatus(accs, cardStatements.map((c) => ({ ...c, total: Number(c.total) })), txs),
+    cardStatements: withPaidStatus(accs, cardStatements.map((c) => ({ ...c, total: Number(c.total) })), txs, isCardBillPayment),
   }
 }
 
