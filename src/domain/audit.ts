@@ -9,13 +9,14 @@
  * description is reported apart, with the stored row, for the user to judge.
  */
 import type { ParsedTransaction } from './types'
+import { unaccent } from './util'
 
 export interface AuditStored { id: string; accountRef: string; accountName: string; date: string; amount: number; description: string }
 /** ok: stored as is · similar: same account, date and amount, another description · missing · noAccount: the file's account is not registered. */
 export type AuditStatus = 'ok' | 'similar' | 'missing' | 'noAccount'
 export interface AuditRow { tx: ParsedTransaction; status: AuditStatus; match?: AuditStored }
 
-const plain = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim()
+const plain = (s: string) => unaccent(s).toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim()
 const key = (ref: string, date: string, amount: number) => `${ref}|${date}|${amount.toFixed(2)}`
 
 /** Each stored row answers for one file row at most: two equal purchases need two stored rows. */

@@ -1,12 +1,13 @@
 import type { AccountHint, CardStatement, ParseResult, ParsedTransaction } from '../domain/types'
 import { CARD_PAYMENT } from '../domain/categorize'
 import { round2 } from './util'
+import { unaccent } from '../domain/util'
 
 /** A spreadsheet cell as read-excel-file returns it. */
 export type Cell = string | number | boolean | Date | null | undefined
 
 const clean = (c: Cell) => (c == null ? '' : String(c).replace(/\s+/g, ' ').trim())
-const fold = (c: Cell) => clean(c).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+const fold = (c: Cell) => unaccent(clean(c)).toLowerCase()
 
 function isoDate(c: Cell): string | null {
   if (c instanceof Date && !Number.isNaN(c.getTime())) return c.toISOString().slice(0, 10)

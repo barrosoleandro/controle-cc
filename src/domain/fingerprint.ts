@@ -1,5 +1,6 @@
 import type { ParsedTransaction } from './types'
 import { merchantKey } from './categorize'
+import { unaccent } from './util'
 
 /**
  * The vendor as far as duplicate detection is concerned: its first word that names someone
@@ -29,7 +30,7 @@ const MOVEMENT = new Set(['VIREMENT', 'VERS', 'RECU', 'EMIS', 'INST', 'TED', 'DO
  * split apart ("INT1660e50e" → INT, 1660) and short or generic words are dropped.
  */
 export function vendorWords(description: string): Set<string> {
-  const plain = description.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
+  const plain = unaccent(description).toUpperCase()
   return new Set((plain.match(/[A-Z]+|\d+/g) ?? []).filter((w) => w.length >= 3 && !GENERIC.has(w)))
 }
 

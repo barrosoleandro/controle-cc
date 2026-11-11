@@ -1,6 +1,7 @@
 import type { AccountHint, Checkpoint, ParseResult, ParsedTransaction } from '../domain/types'
 import type { Row } from './pdfText'
 import { round2 } from './util'
+import { unaccent } from '../domain/util'
 
 // Columns: date x≈54, value date x≈86, operation x≈135, debit amounts x≈420–470,
 // credit amounts from x≈500. Rows without a leading date are details (mandate
@@ -16,7 +17,7 @@ const MONTHS: Record<string, string> = {
   janvier: '01', fevrier: '02', mars: '03', avril: '04', mai: '05', juin: '06',
   juillet: '07', aout: '08', septembre: '09', octobre: '10', novembre: '11', decembre: '12',
 }
-const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+const fold = (s: string) => unaccent(s).toLowerCase()
 const eur = (s: string) => round2(Number(s.replace(/[\s  €¤]/g, '').replace(',', '.')))
 
 export function looksLikeCcfPdf(lines: string[]): boolean {

@@ -5,12 +5,12 @@ import { nextMonth, type ManualLine, type PlanRow, type RecurringExpect } from '
 import { SALARY_FROM_DAY } from '../domain/monthEnd'
 import { findSalaryCategory } from '../domain/budget'
 import { useMonthPlans } from '../lib/plan'
-import { countryOf } from '../domain/countries'
 import { monthLabel } from '../lib/format'
 import { currentMonth, hiddenByDefault, today, useFmt } from '../lib/hooks'
 import { CategorySelect } from '../components/CategorySelect'
 import { Help, Tabs } from '../components/Page'
-import { Menu } from './analysis/shared'
+import { AccountMenu } from '../components/AccountMenu'
+import { prevMonth } from '../domain/util'
 
 /**
  * Current and next month: what is already in (imported, locked), lines added by hand (editable)
@@ -29,8 +29,6 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
   const shown = useCallback((id: string) => accounts.some((a) => a.id === id) && !hidden.has(id), [accounts, hidden])
   const payerOf = useMemo(() => cardPayers(data.accounts), [data.accounts])
   const inScope = useCallback((id: string) => shown(id) || (payerOf.has(id) && shown(payerOf.get(id)!)), [shown, payerOf])
-  const nShown = accounts.filter((a) => shown(a.id)).length
-  const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
 
   // A transfer with no other side in the user's accounts (a resgate from savings not in the app) is money in or out here.
   // Same rule as the month-end box on Painel: the salary paid at the end of a month is the next month's.
@@ -40,9 +38,7 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
   /** Day and month a pending recurring line is expected on: the salary of a month comes at the end of the one before. */
   const expectedOn = (e: RecurringExpect, m: string) => {
     const early = e.kind === 'income' && e.categoryName === salary && e.day >= SALARY_FROM_DAY
-    const mo = Number(m.slice(5, 7))
-    const mm = early ? (mo === 1 ? 12 : mo - 1) : mo
-    return `${String(e.day).padStart(2, '0')}/${String(mm).padStart(2, '0')}`
+    return `${String(e.day).padStart(2, '0')}/${(early ? prevMonth(m) : m).slice(5, 7)}`
   }
   const catById = useMemo(() => new Map(data.categories.map((c) => [c.id, c])), [data.categories])
   const plan = plans[months.indexOf(month as typeof months[number])] ?? plans[0]
@@ -175,20 +171,7 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
     <div className="card" style={{ gridColumn: '1/-1' }}>
       <div className="toolbar" style={{ marginBottom: 12 }}>
         <Tabs label="Mês" items={months.map((m) => [m, monthLabel(m)] as const)} value={month} onChange={setMonth} />
-        <Menu align="right" active={nShown < accounts.length}
-          label={nShown === accounts.length ? 'Todas as contas' : nShown === 1 ? accounts.find((a) => shown(a.id))?.name ?? '1 conta' : `${nShown} de ${accounts.length} contas`}>
-          <div className="row" style={{ marginBottom: 8 }}>
-            {countries.map((c) => <button key={c} onClick={() => setHidden(new Set(accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>)}
-            <button onClick={() => setHidden(new Set())}>Todas</button>
-          </div>
-          <div className="opts">
-            {accounts.map((a) => (
-              <label key={a.id} className="inline opt"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
-                const next = new Set(prev); if (next.has(a.id)) next.delete(a.id); else next.add(a.id); return next
-              })} />{a.name} <span className="muted" style={{ fontSize: 12 }}>· {countryOf(a.bank)}</span></label>
-            ))}
-          </div>
-        </Menu>
+        <AccountMenu align="right" accounts={accounts} hidden={hidden} onChange={setHidden} />
       </div>
       <div className="kpis">
         {plans.map((p) => (

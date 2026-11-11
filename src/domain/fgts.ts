@@ -1,4 +1,5 @@
 import type { PayCurrency, PayslipLine } from '../parsers/payslipPdf'
+import { lastDayOfMonth, prevMonth, round2, unaccent } from './util'
 
 /**
  * FGTS de expatriado (CLT ativa, transferido, Lei 7.064/82, art. 3º, parágrafo único): os 8% incidem
@@ -33,8 +34,7 @@ export interface FgtsCheck {
   outros: { competencia: string; valor: number }[]
 }
 
-const round = (v: number) => Math.round(v * 100) / 100
-const lastDay = (ym: string) => { const [y, m] = ym.split('-').map(Number); return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}` }
+const round = round2
 
 /** One payment that enters the FGTS base: amount, currency, the day of the rate, and what was left out. */
 interface Part { currency: PayCurrency; amount: number; date: string; excluded: number }
@@ -70,7 +70,7 @@ export function checkFgts(payslips: FgtsPayslip[], deposits: Record<string, numb
     const competencia = p.period.slice(0, 7)
     const list = p.currency === 'USD'
       ? usCashParts(p.lines ?? [])
-      : p.gross && p.gross > 0 ? [{ currency: 'EUR' as const, amount: p.gross, date: p.pay_date ?? lastDay(competencia), excluded: 0 }] : []
+      : p.gross && p.gross > 0 ? [{ currency: 'EUR' as const, amount: p.gross, date: p.pay_date ?? lastDayOfMonth(competencia), excluded: 0 }] : []
     parts.set(competencia, [...(parts.get(competencia) ?? []), ...list])
   }
   const rows = [...parts.entries()].filter(([, ps]) => ps.some((x) => x.amount > 0)).map(([competencia, ps]): FgtsRow => {
@@ -107,8 +107,7 @@ export function checkFgts(payslips: FgtsPayslip[], deposits: Record<string, numb
 const MESES = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
 const AMOUNT = /(?<![\d,])-?\d{1,3}(?:\.\d{3})*,\d{2}(?![\d])/g
 const brNumber = (s: string) => Number(s.replace(/\./g, '').replace(',', '.'))
-const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
-const prevMonth = (ym: string) => { const [y, m] = ym.split('-').map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}` }
+const fold = (s: string) => unaccent(s).toUpperCase()
 
 export interface FgtsDeposit { competencia: string; valor: number; linha: string; /** Sem competência escrita: o mês anterior ao do lançamento (o depósito vence até o dia 20 do mês seguinte). */ inferida: boolean }
 

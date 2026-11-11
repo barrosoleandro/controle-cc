@@ -1,4 +1,5 @@
 import type { IconName } from '../components/Icons'
+import { unaccent } from '../domain/util'
 
 /**
  * Every page, grouped the way the side menu shows them, with the one line that says what the
@@ -55,4 +56,4 @@ export const SECTIONS: { tab: Tab; sub: string; label: string; keywords?: string
 ]
 
 /** Accent- and case-insensitive text, for matching what is typed in the search. */
-export const fold = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+export const fold = (s: string) => unaccent(s).toLowerCase()

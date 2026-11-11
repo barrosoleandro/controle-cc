@@ -17,6 +17,7 @@ import { DEFAULT_OLLAMA, listModels, loadOllama, normalizeUrl, ollamaReady, save
 import { chooseDevice, deleteDevice, DEVICE_EVENT, deviceState, saveThisDevice, syncDevice } from '../lib/device'
 import { Help, Tabs } from '../components/Page'
 import { Devices } from '../components/Devices'
+import { unaccent } from '../domain/util'
 
 const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações', 'IA local', 'Aparelhos', 'Aparência'] as const
 
@@ -529,7 +530,7 @@ function Rules({ ctx }: { ctx: Ctx }) {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
-  const plain = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  const plain = (s: string) => unaccent(s).toLowerCase()
   const q = plain(busca.trim())
   const shown = q ? data.rules.filter((r) => plain(`${r.pattern} ${r.category}`).includes(q)) : data.rules
   /** Every rule change is followed by a refresh of the whole base, so the lists never lag behind. */

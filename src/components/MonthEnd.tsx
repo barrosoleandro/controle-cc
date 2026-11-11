@@ -10,6 +10,7 @@ import { currentMonth, today, useBalances, useFmt } from '../lib/hooks'
 import { useMonthPlans } from '../lib/plan'
 import { ask, loadOllama, OLLAMA_EVENT, ollamaReady } from '../lib/ollama'
 import { Stat } from './Page'
+import { round2 } from '../domain/util'
 
 /** The local model's last estimate, kept per computer: the same numbers on screen do not ask again. */
 const CACHE = 'monthEndAi'
@@ -196,4 +197,4 @@ export function MonthEndBox({ ctx, inScope }: { ctx: Ctx; inScope: (accountId: s
   )
 }
 
-const round = (v: number) => Math.round(v * 100) / 100
+const round = round2

@@ -59,18 +59,6 @@ export function byCategory(txs: EnrichedTx[], months?: Set<string>): { name: str
   return [...map].map(([name, value]) => ({ name, value })).filter((x) => x.value > 0.005).sort((a, b) => b.value - a.value)
 }
 
-export function topMerchants(txs: EnrichedTx[], months: Set<string>, n = 10) {
-  const map = new Map<string, { merchant: string; count: number; total: number }>()
-  for (const t of txs) {
-    if (t.kind !== 'expense' || !months.has(t.month)) continue
-    const m = map.get(t.merchant) ?? { merchant: t.merchant, count: 0, total: 0 }
-    m.count++
-    m.total -= t.value
-    map.set(t.merchant, m)
-  }
-  return [...map.values()].sort((a, b) => b.total - a.total).slice(0, n)
-}
-
 /** Average monthly expense per category over the last `n` complete months. */
 export function avgByCategory(txs: EnrichedTx[], lastMonths: string[]): Map<string, number> {
   const set = new Set(lastMonths)
