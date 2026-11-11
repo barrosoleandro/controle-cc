@@ -7,14 +7,19 @@
  */
 import type { MonthPlan, PlanRow } from './monthPlan'
 import { nextMonth } from './monthPlan'
+import { isTithe } from './categorize'
 
 /** A salary credited from this day on is the next month's (it is paid at the end of the month before). */
 export const SALARY_FROM_DAY = 20
 
-/** Moves each salary credited late in a month to the month it is for, so each month has its own. */
+/**
+ * Moves each salary credited late in a month to the month it is for, so each month has its own; the
+ * tithe paid late in a month goes with it, as it is paid out of that salary.
+ */
 export function shiftSalary<T extends { kind: string; categoryName: string; booking_date: string; month: string }>(txs: T[], salary: string | undefined): T[] {
   if (!salary) return txs
-  return txs.map((t) => (t.kind === 'income' && t.categoryName === salary && Number(t.booking_date.slice(8, 10)) >= SALARY_FROM_DAY
+  const late = (t: T) => Number(t.booking_date.slice(8, 10)) >= SALARY_FROM_DAY
+  return txs.map((t) => (late(t) && ((t.kind === 'income' && t.categoryName === salary) || (t.kind === 'expense' && isTithe(t.categoryName)))
     ? { ...t, month: nextMonth(t.month) } : t))
 }
 

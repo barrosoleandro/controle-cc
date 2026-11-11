@@ -291,7 +291,9 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
           Na categoria, o que falta é pelo menos a soma desses recorrentes, mesmo que a média da categoria seja menor.
           <strong> ajustar</strong> transforma o previsto numa linha manual do mês, com data, descrição e valor editáveis; para um mês em que ele não vai acontecer, ajuste o valor para 0.</p>
         <p><strong>Salário</strong>: o que cai do dia {SALARY_FROM_DAY} em diante conta como receita do mês seguinte (é pago no fim do mês anterior), igual ao Painel.
-          Por isso o salário recebido no fim do mês passado aparece no realizado deste mês com a data de lá, e o que ainda vai cair no fim deste mês está na previsão do próximo.</p>
+          Por isso o salário recebido no fim do mês passado aparece no realizado deste mês com a data de lá, e o que ainda vai cair no fim deste mês está na previsão do próximo.
+          O salário é previsto pelo último valor cheio recebido, não pela média; depois que ele entra no mês, a categoria não espera mais nada.
+          O dízimo é sempre 10% do salário previsto do mês, menos o que já foi pago; o pago junto com o salário, do dia {SALARY_FROM_DAY} em diante, conta no mesmo mês que ele.</p>
         <p><strong>Saldo previsto no fim do mês</strong> = saldo de hoje das contas marcadas + o que ainda entra − o que ainda sai (as colunas Manual e Falta). O do mês seguinte parte dele e soma o resultado previsto daquele mês.
           Transferências para contas suas que não estão marcadas não entram na conta: se você costuma mandar dinheiro para outra conta, insira uma linha manual ou marque a conta de destino.</p>
         <p><strong>{WISE_LINE}</strong>: o que sai das contas marcadas para pagar a fatura do cartão e os recorrentes da conta do Itaú, menos o saldo que já está lá — o mesmo valor do aviso do Painel.
