@@ -68,7 +68,7 @@ recognised on its first visit.
 ## Setup (≈20 minutes, once)
 
 1. **Supabase**: create a new project (e.g. `controle-cc`, region Frankfurt/Paris).
-   - SQL Editor → paste and run `supabase/migrations/001_schema.sql`, then `002_payslips.sql`, then `003_merchant_profiles.sql`, then `004_cards.sql` (credit cards linked to accounts), `005_benchmarks.sql` (market), `006_devices.sql` (local-AI settings per computer), `007_import_log.sql` (rows each import skipped, for the audit) and `008_device_trust.sql` (remembered devices, revocable from Ajustes → Aparelhos).
+   - SQL Editor → paste and run `supabase/migrations/001_schema.sql`, then `002_payslips.sql`, then `003_merchant_profiles.sql`, then `004_cards.sql` (credit cards linked to accounts), `005_benchmarks.sql` (market), `006_devices.sql` (local-AI settings per computer), `007_import_log.sql` (rows each import skipped, for the audit), `008_device_trust.sql` (remembered devices, revocable from Ajustes → Aparelhos) and `009_payslip_currency.sql` (US pay statements in dollars next to the French payslips).
    - Authentication → Sign In / Providers → **disable "Allow new users to sign up"**.
    - Authentication → Multi-Factor → make sure **TOTP is enabled**.
    - For the e-mail code login: Authentication → Emails → the "Magic Link" template must contain `{{ .Token }}`,

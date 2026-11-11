@@ -50,7 +50,7 @@ export interface ParseResult {
   warnings: string[]
   accounts?: AccountHint[]
   cardStatements?: CardStatement[]
-  payslip?: ParsedPayslip // a bulletin de paie dropped among the statements: saved as a payslip, not as rows
+  payslips?: ParsedPayslip[] // a bulletin de paie or US pay statements dropped among the statements: saved as payslips, not as rows
 }
 
 export interface Account {

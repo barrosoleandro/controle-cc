@@ -64,7 +64,7 @@ export function ImportAudit({ ctx }: { ctx: Ctx }) {
         setBusy(`Conferindo ${f.name}…`)
         const { loadPdf } = await import('../lib/pdf')
         const res = await parseStatement(f.name, new Uint8Array(await f.arrayBuffer()), loadPdf)
-        if (res.payslip) continue
+        if (res.payslips) continue
         out.push({ name: f.name, source: res.source, rows: auditRows(res.transactions, stored, refs) })
       }
       setFiles(out)
