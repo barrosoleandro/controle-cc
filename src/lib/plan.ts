@@ -3,8 +3,34 @@ import type { Ctx } from '../App'
 import { buildMonthPlan, recurringExpectations, steadyIncomes } from '../domain/monthPlan'
 import { billEffective } from '../domain/forecast'
 import { shiftSalary } from '../domain/monthEnd'
-import { last3, useExternalized } from './hooks'
+import { last3, today, useExternalized } from './hooks'
+import { round2 } from '../domain/util'
 import { useRecurring } from './recurring'
+
+/**
+ * What the user set as still to come in `month`, per category (rowKey → value in the display
+ * currency, manual lines included), saved in the account. It wins over every estimate, on the
+ * month-end box of Painel and on Previsão alike. `setPlanned(key, null)` goes back to the estimate.
+ * Saving throws when it fails, so each screen says so its own way.
+ */
+export function usePlanned(ctx: Ctx, month: string) {
+  const { data, fx, currency } = ctx
+  const saved = data.settings.dashboard?.monthEndPlan?.[month]
+  const planned = useMemo(() => (saved ? new Map(Object.entries(saved.falta).map(([k, v]) =>
+    [k, saved.currency === currency ? v : round2(fx.convert(v, saved.currency, currency, today()))])) : undefined), [saved, currency, fx])
+  async function savePlan(falta: Map<string, number>) {
+    const all = { ...data.settings.dashboard?.monthEndPlan }
+    if (falta.size) all[month] = { currency, falta: Object.fromEntries(falta) }
+    else delete all[month]
+    await ctx.patchSettings({ dashboard: { ...data.settings.dashboard, monthEndPlan: all } })
+  }
+  const setPlanned = (key: string, v: number | null) => {
+    const next = new Map(planned)
+    if (v === null) next.delete(key); else next.set(key, round2(Math.max(0, v)))
+    return savePlan(next)
+  }
+  return { planned, savePlan, setPlanned }
+}
 
 export interface PlanOptions {
   /** Only incomes of these accounts count (e.g. BCP, the only way money comes in); the rest are fed by transfers. */
