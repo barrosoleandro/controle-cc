@@ -2,6 +2,8 @@ import { Fragment, useCallback, useMemo, useState } from 'react'
 import { payerOf as cardPayers } from '../domain/cards'
 import type { Ctx } from '../App'
 import { nextMonth, type ManualLine, type PlanRow, type RecurringExpect } from '../domain/monthPlan'
+import { money } from '../lib/format'
+import { WISE_LINE } from '../lib/brazil'
 import { applyPlanned, monthEnd, rowKey, salaryAhead, SALARY_FROM_DAY } from '../domain/monthEnd'
 import { findSalaryCategory } from '../domain/budget'
 import { useMonthPlans, usePlanned } from '../lib/plan'
@@ -11,6 +13,8 @@ import { CategorySelect } from '../components/CategorySelect'
 import { Help, Tabs } from '../components/Page'
 import { AccountMenu } from '../components/AccountMenu'
 import { prevMonth } from '../domain/util'
+
+const brl = money('BRL')
 
 /**
  * Current and next month: what is already in (imported, locked), lines added by hand (editable)
@@ -34,7 +38,7 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
   // Same rule as the month-end box on Painel: the salary paid at the end of a month is the next month's.
   const salary = findSalaryCategory(data.categories)?.name
   const opts = useMemo(() => ({ salary }), [salary])
-  const { txs, lines, manual, plans: appPlans, avgMonths, recurring, periods } = useMonthPlans(ctx, inScope, months, opts)
+  const { txs, lines, manual, plans: appPlans, avgMonths, recurring, periods, send } = useMonthPlans(ctx, inScope, months, opts)
   // "Falta" typed by the user, per month and category: the same figures the month-end box of Painel uses.
   const mineNow = usePlanned(ctx, months[0]), mineNext = usePlanned(ctx, months[1])
   const plannedNow = mineNow.planned, plannedNext = mineNext.planned
@@ -153,6 +157,15 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
                   <td /><td className="num">{fmt(kind === 'income' ? x.value : -x.value)}</td><td /><td /><td />
                 </tr>
               ))}
+              {r.name === WISE_LINE && send && (
+                <tr className="muted" style={{ fontSize: 13 }}><td colSpan={6} style={{ paddingLeft: 24 }}>
+                  {plan.month === months[0]
+                    ? <>Para cobrir {monthLabel(send.month)} no Itaú: fatura do cartão {brl(send.card)} + recorrentes {brl(send.recurring)} − saldo hoje {brl(send.balance)} = {brl(send.transfer)} a enviar até {send.by.slice(8, 10)}/{send.by.slice(5, 7)}.
+                      {send.sent && <> Já chegou no Itaú neste mês: {brl(send.sent.amount)}.</>}</>
+                    : <>Estimativa pelo que o Itaú paga num mês: fatura do cartão {brl(send.card)} + recorrentes {brl(send.recurring)}. Ajuste na coluna Falta quando souber o valor.</>}
+                  {' '}O detalhe das contas está no Painel (Transferência para o Brasil).
+                </td></tr>
+              )}
               {r.pendentes.map((e) => (
                 <tr key={`rec/${e.merchant}`} className="muted" style={{ fontSize: 13 }}>
                   <td style={{ paddingLeft: 24 }} title="Recorrente ainda não lançado neste mês: valor pela média dele nos últimos meses">↻ previsto ~{expectedOn(e, plan.month)} · {e.merchant}{e.period > 1 && <span style={{ fontSize: 12 }}> · {everyLabel(e.period)}</span>}
@@ -279,6 +292,8 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
           Por isso o salário recebido no fim do mês passado aparece no realizado deste mês com a data de lá, e o que ainda vai cair no fim deste mês está na previsão do próximo.</p>
         <p><strong>Saldo previsto no fim do mês</strong> = saldo de hoje das contas marcadas + o que ainda entra − o que ainda sai (as colunas Manual e Falta). O do mês seguinte parte dele e soma o resultado previsto daquele mês.
           Transferências para contas suas que não estão marcadas não entram na conta: se você costuma mandar dinheiro para outra conta, insira uma linha manual ou marque a conta de destino.</p>
+        <p><strong>{WISE_LINE}</strong>: o que sai das contas marcadas para pagar a fatura do cartão e os recorrentes da conta do Itaú, menos o saldo que já está lá — o mesmo valor do aviso do Painel.
+          No mês atual, zera quando a transferência do mês já foi feita; no mês seguinte é uma estimativa pelo que o Itaú paga num mês. Some quando uma conta do Brasil está marcada, porque aí os gastos de lá já aparecem nas categorias.</p>
         <p>As linhas manuais valem para qualquer conta marcada. Quando o lançamento de verdade for importado, exclua a linha manual correspondente.</p>
       </Help>
     </div>

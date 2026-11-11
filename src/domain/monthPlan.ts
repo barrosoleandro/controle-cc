@@ -145,6 +145,20 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
 }
 
 /**
+ * The plan with one more expense line that is not a category: money that leaves the accounts in
+ * scope for another account of the user (the transfer that pays the bills in Brazil).
+ * `realizado`: already sent in the month; `falta`: still to send. Totals and result follow.
+ */
+export function withExpenseLine(plan: MonthPlan, name: string, realizado: number, falta: number): MonthPlan {
+  if (realizado <= 0.005 && falta <= 0.005) return plan
+  const row: PlanRow = { name, kind: 'expense', media: 0, realizado, manual: 0, recorrente: 0, pendentes: [], falta, previsto: realizado + falta }
+  const expense = [...plan.expense, row].sort((a, b) => b.previsto - a.previsto)
+  const t = plan.totals.expense
+  const totals = { income: plan.totals.income, expense: { ...t, realizado: t.realizado + realizado, falta: t.falta + falta, previsto: t.previsto + row.previsto } }
+  return { ...plan, expense, totals, resultado: totals.income.previsto - totals.expense.previsto }
+}
+
+/**
  * What each recurring merchant is expected to bring in or charge, and how often. The interval is
  * read from the last PERIOD_HISTORY complete months (see detectPeriod), unless the user set one.
  * Monthly ones: the average over the months of `avgMonths` they appeared in, left out when they

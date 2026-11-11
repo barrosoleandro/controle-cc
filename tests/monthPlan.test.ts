@@ -160,3 +160,17 @@ describe('recorrentes com intervalo', () => {
     expect(recurringExpectations(old, all, avg)).toEqual([])
   })
 })
+
+describe('a line that is not a category (the transfer that pays the bills abroad)', () => {
+  it('adds to the expenses what was sent and what is still to send, and the result follows', async () => {
+    const { withExpenseLine } = await import('../src/domain/monthPlan')
+    const plan = buildMonthPlan(txs, [], '2026-10', avg)
+    const mine = withExpenseLine(plan, 'Envio', 200, 500)
+    expect(mine.expense.find((r) => r.name === 'Envio')).toMatchObject({ kind: 'expense', realizado: 200, falta: 500, previsto: 700, media: 0 })
+    expect(mine.totals.expense.previsto).toBe(plan.totals.expense.previsto + 700)
+    expect(mine.totals.expense.falta).toBe(plan.totals.expense.falta + 500)
+    expect(mine.resultado).toBe(plan.resultado - 700)
+    expect(mine.income).toBe(plan.income)
+    expect(withExpenseLine(plan, 'Envio', 0, 0)).toBe(plan)
+  })
+})
