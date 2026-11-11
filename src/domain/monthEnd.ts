@@ -36,6 +36,24 @@ export interface MonthEnd {
 }
 
 /**
+ * The plan with the user's own "still to come" per category (rowKey → value, manual lines included,
+ * as in monthEnd): falta becomes that value less the manual lines, and the totals follow.
+ */
+export function applyPlanned(plan: MonthPlan, planned?: Map<string, number>): MonthPlan {
+  if (!planned?.size) return plan
+  const fix = (rows: PlanRow[]) => rows.map((r) => {
+    const mine = planned.get(rowKey(r))
+    if (mine === undefined) return r
+    const falta = Math.max(0, mine - r.manual)
+    return { ...r, falta, previsto: r.realizado + r.manual + falta, faltaApp: r.falta }
+  })
+  const income = fix(plan.income), expense = fix(plan.expense)
+  const sum = (rows: PlanRow[], t: MonthPlan['totals']['income']) => ({ ...t, falta: rows.reduce((s, r) => s + r.falta, 0), previsto: rows.reduce((s, r) => s + r.previsto, 0) })
+  const totals = { income: sum(income, plan.totals.income), expense: sum(expense, plan.totals.expense) }
+  return { ...plan, income, expense, totals, resultado: totals.income.previsto - totals.expense.previsto }
+}
+
+/**
  * `estimate`: what is still expected per category (rowKey → value ≥ 0), replacing the app's `falta`;
  * a category it does not name keeps the app's. Manual lines are counted as still to come.
  * `salarioSeguinte`: the next month's salary already in today's balance; the one still to come

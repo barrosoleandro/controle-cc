@@ -2,9 +2,9 @@ import { Fragment, useCallback, useMemo, useState } from 'react'
 import { payerOf as cardPayers } from '../domain/cards'
 import type { Ctx } from '../App'
 import { nextMonth, type ManualLine, type PlanRow, type RecurringExpect } from '../domain/monthPlan'
-import { SALARY_FROM_DAY } from '../domain/monthEnd'
+import { applyPlanned, rowKey, SALARY_FROM_DAY } from '../domain/monthEnd'
 import { findSalaryCategory } from '../domain/budget'
-import { useMonthPlans } from '../lib/plan'
+import { useMonthPlans, usePlanned } from '../lib/plan'
 import { monthLabel } from '../lib/format'
 import { currentMonth, hiddenByDefault, today, useFmt } from '../lib/hooks'
 import { CategorySelect } from '../components/CategorySelect'
@@ -34,7 +34,11 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
   // Same rule as the month-end box on Painel: the salary paid at the end of a month is the next month's.
   const salary = findSalaryCategory(data.categories)?.name
   const opts = useMemo(() => ({ salary }), [salary])
-  const { txs, lines, manual, plans, avgMonths, recurring, periods } = useMonthPlans(ctx, inScope, months, opts)
+  const { txs, lines, manual, plans: appPlans, avgMonths, recurring, periods } = useMonthPlans(ctx, inScope, months, opts)
+  // "Falta" typed by the user, per month and category: the same figures the month-end box of Painel uses.
+  const mineNow = usePlanned(ctx, months[0]), mineNext = usePlanned(ctx, months[1])
+  const plannedNow = mineNow.planned, plannedNext = mineNext.planned
+  const plans = useMemo(() => [applyPlanned(appPlans[0], plannedNow), applyPlanned(appPlans[1], plannedNext)], [appPlans, plannedNow, plannedNext])
   /** Day and month a pending recurring line is expected on: the salary of a month comes at the end of the one before. */
   const expectedOn = (e: RecurringExpect, m: string) => {
     const early = e.kind === 'income' && e.categoryName === salary && e.day >= SALARY_FROM_DAY
@@ -84,6 +88,13 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
     if (await saveLines([...lines, line])) setOk(`Linha adicionada em ${c.name}: ajuste a descrição e o valor na própria linha.`)
   }
 
+  /** "Falta" of a category typed by hand (null = back to the app's figure). Stored with the manual lines included, as on Painel. */
+  async function setFalta(r: PlanRow, v: number | null) {
+    setErro(null)
+    try { await (plan.month === months[1] ? mineNext : mineNow).setPlanned(rowKey(r), v === null ? null : r.manual + v) }
+    catch (e) { setErro(`Não foi possível salvar o ajuste: ${(e as Error).message}`) }
+  }
+
   /** The interval of a recurring line, set by hand (0 = back to the one read from the history). */
   async function setPeriod(merchant: string, months: number) {
     const next = { ...periods }
@@ -120,8 +131,13 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
               <td className="num muted">{fmt(r.media)}</td>
               <td className="num">{fmt(r.realizado)}</td>
               <td className="num">{r.manual ? fmt(r.manual) : <span className="muted">·</span>}</td>
-              <td className={`num ${r.falta > 0 ? 'warn' : 'muted'}`} title={r.recorrente ? `inclui ${fmt(r.recorrente)} de recorrentes ainda não lançados` : undefined}>
-                {r.falta ? fmt(r.falta) : '·'}{r.pendentes.length > 0 && <span style={{ fontSize: 12 }}> ↻{r.pendentes.length}</span>}</td>
+              <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                {r.pendentes.length > 0 && <span className="muted" style={{ fontSize: 12 }} title={`inclui ${fmt(r.recorrente)} de recorrentes ainda não lançados`}>↻{r.pendentes.length} </span>}
+                <input key={`${key}/${r.falta}`} type="number" min={0} step="any" inputMode="decimal" defaultValue={Math.round(r.falta * 100) / 100}
+                  style={{ width: 96, textAlign: 'right', fontWeight: r.faltaApp !== undefined ? 700 : undefined }} className={r.falta > 0 ? 'warn' : 'muted'}
+                  aria-label={`Falta em ${r.name}`} title={r.faltaApp !== undefined ? `Ajustado por você; o app calculava ${fmt(r.faltaApp)}` : 'Calculado pelo app; digite outro valor para ajustar'}
+                  onBlur={(ev) => { const v = Number(ev.target.value); if (ev.target.value !== '' && Number.isFinite(v) && v >= 0 && Math.abs(v - r.falta) > 0.005) void setFalta(r, v) }} />
+                {r.faltaApp !== undefined && <button className="link" style={{ fontSize: 12, marginLeft: 4 }} onClick={() => setFalta(r, null)} aria-label={`Voltar ${r.name} para o cálculo do app`} title={`Voltar para o cálculo do app (${fmt(r.faltaApp)})`}>↺</button>}</td>
               <td className="num"><strong>{fmt(r.previsto)}</strong></td>
             </tr>
             {isOpen && <>
@@ -235,6 +251,8 @@ export function Previsao({ ctx }: { ctx: Ctx }) {
         <p><strong>Média</strong>: dos 3 últimos meses fechados ({monthLabel(avgMonths[0])} a {monthLabel(avgMonths.at(-1)!)}), nas contas marcadas.
           <strong> Realizado</strong>: lançamentos importados no mês (🔒, não mudam aqui). <strong>Manual</strong>: as linhas que você inseriu, que podem ser editadas e excluídas.</p>
         <p><strong>Falta</strong> = média − realizado − manual, nunca abaixo de zero: uma linha manual ocupa o lugar da média em vez de somar a ela.
+          Você pode digitar outro valor na própria coluna: ele fica em negrito, vale no lugar do cálculo do app (também na caixa de fim de mês do Painel) e o ↺ volta ao cálculo.
+          O ajuste é guardado por mês e categoria; se depois você inserir uma linha manual na categoria, ela é descontada dele.
           <strong> Previsto</strong> = realizado + manual + falta. Transferências entre contas suas ficam de fora; uma transferência sem o outro lado em nenhuma conta sua (ex.: resgate de uma poupança que não está no app) entra como <strong>Transferência externa</strong>, receita ou despesa, só no mês em que aconteceu — não entra na média.</p>
         <p><strong>↻ Recorrentes</strong>: cada estabelecimento marcado como recorrente em Lançamentos, e cada receita que entrou nos 3 últimos meses (ex.: salário), aparece como previsto enquanto não for lançado no mês, pela média dos meses em que apareceu.
           O intervalo de cada um (mensal, bimestral, trimestral…) é lido dos últimos 12 meses: um bimestral só aparece nos meses em que vence, pelo valor cheio, e fica fora da média da categoria. Confira e corrija em <strong>Intervalo dos recorrentes</strong>.

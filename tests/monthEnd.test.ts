@@ -73,3 +73,28 @@ describe('month end, local model', () => {
     expect(() => parseMonthEndAnswer('não sei', asked)).toThrow(/JSON/)
   })
 })
+
+describe('falta typed by the user', () => {
+  const avg = ['2026-08', '2026-09', '2026-10']
+  const txs: PlanTx[] = [
+    ...avg.map((month): PlanTx => ({ month, value: -900, kind: 'expense', categoryName: 'Mercado' })),
+    ...avg.map((month): PlanTx => ({ month, value: 3000, kind: 'income', categoryName: 'Salário' })),
+    { month: '2026-11', value: -300, kind: 'expense', categoryName: 'Mercado' },
+  ]
+  it('replaces the app figure in its category and the totals follow', async () => {
+    const { applyPlanned } = await import('../src/domain/monthEnd')
+    const plan = buildMonthPlan(txs, [], '2026-11', avg)
+    expect(plan.expense[0]).toMatchObject({ name: 'Mercado', falta: 600, previsto: 900 })
+    const mine = applyPlanned(plan, new Map([['expense/Mercado', 200]]))
+    expect(mine.expense[0]).toMatchObject({ falta: 200, previsto: 500, faltaApp: 600 })
+    expect(mine.totals.expense).toMatchObject({ falta: 200, previsto: 500 })
+    expect(mine.resultado).toBe(plan.resultado + 400)
+    expect(mine.income).toEqual(plan.income)
+    expect(applyPlanned(plan, new Map())).toBe(plan)
+  })
+  it('a manual line of the category is taken off the typed value', async () => {
+    const { applyPlanned } = await import('../src/domain/monthEnd')
+    const plan = buildMonthPlan(txs, [{ month: '2026-11', value: -150, kind: 'expense', categoryName: 'Mercado' }], '2026-11', avg)
+    expect(applyPlanned(plan, new Map([['expense/Mercado', 200]])).expense[0]).toMatchObject({ manual: 150, falta: 50, previsto: 500 })
+  })
+})

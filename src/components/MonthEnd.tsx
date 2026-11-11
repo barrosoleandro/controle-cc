@@ -7,7 +7,7 @@ import { findSalaryCategory } from '../domain/budget'
 import { isTithe } from '../domain/categorize'
 import { monthLabel } from '../lib/format'
 import { currentMonth, today, useBalances, useFmt } from '../lib/hooks'
-import { useMonthPlans } from '../lib/plan'
+import { useMonthPlans, usePlanned } from '../lib/plan'
 import { ask, loadOllama, OLLAMA_EVENT, ollamaReady } from '../lib/ollama'
 import { Stat } from './Page'
 import { round2 } from '../domain/util'
@@ -97,22 +97,11 @@ export function MonthEndBox({ ctx, inScope }: { ctx: Ctx; inScope: (accountId: s
   }, [ready, mine, facts]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // What you planned per category for the month, saved in your account: it wins over the estimates.
-  const saved = data.settings.dashboard?.monthEndPlan?.[cur]
-  const planned = useMemo(() => (saved ? new Map(Object.entries(saved.falta).map(([k, v]) =>
-    [k, saved.currency === ctx.currency ? v : round(ctx.fx.convert(v, saved.currency, ctx.currency, today()))])) : undefined), [saved, ctx.currency, ctx.fx])
-  async function savePlan(falta: Map<string, number>) {
-    setErro(null)
-    const all = { ...data.settings.dashboard?.monthEndPlan }
-    if (falta.size) all[cur] = { currency: ctx.currency, falta: Object.fromEntries(falta) }
-    else delete all[cur]
-    try { await ctx.patchSettings({ dashboard: { ...data.settings.dashboard, monthEndPlan: all } }) }
-    catch (err) { setErro(`Não foi possível salvar o planejado: ${(err as Error).message}`) }
-  }
-  const setPlanned = (key: string, v: number | null) => {
-    const next = new Map(planned)
-    if (v === null) next.delete(key); else next.set(key, round(Math.max(0, v)))
-    return savePlan(next)
-  }
+  const stored = usePlanned(ctx, cur)
+  const planned = stored.planned
+  const saving = (p: Promise<void>) => { setErro(null); return p.catch((err: Error) => setErro(`Não foi possível salvar o planejado: ${err.message}`)) }
+  const savePlan = (falta: Map<string, number>) => saving(stored.savePlan(falta))
+  const setPlanned = (key: string, v: number | null) => saving(stored.setPlanned(key, v))
 
   const aiMap = useMemo(() => (mine ? new Map(mine.falta) : undefined), [mine])
   const withAi = useMemo(() => (aiMap ? monthEnd(plan, saldoHoje, salarioSeguinte, aiMap) : null), [plan, saldoHoje, salarioSeguinte, aiMap])

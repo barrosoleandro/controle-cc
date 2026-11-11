@@ -67,6 +67,8 @@ export interface PlanRow {
   pendentes: RecurringExpect[]
   falta: number
   previsto: number
+  /** Set when the user typed `falta`: what the app had worked out, to show and to go back to. */
+  faltaApp?: number
 }
 export interface PlanTotals { media: number; realizado: number; manual: number; recorrente: number; falta: number; previsto: number }
 export interface MonthPlan { month: string; income: PlanRow[]; expense: PlanRow[]; totals: { income: PlanTotals; expense: PlanTotals }; resultado: number }
