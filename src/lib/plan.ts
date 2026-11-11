@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
 import type { Ctx } from '../App'
-import { buildMonthPlan, recurringExpectations, steadyIncomes } from '../domain/monthPlan'
+import { buildMonthPlan, recurringExpectations, steadyIncomes, withExpenseLine } from '../domain/monthPlan'
+import { countryOf } from '../domain/countries'
+import { useBrazilSend, WISE, WISE_LINE } from './brazil'
 import { billEffective } from '../domain/forecast'
 import { shiftSalary } from '../domain/monthEnd'
 import { last3, today, useExternalized } from './hooks'
@@ -72,6 +74,26 @@ export function useMonthPlans(ctx: Ctx, inScope: (accountId: string) => boolean,
   const recurring = useMemo(() => recurringExpectations(txs,
     (m, kind) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), avgMonths, periods), [txs, isBill, marks, steady, avgMonths, periods])
   const key = months.join()
-  const plans = useMemo(() => months.map((m) => buildMonthPlan(txs, manual, m, avgMonths, recurring)), [txs, manual, key, avgMonths, recurring]) // eslint-disable-line react-hooks/exhaustive-deps
-  return { txs, lines, manual, plans, avgMonths, recurring, periods }
+  // The transfer that pays the bills in Brazil (Wise → Itaú) leaves the accounts in scope, so it is a
+  // line of the plan: still to send this month (nothing once it went), and an estimate for the months
+  // after. Not when a Brazilian account is in scope too: then its own bills already are in the plan.
+  const send = useBrazilSend(ctx)
+  const wise = useMemo(() => {
+    const scope = data.accounts.filter((a) => a.type !== 'card' && inScope(a.id))
+    if (!send || !scope.length || scope.some((a) => countryOf(a.bank) === 'Brasil')) return null
+    const now = today()
+    const toDisplay = (brl: number) => fx.convert(brl, 'BRL', ctx.currency, now)
+    const out = (m: string) => txs.filter((t) => t.month === m && t.value < 0 && WISE.test(t.description))
+    return (m: string) => ({
+      // Sent as a transfer it is in no category; with no other side in the app it already counts as an expense.
+      realizado: -out(m).filter((t) => t.kind === 'transfer').reduce((s, t) => s + t.value, 0),
+      falta: m !== now.slice(0, 7) ? toDisplay(send.expected) : send.sent || out(m).length ? 0 : toDisplay(send.transfer),
+    })
+  }, [send, data.accounts, inScope, txs, fx, ctx.currency])
+  const plans = useMemo(() => months.map((m) => {
+    const plan = buildMonthPlan(txs, manual, m, avgMonths, recurring)
+    const w = wise?.(m)
+    return w ? withExpenseLine(plan, WISE_LINE, w.realizado, w.falta) : plan
+  }), [txs, manual, key, avgMonths, recurring, wise]) // eslint-disable-line react-hooks/exhaustive-deps
+  return { txs, lines, manual, plans, avgMonths, recurring, periods, send }
 }
