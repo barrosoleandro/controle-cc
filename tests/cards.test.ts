@@ -190,3 +190,22 @@ describe('Cartão Itaú fora do Brasil', () => {
     expect(itau.kind).toBe('expense')
   })
 })
+
+describe('bill status after the payment is imported', () => {
+  const accounts = [
+    { id: 'card', bank: 'ITAU', type: 'card', parent_account_id: 'itau' },
+    { id: 'itau', bank: 'ITAU', type: 'checking', parent_account_id: null },
+  ] as never
+  const bill = (due_date: string, total: number, status: 'paga' | 'aberta' = 'aberta') => ({ account_id: 'card', due_date, total, status })
+  it('an open bill is paid once the debit of its total shows in the paying account, or the payment on the card', async () => {
+    const { withPaidStatus } = await import('../src/domain/cards')
+    const bills = [bill('2026-10-10', 11744.52), bill('2026-11-10', 7231.51), bill('2026-12-10', 5000), bill('2026-09-10', 100, 'paga')]
+    const out = withPaidStatus(accounts, bills, [
+      { id: 'a', account_id: 'card', booking_date: '2026-10-11', amount: 11744.52, bank_category: CARD_PAYMENT },
+      { id: 'b', account_id: 'itau', booking_date: '2026-11-11', amount: -7231.51 },
+      { id: 'c', account_id: 'itau', booking_date: '2026-11-11', amount: -4999 },
+    ])
+    expect(out.map((b) => [b.due_date, b.status])).toEqual([['2026-10-10', 'paga'], ['2026-11-10', 'paga'], ['2026-12-10', 'aberta'], ['2026-09-10', 'paga']])
+    expect(withPaidStatus(accounts, [bill('2026-09-10', 100, 'paga')], [])).toEqual([bill('2026-09-10', 100, 'paga')])
+  })
+})
