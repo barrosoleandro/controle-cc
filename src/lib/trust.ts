@@ -10,9 +10,14 @@ const TRUST_MS = 30 * 86400000
 const REASON_KEY = 'signout-reason' // why the app signed out, read on the next sign-in
 const PENDING_KEY = 'trust-pending' // the authenticator code was just confirmed: 'on' | 'off'
 const SIGNIN_KEY = 'signin-reason' // why this sign-in was needed, until written to the device row
+const TAB_KEY = 'tab-signed-in' // sessionStorage: this tab signed in, so a one-off access lasts until it closes
 
 const get = (k: string) => { try { return localStorage.getItem(k) } catch { return null } }
 const put = (k: string, v: string | null) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v) } catch { /* storage blocked */ } }
+
+/** Set on every sign-in; sessionStorage dies with the tab, so a device not saved asks again. */
+export function tabSignedIn(): boolean { try { return sessionStorage.getItem(TAB_KEY) === '1' } catch { return false } }
+function markTab() { try { sessionStorage.setItem(TAB_KEY, '1') } catch { /* storage blocked: asks again next load */ } }
 
 export function trustUntil(): number { return Number(get(TRUST_KEY) ?? 0) }
 export const trustedDevice = () => trustUntil() > Date.now()
@@ -29,6 +34,7 @@ export function noteSignedOut() { if (!get(REASON_KEY)) put(REASON_KEY, 'servido
 /** Right after the authenticator code: remember the choice and why this sign-in was needed. */
 export function noteSignedIn(lembrar: boolean) {
   setTrust(lembrar)
+  markTab()
   put(PENDING_KEY, lembrar ? 'on' : 'off')
   put(SIGNIN_KEY, get(REASON_KEY) ?? '')
   put(REASON_KEY, null)
