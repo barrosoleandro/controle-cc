@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { noteSignedIn, noteSignedOut, setTrust, signOutWith, trustUntil, trustedDevice } from '../lib/trust'
+import { AccessApprove, AccessRequest } from './Access'
+import { APPROVE_PARAM } from '../domain/access'
 
-type Step = 'loading' | 'login' | 'code' | 'reset' | 'newpass' | 'ok'
+type Step = 'loading' | 'login' | 'pedir' | 'code' | 'reset' | 'newpass' | 'ok'
 type Metodo = 'senha' | 'email'
 
 export const APP_NAME = 'Finanças Pessoais'
@@ -97,14 +99,17 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     <p className="muted" style={{ fontSize: 12 }}>Só em aparelho seu: o app abre direto, sem login nem bloqueio por inatividade, enquanto for usado ao menos uma vez a cada 30 dias. Dá para revogar em Ajustes → Aparelhos.</p>
   </>
 
-  if (step === 'ok') return <>{children}</>
+  if (step === 'ok') return <>{children}<ApproveFromLink /></>
   return (
     <div className="center">
       <div className="card auth">
         <h3>{APP_NAME}</h3>
         {step === 'loading' && <p className="muted">Carregando…</p>}
 
+        {step === 'pedir' && <AccessRequest onDone={() => setStep('ok')} onCancel={() => setStep('login')} />}
+
         {step === 'login' && <>
+          <button type="button" onClick={() => { setStep('pedir'); setError(null); setInfo(null) }}>Pedir acesso pelo celular (QR code)</button>
           <div className="row">
             <button className={metodo === 'senha' ? 'active' : ''} onClick={() => { setMetodo('senha'); setError(null) }}>Senha</button>
             <button className={metodo === 'email' ? 'active' : ''} onClick={() => { setMetodo('email'); setError(null) }}>Código por e-mail</button>
@@ -159,6 +164,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       </div>
     </div>
   )
+}
+
+/** O app foi aberto pelo QR code de um pedido (?aprovar=…), já logado: abre a aprovação. */
+function ApproveFromLink() {
+  const [code, setCode] = useState(() => new URLSearchParams(window.location.search).get(APPROVE_PARAM))
+  const fechar = () => { window.history.replaceState(null, '', window.location.pathname); setCode(null) }
+  return code ? <AccessApprove initialCode={code} onClose={fechar} /> : null
 }
 
 /**
