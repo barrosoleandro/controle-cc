@@ -3,10 +3,13 @@ import { supabase } from '../lib/supabase'
 import { noteSignedIn, noteSignedOut, setTrust, signOutWith, tabSignedIn, trustUntil } from '../lib/trust'
 import { reauthNeeded } from '../domain/device'
 import { VERSION, versionLabel } from '../lib/version'
+import { QrApprove, QrRequest } from './QrLogin'
+import { qrSessionUntil, qrSessionValid, setQrSession } from '../lib/qrLogin'
+import { APPROVE_PARAM } from '../domain/qrLogin'
 import { authenticateBiometric, biometricFactors, biometricSupported, orderForThisDevice, thisDeviceFactor } from '../lib/biometric'
 import type { Factor } from '@supabase/supabase-js'
 
-type Step = 'loading' | 'login' | 'code' | 'reset' | 'enroll' | 'verify' | 'newpass' | 'ok'
+type Step = 'loading' | 'login' | 'qr' | 'code' | 'reset' | 'enroll' | 'verify' | 'newpass' | 'ok'
 type Metodo = 'senha' | 'email'
 
 export const APP_NAME = 'Finanças Pessoais'
@@ -47,6 +50,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       if (why) { await signOutWith(why); return }
       return setStep(recuperando ? 'newpass' : 'ok')
     }
+    // Entrou pelo QR code (aal1 aprovada pelo celular): só nesta aba, e enquanto o servidor aceitar.
+    const qr = qrSessionUntil()
+    if (qr) {
+      if (!tabSignedIn()) { await signOutWith('pontual'); return }
+      if (qr <= Date.now() || !(await qrSessionValid())) { await signOutWith('qr'); return }
+      return setStep('ok')
+    }
     const { data: factors } = await supabase.auth.mfa.listFactors()
     const totp = factors?.totp.find((f) => f.status === 'verified')
     if (totp) {
@@ -64,7 +74,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     evaluate()
-    const { data } = supabase.auth.onAuthStateChange((e) => { if (e === 'SIGNED_OUT') { noteSignedOut(); setTrust(false); setStep('login') } })
+    const { data } = supabase.auth.onAuthStateChange((e) => { if (e === 'SIGNED_OUT') { noteSignedOut(); setTrust(false); setQrSession(null); setStep('login') } })
     return () => data.subscription.unsubscribe()
   }, [])
 
@@ -139,14 +149,17 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     setStep(recuperando ? 'newpass' : 'ok')
   }
 
-  if (step === 'ok') return <>{children}</>
+  if (step === 'ok') return <>{children}<QrWatch /></>
   return (
     <div className="center">
       <div className="card auth">
         <h3>{APP_NAME}</h3>
         {step === 'loading' && <p className="muted">Carregando…</p>}
 
+        {step === 'qr' && <QrRequest onDone={() => setStep('ok')} onCancel={() => setStep('login')} />}
+
         {step === 'login' && <>
+          <button type="button" onClick={() => { setStep('qr'); setError(null); setInfo(null) }}>Entrar com o celular (QR code)</button>
           <div className="row">
             <button className={metodo === 'senha' ? 'active' : ''} onClick={() => { setMetodo('senha'); setError(null) }}>Senha</button>
             <button className={metodo === 'email' ? 'active' : ''} onClick={() => { setMetodo('email'); setError(null) }}>Código por e-mail</button>
@@ -218,6 +231,22 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       </div>
     </div>
   )
+}
+
+/**
+ * Already signed in: the approval screen when the app was opened by a QR code (?aprovar=…), and the
+ * end of a QR access (12 hours) while the tab stays open.
+ */
+function QrWatch() {
+  const [aprovar, setAprovar] = useState(() => new URLSearchParams(window.location.search).get(APPROVE_PARAM))
+  useEffect(() => {
+    const until = qrSessionUntil()
+    if (!until) return
+    const t = window.setTimeout(() => signOutWith('qr'), Math.max(0, until - Date.now()))
+    return () => clearTimeout(t)
+  }, [])
+  const fechar = () => { window.history.replaceState(null, '', window.location.pathname); setAprovar(null) }
+  return aprovar && !qrSessionUntil() ? <QrApprove initialCode={aprovar} onClose={fechar} /> : null
 }
 
 /**

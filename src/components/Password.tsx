@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
 /**
@@ -11,6 +11,8 @@ export function Password() {
   const [confirma, setConfirma] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [aal2, setAal2] = useState<boolean | null>(null)
+  useEffect(() => { supabase.auth.mfa.getAuthenticatorAssuranceLevel().then(({ data }) => setAal2(data?.currentLevel === 'aal2'), () => setAal2(false)) }, [])
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault(); setMsg(null)
@@ -25,6 +27,9 @@ export function Password() {
       : `Não foi possível salvar a senha: ${error.message}` })
   }
 
+  // Quem entrou pelo QR code (acesso pontual, aal1) não troca a senha da conta.
+  if (aal2 === false) return <div className="card"><h3>Senha</h3>
+    <p className="muted" style={{ fontSize: 13 }}>Num acesso pontual pelo QR code, a senha só pode ser trocada no aparelho que aprovou.</p></div>
   return <div className="card">
     <h3>Senha</h3>
     <p className="muted" style={{ fontSize: 13 }}>Defina ou troque a senha daqui, sem e-mail. Depois dela, o login continua pedindo o código do autenticador ou a biometria.</p>

@@ -59,7 +59,11 @@ recognised on its first visit.
 - **A dedicated Supabase project.** Don't share one with other apps.
 - **Row Level Security on every table:** a row is visible only to its owner, and **only with an MFA-verified session (aal2)**. A stolen password alone returns zero rows (tested).
 - **TOTP 2FA is mandatory**: the app enrolls it on first login.
-- **Only the public anon key is used in the app**; the service_role key is never used.
+- **Only the public anon key is used in the app.** The service_role key exists only inside the `qr-login` Edge Function, on Supabase's servers; it is never shipped to the browser.
+- **One-off access approved by the phone (QR code).** A device with no password or e-mail at hand shows a QR code; the phone,
+  already signed in with 2FA, reads it, picks the number the other device shows and confirms again with biometrics or the
+  authenticator code (checked by the server: less than 5 minutes old). The new device gets a session that RLS accepts for at
+  most 12 hours, only in that tab, revocable from Ajustes → Aparelhos (`public.strong_session()`, migration 010).
 - Public sign-ups are disabled. Your user is created by hand in the dashboard.
 - **Screen locks after 15 minutes** of inactivity and **signs out after 60**. The lock keeps the session, so coming back
   costs only the authenticator code — no password, no e-mail. Strict security headers (CSP, HSTS, no framing) are in `vercel.json`.
@@ -68,7 +72,10 @@ recognised on its first visit.
 ## Setup (≈20 minutes, once)
 
 1. **Supabase**: create a new project (e.g. `controle-cc`, region Frankfurt/Paris).
-   - SQL Editor → paste and run `supabase/migrations/001_schema.sql`, then `002_payslips.sql`, then `003_merchant_profiles.sql`, then `004_cards.sql` (credit cards linked to accounts), `005_benchmarks.sql` (market), `006_devices.sql` (local-AI settings per computer), `007_import_log.sql` (rows each import skipped, for the audit), `008_device_trust.sql` (remembered devices, revocable from Ajustes → Aparelhos) and `009_payslip_currency.sql` (US pay statements in dollars next to the French payslips).
+   - SQL Editor → paste and run `supabase/migrations/001_schema.sql`, then `002_payslips.sql`, then `003_merchant_profiles.sql`, then `004_cards.sql` (credit cards linked to accounts), `005_benchmarks.sql` (market), `006_devices.sql` (local-AI settings per computer), `007_import_log.sql` (rows each import skipped, for the audit), `008_device_trust.sql` (remembered devices, revocable from Ajustes → Aparelhos) `009_payslip_currency.sql` (US pay statements in dollars next to the French payslips) and `010_qr_login.sql` (one-off access approved by the phone).
+   - **QR code login** (optional): Edge Functions → **Deploy a new function** → name `qr-login`, paste
+     `supabase/functions/qr-login/index.ts`, and **turn off "Enforce JWT verification"** (the function checks the token itself).
+     With the CLI: `supabase functions deploy qr-login --no-verify-jwt`. Without it, the rest of the app works as before.
    - Authentication → Sign In / Providers → **disable "Allow new users to sign up"**.
    - Authentication → Multi-Factor → make sure **TOTP is enabled**.
    - For the e-mail code login: Authentication → Emails → the "Magic Link" template must contain `{{ .Token }}`,

@@ -177,6 +177,8 @@ export async function signOutOthers() {
   const r = await supabase.auth.signOut({ scope: 'others' })
   if (r.error) throw new Error(r.error.message)
   for (const d of state.devices) if (d.id !== state.device.id && d.trusted_until) await revokeDevice(d.id)
+  // Acessos pontuais por QR code: sem isso, o token ainda válido (até 1 h) continuaria lendo os dados.
+  await supabase.from('approved_sessions').update({ revoked_at: new Date().toISOString() }).is('revoked_at', null) // sem a migração 010: ignora
 }
 
 export async function deleteDevice(id: string) {

@@ -45,6 +45,7 @@ export const SIGNOUT_REASON = {
   apagado: 'dados do navegador apagados (ex.: Safari depois de 7 dias sem abrir o site, fora da Tela de Início)',
   primeiro: 'primeiro acesso neste aparelho',
   pontual: 'acesso pontual: aparelho não salvo pede login a cada abertura do app',
+  qr: 'acesso pelo celular (QR code) terminou: 12 horas, revogado ou sessão recusada',
 } as const
 export type SignoutReason = keyof typeof SIGNOUT_REASON
 
