@@ -1,5 +1,5 @@
-// "Lembrar neste dispositivo": a sessão (já em aal2) fica de pé sem trava por inatividade. O RLS
-// continua exigindo aal2; só não se pede o login de novo. Os 30 dias andam a cada uso (lib/device.ts
+// "Lembrar neste dispositivo": a sessão fica de pé sem trava por inatividade; só não se pede
+// o login de novo. Os 30 dias andam a cada uso (lib/device.ts
 // renova ao abrir o app), então um aparelho em uso não expira; o aparelho também fica registrado no
 // servidor (migração 008), de onde pode ser revogado.
 import { supabase } from './supabase'
