@@ -25,8 +25,8 @@ import { Investments } from './pages/Investments'
 import { Market } from './pages/Market'
 import { Cards } from './pages/Cards'
 
-// Aos 15 minutos a tela trava mas a sessão fica de pé: voltar custa só o código do
-// autenticador. Aos 60 minutos parados, sai de verdade.
+// Aos 15 minutos a tela trava mas a sessão fica de pé: voltar custa só a senha.
+// Aos 60 minutos parados, sai de verdade.
 const LOCK_MS = 15 * 60 * 1000
 const SIGNOUT_MS = 60 * 60 * 1000
 const STALE_MS = 60 * 1000 // data older than this is read again when the app comes back to the screen

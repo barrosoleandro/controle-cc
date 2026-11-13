@@ -51,7 +51,7 @@ export const SECTIONS: { tab: Tab; sub: string; label: string; keywords?: string
   { tab: 'Ajustes', sub: 'Mapa do banco', label: 'Mapa do banco' },
   { tab: 'Ajustes', sub: 'Cotações', label: 'Cotações EUR → BRL', keywords: 'câmbio real euro' },
   { tab: 'Ajustes', sub: 'IA local', label: 'IA local (Ollama)', keywords: 'inteligência artificial modelo' },
-  { tab: 'Ajustes', sub: 'Aparelhos', label: 'Aparelhos e acesso', keywords: 'login senha trocar senha código lembrar dispositivo celular revogar sessão' },
+  { tab: 'Ajustes', sub: 'Aparelhos', label: 'Aparelhos e acesso', keywords: 'login código lembrar dispositivo celular revogar sessão' },
   { tab: 'Ajustes', sub: 'Aparência', label: 'Aparência', keywords: 'tema claro escuro modo' },
 ]
 

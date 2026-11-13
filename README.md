@@ -57,20 +57,21 @@ recognised on its first visit.
 ## Security model
 
 - **A dedicated Supabase project.** Don't share one with other apps.
-- **Row Level Security on every table:** a row is visible only to its owner, and **only with an MFA-verified session (aal2)**. A stolen password alone returns zero rows (tested).
-- **TOTP 2FA is mandatory**: the app enrolls it on first login.
+- **Row Level Security on every table:** a row is visible only to its owner.
+- **No second factor (since 13/11/2026, owner's decision):** sign-in is password or e-mail code only
+  (`supabase/migrations/010_no_mfa.sql` drops the aal2 rule; the file has the SQL to bring it back).
+  **Anyone with the password, or with access to the e-mail, sees all the data**: use a long, unique password.
 - **Only the public anon key is used in the app**; the service_role key is never used.
 - Public sign-ups are disabled. Your user is created by hand in the dashboard.
-- **Screen locks after 15 minutes** of inactivity and **signs out after 60**. The lock keeps the session, so coming back
-  costs only the authenticator code — no password, no e-mail. Strict security headers (CSP, HSTS, no framing) are in `vercel.json`.
+- **Screen locks after 15 minutes** of inactivity and **signs out after 60** (devices not remembered). The lock keeps
+  the session; coming back costs the password. Strict security headers (CSP, HSTS, no framing) are in `vercel.json`.
 - **Bank files are not uploaded.** Only the extracted rows are stored.
 
 ## Setup (≈20 minutes, once)
 
 1. **Supabase**: create a new project (e.g. `controle-cc`, region Frankfurt/Paris).
-   - SQL Editor → paste and run `supabase/migrations/001_schema.sql`, then `002_payslips.sql`, then `003_merchant_profiles.sql`, then `004_cards.sql` (credit cards linked to accounts), `005_benchmarks.sql` (market), `006_devices.sql` (local-AI settings per computer), `007_import_log.sql` (rows each import skipped, for the audit), `008_device_trust.sql` (remembered devices, revocable from Ajustes → Aparelhos) and `009_payslip_currency.sql` (US pay statements in dollars next to the French payslips).
+   - SQL Editor → paste and run `supabase/migrations/001_schema.sql`, then `002_payslips.sql`, then `003_merchant_profiles.sql`, then `004_cards.sql` (credit cards linked to accounts), `005_benchmarks.sql` (market), `006_devices.sql` (local-AI settings per computer), `007_import_log.sql` (rows each import skipped, for the audit), `008_device_trust.sql` (remembered devices, revocable from Ajustes → Aparelhos), `009_payslip_currency.sql` (US pay statements in dollars next to the French payslips) and `010_no_mfa.sql` (no authenticator required).
    - Authentication → Sign In / Providers → **disable "Allow new users to sign up"**.
-   - Authentication → Multi-Factor → make sure **TOTP is enabled**.
    - For the e-mail code login: Authentication → Emails → the "Magic Link" template must contain `{{ .Token }}`,
      otherwise Supabase sends a link instead of the 6-digit code the app asks for.
    - Authentication → Users → **Add user** (your email + a strong unique password, "auto confirm").
@@ -86,7 +87,7 @@ recognised on its first visit.
 3. **Vercel**: New Project → import the repo → Environment Variables:
    `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` → Deploy.
 4. On your phone, open the Vercel URL → Share/menu → **Add to Home Screen**.
-5. First login: scan the QR code with an authenticator app. Then go to **Importar**, pick the whole statements folder at once ("Pasta inteira"), and click Import.
+5. First login: e-mail + password (or the e-mail code). Then go to **Importar**, pick the whole statements folder at once ("Pasta inteira"), and click Import.
 
 Local development: `npm install`, copy `.env.example` to `.env.local` and fill it in, then `npm run dev`.
 
