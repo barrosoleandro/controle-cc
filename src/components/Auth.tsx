@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { noteSignedIn, noteSignedOut, setTrust, signOutWith, tabSignedIn, trustUntil } from '../lib/trust'
 import { reauthNeeded } from '../domain/device'
+import { VERSION, versionLabel } from '../lib/version'
 import { authenticateBiometric, biometricFactors, biometricSupported, orderForThisDevice, thisDeviceFactor } from '../lib/biometric'
 import type { Factor } from '@supabase/supabase-js'
 
@@ -213,9 +214,26 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           </form>
         )}
         {error && <p className="err">{error}</p>}
+        <Versao />
       </div>
     </div>
   )
+}
+
+/**
+ * Which build is running, before signing in: the installed app may still be on the cached one.
+ * "Atualizar" asks the server for a new build and reloads (autoUpdate installs it right away).
+ */
+function Versao() {
+  const [busy, setBusy] = useState(false)
+  async function atualizar() {
+    setBusy(true)
+    try { await (await navigator.serviceWorker?.getRegistration())?.update() } catch { /* offline: just reload */ }
+    window.location.reload()
+  }
+  return <p className="muted" style={{ fontSize: 11, textAlign: 'center', margin: '8px 0 0' }} title={VERSION.message}>
+    {versionLabel()} · <button type="button" className="link" style={{ fontSize: 11 }} disabled={busy} onClick={atualizar}>{busy ? 'atualizando…' : 'atualizar'}</button>
+  </p>
 }
 
 /**
