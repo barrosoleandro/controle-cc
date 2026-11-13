@@ -18,6 +18,18 @@ export async function biometricFactors(): Promise<Factor[]> {
 export function thisDeviceFactor(): string | null { try { return localStorage.getItem(FACTOR_KEY) } catch { return null } }
 function keep(id: string | null) { try { if (id) localStorage.setItem(FACTOR_KEY, id); else localStorage.removeItem(FACTOR_KEY) } catch { /* storage blocked */ } }
 
+// supabase-js registers for a USB security key by default (cross-platform, hints 'security-key',
+// no passkey kept on the device). A phone must keep a real passkey, so it can approve a computer by QR.
+type CreateOverrides = NonNullable<Parameters<typeof supabase.auth.mfa.webauthn.register>[1]>
+type RequestOverrides = NonNullable<Parameters<typeof supabase.auth.mfa.webauthn.authenticate>[1]>
+const CREATE: CreateOverrides = {
+  hints: ['client-device'],
+  authenticatorSelection: { authenticatorAttachment: 'platform', residentKey: 'preferred', requireResidentKey: false, userVerification: 'required' },
+}
+// 'hybrid' makes the computer's browser go straight to "use a phone" (QR code + Bluetooth).
+// The typing asks for a challenge; the server's own challenge is merged in by supabase-js.
+const viaPhone = (phone: boolean) => ({ hints: [phone ? 'hybrid' : 'client-device'], userVerification: 'required' }) as Partial<RequestOverrides> as RequestOverrides
+
 /** The OS prompt was dismissed or timed out: not an error worth a red message. */
 const cancelled = (m: string) => /NotAllowed|abort|cancel|timed out/i.test(m)
 
@@ -26,19 +38,22 @@ export async function registerBiometric(deviceName: string): Promise<void> {
   // The name must be unique among the account's factors: a device registering again gets the date.
   const taken = new Set((await biometricFactors()).map((f) => f.friendly_name))
   const name = taken.has(deviceName) ? `${deviceName} (${new Date().toLocaleDateString('pt-BR')})` : deviceName
-  const { error } = await supabase.auth.mfa.webauthn.register({ friendlyName: name })
+  const { error } = await supabase.auth.mfa.webauthn.register({ friendlyName: name }, CREATE)
   if (error) throw new Error(cancelled(error.message) ? 'Cadastro cancelado.' : error.message)
   keep((await biometricFactors()).find((f) => f.friendly_name === name)?.id ?? null)
 }
 
-/** Second factor by biometrics; true when the session is now at aal2. */
-export async function authenticateBiometric(factorId: string): Promise<boolean> {
-  const { error } = await supabase.auth.mfa.webauthn.authenticate({ factorId })
+/**
+ * Second factor by biometrics; true when the session is now at aal2.
+ * `phone`: the key is on another device (the phone), reached by the QR code the browser shows.
+ */
+export async function authenticateBiometric(factorId: string, phone = false): Promise<boolean> {
+  const { error } = await supabase.auth.mfa.webauthn.authenticate({ factorId }, viaPhone(phone))
   if (error) {
     if (cancelled(error.message)) return false
     throw new Error(error.message)
   }
-  keep(factorId)
+  if (!phone) keep(factorId) // a phone's key is not this device's
   return true
 }
 

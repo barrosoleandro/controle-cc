@@ -44,6 +44,7 @@ export const SIGNOUT_REASON = {
   servidor: 'sessão encerrada pelo servidor (renovação recusada)',
   apagado: 'dados do navegador apagados (ex.: Safari depois de 7 dias sem abrir o site, fora da Tela de Início)',
   primeiro: 'primeiro acesso neste aparelho',
+  pontual: 'acesso pontual: aparelho não salvo pede login a cada abertura do app',
 } as const
 export type SignoutReason = keyof typeof SIGNOUT_REASON
 
@@ -57,6 +58,17 @@ export function trustAction(o: { localTrusted: boolean; pending: 'on' | 'off' | 
   if (o.pending === 'off') return 'forget'
   if (!o.localTrusted) return 'none'
   return o.revokedAt ? 'revoked' : 'renew'
+}
+
+/**
+ * On opening the app with a session already at aal2, whether it must sign in again:
+ * 'expirou' when a saved device went 30 days unused, 'pontual' when the device was not saved
+ * and this tab did not sign in itself (the app or browser was closed and opened again).
+ */
+export function reauthNeeded(o: { trustUntil: number; now: number; tabSignedIn: boolean }): 'expirou' | 'pontual' | null {
+  if (o.trustUntil > o.now) return null
+  if (o.trustUntil) return 'expirou'
+  return o.tabSignedIn ? null : 'pontual'
 }
 
 /** Why the last sign-in was needed: the app's own record, else what identifying the device tells. */
