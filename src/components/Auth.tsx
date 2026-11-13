@@ -117,11 +117,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   const semEscolha = () => { if (lembrar !== null) return false; setError('Escolha antes: salvar este aparelho ou só desta vez.'); return true }
 
-  async function entrarComBiometria(id: string) {
+  async function entrarComBiometria(id: string, phone: boolean) {
     if (semEscolha()) return
     setBusy(true); setError(null)
     try {
-      if (!(await authenticateBiometric(id))) return
+      if (!(await authenticateBiometric(id, phone))) return
       noteSignedIn(lembrar === true)
       setStep(recuperando ? 'newpass' : 'ok')
     } catch { setError('A biometria não funcionou neste aparelho. Use o código do autenticador.') }
@@ -230,9 +230,9 @@ export function ReauthLock({ onUnlock }: { onUnlock: () => void }) {
 
   const [bio, setBio] = useState<Factor[]>([])
   useEffect(() => { if (biometricSupported()) biometricFactors().then((f) => setBio(orderForThisDevice(f)), () => setBio([])) }, [])
-  async function comBiometria(id: string) {
+  async function comBiometria(id: string, phone: boolean) {
     setBusy(true); setError(null)
-    try { if (await authenticateBiometric(id)) onUnlock() } catch { setError('A biometria não funcionou. Use o código.') } finally { setBusy(false) }
+    try { if (await authenticateBiometric(id, phone)) onUnlock() } catch { setError('A biometria não funcionou. Use o código.') } finally { setBusy(false) }
   }
 
   async function desbloquear(e: React.FormEvent) {
@@ -281,15 +281,20 @@ function Escolha({ lembrar, onChange }: { lembrar: boolean | null; onChange: (v:
 }
 
 /**
- * Biometric sign-in: one button for this device's key; when the browser forgot which one is
- * this device's (data wiped), one per registered device, to pick this one.
+ * Biometric sign-in: this device's own key (Face ID / digital), and on a computer one QR button per
+ * other registered device, approved on the phone. When the browser forgot which key is its own
+ * (data wiped), every key is offered both ways.
  */
-function BioButtons({ factors, busy, onPick }: { factors: Factor[]; busy: boolean; onPick: (id: string) => void }) {
-  const mine = factors[0]
-  const known = Boolean(mine) && mine.id === thisDeviceFactor()
-  if (known) return <button type="button" className="primary" disabled={busy} onClick={() => onPick(mine.id)}>Entrar com biometria (Face ID / digital)</button>
+function BioButtons({ factors, busy, onPick }: { factors: Factor[]; busy: boolean; onPick: (id: string, phone: boolean) => void }) {
+  const mineId = thisDeviceFactor()
+  const mine = factors.find((f) => f.id === mineId)
+  const others = factors.filter((f) => f.id !== mineId)
+  const computer = !/Android|iPhone|iPad/.test(navigator.userAgent)
   return <div className="auth">
-    <p className="muted" style={{ fontSize: 12 }}>Entrar com a biometria deste aparelho:</p>
-    {factors.map((f) => <button key={f.id} type="button" disabled={busy} onClick={() => onPick(f.id)}>Biometria · {f.friendly_name || 'aparelho'}</button>)}
+    {mine && <button type="button" className="primary" disabled={busy} onClick={() => onPick(mine.id, false)}>Entrar com biometria (Face ID / digital)</button>}
+    {computer && others.map((f) => <button key={`qr-${f.id}`} type="button" className={mine ? '' : 'primary'} disabled={busy} onClick={() => onPick(f.id, true)}>
+      Aprovar pelo celular (QR code) · {f.friendly_name || 'aparelho'}</button>)}
+    {!mine && !computer && others.map((f) => <button key={f.id} type="button" disabled={busy} onClick={() => onPick(f.id, false)}>Biometria · {f.friendly_name || 'aparelho'}</button>)}
+    {computer && others.length > 0 && <p className="muted" style={{ fontSize: 12 }}>O navegador mostra um QR code: leia com a câmera do celular e confirme com Face ID / digital. Bluetooth ligado nos dois.</p>}
   </div>
 }
