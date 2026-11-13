@@ -17,6 +17,7 @@ import { DEFAULT_OLLAMA, listModels, loadOllama, normalizeUrl, ollamaReady, save
 import { chooseDevice, deleteDevice, DEVICE_EVENT, deviceState, saveThisDevice, syncDevice } from '../lib/device'
 import { Help, Tabs } from '../components/Page'
 import { Devices } from '../components/Devices'
+import { HouseholdCard } from '../components/Access'
 import { unaccent } from '../domain/util'
 
 const SECTIONS = ['Contas', 'Orçamentos', 'Categorias', 'Regras', 'Mapa do banco', 'Cotações', 'IA local', 'Aparelhos', 'Aparência'] as const
@@ -27,7 +28,7 @@ export function SettingsPage({ ctx, sub }: { ctx: Ctx; sub?: string }) {
     <Tabs label="Seções dos ajustes" items={SECTIONS} value={sec} onChange={setSec} />
     {sec === 'Contas' && <Accounts ctx={ctx} />}
     {sec === 'IA local' && <><ThisComputer /><LocalAi /></>}
-    {sec === 'Aparelhos' && <div className="grid"><Devices /></div>}
+    {sec === 'Aparelhos' && <div className="grid"><Devices /><HouseholdCard /></div>}
     {sec === 'Aparência' && <Appearance />}
     {sec === 'Orçamentos' && <Budgets ctx={ctx} />}
     {sec === 'Categorias' && <Categories ctx={ctx} />}

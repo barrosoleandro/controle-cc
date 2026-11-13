@@ -60,10 +60,15 @@ recognised on its first visit.
 - **Row Level Security on every table:** a row is visible only to its owner, or to the members of the owner's
   household (`household_members`, migration 011): a member sees and edits the same data, and what they import is
   stored under the owner. Devices stay per person.
+- **Access approved by the owner's phone (QR code).** A device with no password or e-mail at hand asks for access with an
+  e-mail; the household owner, signed in on the phone, reads the QR code, picks the number the other device shows and
+  approves. A new e-mail becomes a household member before its first sign-in; an account outside the household is refused.
+  The `household-access` Edge Function holds the service_role key on Supabase's servers; it never reaches the browser.
+  **Whoever holds the owner's unlocked, signed-in phone can let people in**: lock the phone.
 - **No second factor (since 13/11/2026, owner's decision):** sign-in is password or e-mail code only
   (`supabase/migrations/010_no_mfa.sql` drops the aal2 rule; the file has the SQL to bring it back).
   **Anyone with the password, or with access to the e-mail, sees all the data**: use a long, unique password.
-- **Only the public anon key is used in the app**; the service_role key is never used.
+- **Only the public anon key is used in the app.** The service_role key exists only inside the `household-access` Edge Function.
 - Public sign-ups are disabled. Your user is created by hand in the dashboard.
 - **Screen locks after 15 minutes** of inactivity and **signs out after 60** (devices not remembered). The lock keeps
   the session; coming back costs the password. Strict security headers (CSP, HSTS, no framing) are in `vercel.json`.
@@ -72,7 +77,11 @@ recognised on its first visit.
 ## Setup (≈20 minutes, once)
 
 1. **Supabase**: create a new project (e.g. `controle-cc`, region Frankfurt/Paris).
-   - SQL Editor → paste and run `supabase/migrations/001_schema.sql`, then `002_payslips.sql`, then `003_merchant_profiles.sql`, then `004_cards.sql` (credit cards linked to accounts), `005_benchmarks.sql` (market), `006_devices.sql` (local-AI settings per computer), `007_import_log.sql` (rows each import skipped, for the audit), `008_device_trust.sql` (remembered devices, revocable from Ajustes → Aparelhos), `009_payslip_currency.sql` (US pay statements in dollars next to the French payslips) `010_no_mfa.sql` (no authenticator required) and `011_household.sql` (another person sharing the same data).
+   - SQL Editor → paste and run `supabase/migrations/001_schema.sql`, then `002_payslips.sql`, then `003_merchant_profiles.sql`, then `004_cards.sql` (credit cards linked to accounts), `005_benchmarks.sql` (market), `006_devices.sql` (local-AI settings per computer), `007_import_log.sql` (rows each import skipped, for the audit), `008_device_trust.sql` (remembered devices, revocable from Ajustes → Aparelhos), `009_payslip_currency.sql` (US pay statements in dollars next to the French payslips) `010_no_mfa.sql` (no authenticator required) and `011_household.sql` (another person sharing the same data) and `012_access_requests.sql` (access approved by the phone).
+   - **Access approved by the phone** (optional, needs 011 and 012): Edge Functions → **Deploy a new function** → name
+     `household-access`, paste `supabase/functions/household-access/index.ts`, and **turn off "Enforce JWT verification"**
+     (the function checks the token itself). CLI: `supabase functions deploy household-access --no-verify-jwt`.
+     Then, on the new device: "Pedir acesso pelo celular"; on your phone: Ajustes → Aparelhos → Aprovar acesso.
    - **Another person in the household** (optional): Authentication → Users → **Add user** (their e-mail + password,
      "auto confirm"), then, **before they sign in for the first time**, run in the SQL Editor:
      `insert into public.household_members (member_id, owner_id) select m.id, o.id from auth.users m, auth.users o where m.email = 'THEIR_EMAIL' and o.email = 'YOUR_EMAIL';`
