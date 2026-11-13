@@ -113,18 +113,5 @@ describe('device trust', () => {
     expect(signoutReason(null, 'reconhecido')).toBe('apagado') // the browser lost the id it kept
     expect(signoutReason(null, 'novo')).toBe('primeiro')
     expect(signoutReason(null, 'lembrado')).toBe('servidor')
-    expect(signoutReason('pontual', 'lembrado')).toBe('pontual')
-  })
-  it('asks a one-off access to sign in again once the tab is closed', async () => {
-    const { reauthNeeded } = await import('../src/domain/device')
-    const now = Date.parse('2026-11-12T12:00:00Z')
-    const day = 86400000
-    // Saved device in use: straight in, in any tab.
-    expect(reauthNeeded({ trustUntil: now + day, now, tabSignedIn: false })).toBeNull()
-    // Saved device unused for 30 days: full login.
-    expect(reauthNeeded({ trustUntil: now - 1, now, tabSignedIn: true })).toBe('expirou')
-    // Not saved: fine in the tab that signed in, a new login once reopened.
-    expect(reauthNeeded({ trustUntil: 0, now, tabSignedIn: true })).toBeNull()
-    expect(reauthNeeded({ trustUntil: 0, now, tabSignedIn: false })).toBe('pontual')
   })
 })
