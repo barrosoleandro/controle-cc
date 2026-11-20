@@ -296,7 +296,8 @@ export function ImportPage({ ctx }: { ctx: Ctx }) {
             <strong>✔ Extrato do FGTS lido:</strong> {fgtsFiles.join(', ')}. Os depósitos foram salvos para a conferência.{' '}
             <button className="link" onClick={() => ctx.go('Rescisão')}>Ver em Rescisão</button></div>
         )}
-        {errors.length > 0 && <details>
+        {/* Open when the errors are all there is: a closed line alone looked like the import had frozen. */}
+        {errors.length > 0 && <details open={!plans.length && !busy}>
           <summary className="err">{errors.length} arquivo(s) com problema</summary>
           {errors.slice(0, 30).map((e) => <p key={e} className="err" style={{ fontSize: 13 }}>{e}</p>)}
           {errors.length > 30 && <p className="muted">e mais {errors.length - 30}…</p>}

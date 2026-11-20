@@ -38,12 +38,16 @@ export function vendorWords(description: string): Set<string> {
 // PART." where its PDF names the person ("VIR SEPA M DUPONT"), so the two share no word.
 const NAMELESS = new Set([...MOVEMENT, 'CPT', 'COMPTE', 'DEPOT', 'PART'])
 
-/** Same vendor when the descriptions share a word (or one of them names nobody). */
+/** One word cut short to the other: Itaú's older export writes "PIX TRANSF MARIAN21/09" for MARIANA. */
+const truncated = (x: string, y: string) => Math.min(x.length, y.length) >= 4 && /^[A-Z]+$/.test(x + y) && (x.startsWith(y) || y.startsWith(x))
+
+/** Same vendor when the descriptions share a word, or a word cut short (or one of them names nobody). */
 export function sameVendor(a: string, b: string): boolean {
   const wa = vendorWords(a), wb = vendorWords(b)
   const named = (ws: Set<string>) => [...ws].some((w) => !NAMELESS.has(w))
   if (!named(wa) || !named(wb)) return true
   for (const w of wa) if (wb.has(w)) return true
+  for (const x of wa) for (const y of wb) if (truncated(x, y)) return true
   return false
 }
 
