@@ -1,3 +1,4 @@
+import { unaccent } from './util'
 /** What the average needs from an enriched transaction (value already in the budget currency). */
 export interface SpendTx { month: string; value: number; kind: string; category_id: string | null }
 
@@ -43,6 +44,6 @@ export function salaryAt(rows: { month: string | null; amount: number }[], month
 
 /** The income category holding the salary: "Salario", with or without accent, any case. */
 export function findSalaryCategory<C extends { name: string; kind: string }>(categories: C[]): C | undefined {
-  const plain = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').trim().toLowerCase()
+  const plain = (s: string) => unaccent(s).trim().toLowerCase()
   return categories.find((c) => c.kind === 'income' && plain(c.name) === 'salario')
 }

@@ -44,7 +44,7 @@ export function Market() {
   }, [])
   useEffect(() => { load() }, [load])
 
-  const mine = useMemo(() => myGrossYear(payslips.map((p) => ({ period: p.period.slice(0, 7), gross: p.gross }))), [payslips])
+  const mine = useMemo(() => myGrossYear(payslips.filter((p) => p.currency === 'EUR').map((p) => ({ period: p.period.slice(0, 7), gross: p.gross }))), [payslips])
 
   if (erro) return <div className="card err" style={{ whiteSpace: 'pre-wrap' }}>{erro}</div>
   if (!roles) return <div className="card muted">Carregando…</div>

@@ -3,22 +3,31 @@ import { supabase } from './supabase'
 import type { Account, AccountHint, BankMapEntry, Category, Currency, ParseResult, ParsedTransaction, Rule, Transaction } from '../domain/types'
 import { DEFAULT_BANK_MAP, DEFAULT_CATEGORIES, DEFAULT_RULES } from '../domain/defaults'
 import { categorize, merchantKey, ruleMatches, TRANSFER } from '../domain/categorize'
-import { CARD_BILL, matchBillDebits, matchCardPayments, type StoredCardStatement } from '../domain/cards'
+import { CARD_BILL, matchBillDebits, matchCardPayments, payerOf, type StoredCardStatement, withPaidStatus } from '../domain/cards'
 import { dedupeKey, markDuplicates, sameVendor, withFingerprints } from '../domain/fingerprint'
 import { withAiNote } from '../domain/claudeExchange'
 import type { ContractItem } from '../domain/payroll'
+import { isCardBillPayment } from '../domain/forecast'
 
 export interface DashboardPrefs {
   widgets: { id: string; visible: boolean }[]
   /** Payslips: country the salary is paid in, and the inflation table used per country. */
   /** Brazilian bills the user marked as counted in the transfer: merchant → month → on/off (domain/forecast). */
   billMarks?: Record<string, Record<string, boolean>>
+  /** Interval of recurring lines set by the user, in months, over the detected one: merchant → months (domain/monthPlan). */
+  billPeriods?: Record<string, number>
+  /** FGTS deposits per competência (yyyy-mm, or yyyy-13 for the 13th), in BRL, from the FGTS statement (components/FgtsCheck). */
+  fgtsDeposits?: Record<string, number>
   payroll?: { country?: string; inflation?: Record<string, Record<string, number>> }
   /** Previdência privada no Brasil, em BRL (Investimentos; a Rescisão parte destes saldos). */
   previdencia?: PrevidenciaSaldo
   /** Previsão: lines added by hand to the current or next month (domain/monthPlan). */
   manualLines?: ManualLine[]
+  /** Fim do mês: what the user planned is still to come per category, by month (domain/monthEnd). */
+  monthEndPlan?: Record<string, MonthEndPlan>
 }
+/** Planned "still to come" per category (rowKey → value ≥ 0, manual lines included), in `currency`. */
+export interface MonthEndPlan { currency: Currency; falta: Record<string, number> }
 export interface PrevidenciaSaldo {
   suas: number // saldo das suas contribuições
   empresa: number // saldo das contribuições da empresa
@@ -87,18 +96,21 @@ export async function loadAll(): Promise<AppData> {
     selectOptional<StoredCardStatement>('card_statements', 'due_date'),
   ])
   const catName = new Map(categories.map((c) => [c.id, c.name]))
+  const accs = accounts.map((a) => ({ ...a, opening_balance: Number(a.opening_balance) }))
+  const txs = transactions.map((t) => ({ ...t, amount: Number(t.amount) }))
   return {
-    accounts: accounts.map((a) => ({ ...a, opening_balance: Number(a.opening_balance) })),
+    accounts: accs,
     categories,
     rules: rulesRaw.map((r) => ({ ...r, category: catName.get(r.category_id) ?? '' })),
     bankMap: mapRaw.map((m) => ({ ...m, category: catName.get(m.category_id) ?? '' })),
-    transactions: transactions.map((t) => ({ ...t, amount: Number(t.amount) })),
+    transactions: txs,
     checkpoints: checkpoints.map((c) => ({ ...c, balance: Number(c.balance) })),
     budgets: budgets.map((b) => ({ ...b, amount: Number(b.amount) })),
     fx: new Map(fxRows.filter((r) => r.quote === 'BRL').map((r) => [r.date, Number(r.rate)])),
     settings: settingsRows[0] ?? { display_currency: 'EUR', dashboard: { widgets: [] }, dismissed_alerts: [] },
     scenarios,
-    cardStatements: cardStatements.map((c) => ({ ...c, total: Number(c.total) })),
+    // A bill imported while open shows as paid once its payment was imported (see withPaidStatus).
+    cardStatements: withPaidStatus(accs, cardStatements.map((c) => ({ ...c, total: Number(c.total) })), txs, isCardBillPayment),
   }
 }
 
@@ -411,7 +423,8 @@ export async function linkCardPayments(data: AppData): Promise<number> {
   if (ids.length) await setCategoryForTransactions(ids, transfer.id)
   // Only rows the rules file as a card bill ("Cartão Itaú") go back: transfers picked by hand stay.
   const matched = new Set([...viaPayment, ...viaBill])
-  const payers = new Map(data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.parent_account_id!, a]))
+  const cardById = new Map(data.accounts.map((a) => [a.id, a]))
+  const payers = new Map([...payerOf(data.accounts)].map(([card, payer]) => [payer, cardById.get(card)!]))
   const billCat = data.categories.find((c) => c.name === CARD_BILL)
   let unlinked = 0
   if (billCat) for (const t of data.transactions) {

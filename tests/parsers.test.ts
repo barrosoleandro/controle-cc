@@ -115,6 +115,11 @@ describe('duplicate check across files (date + vendor + amount)', () => {
     expect(markDuplicates([it2('CARTE CARREFOUR'), it2('CARTE CARREFOUR'), it2('CARTE PICARD')], [it2('CARREFOUR MARKET')])).toEqual([true, false, false])
     expect(markDuplicates([it2('PICARD', -6)], [it2('PICARD', -5)])).toEqual([false])
   })
+  it('a transfer the CSV leaves nameless is the one the PDF names', () => {
+    expect(markDuplicates([it2('VIR SEPA MLLE DUPONT MARIE', 12.2)], [it2('VIR. VERS CPT DEPOT PART.', 12.2)])).toEqual([true])
+    expect(markDuplicates([it2('VIR SEPA M DUPONT', 1000), it2('VIR SEPA M MARTIN', 1000)], [it2('VIR. VERS CPT DEPOT PART.', 1000)])).toEqual([true, false])
+    expect(markDuplicates([it2('VIR SEPA M MARTIN', 1000)], [it2('VIREMENT VERS M. DUPONT', 1000)])).toEqual([false])
+  })
 })
 
 describe('CCF: operations on the closing day of the previous statement', () => {

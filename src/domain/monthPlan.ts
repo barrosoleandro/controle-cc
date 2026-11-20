@@ -20,37 +20,41 @@ export interface ManualLine {
 
 export interface PlanTx { month: string; value: number; kind: 'income' | 'expense' | 'transfer'; categoryName: string; merchant?: string; booking_date?: string }
 /**
- * A recurring income or expense, expected in the months it is due until it shows up there.
- * `period`: 1 monthly, 2 every two months, 3 every three; `lastMonth`: its latest occurrence (yyyy-mm).
+ * A recurring income or expense, expected every `period` months counted from `lastMonth` (the
+ * month of its latest entry), until it shows up in the month. `amount` is one payment.
  */
-export interface RecurringExpect { merchant: string; kind: 'income' | 'expense'; categoryName: string; amount: number; day: number; period: number; lastMonth: string }
+export interface RecurringExpect { merchant: string; kind: 'income' | 'expense'; categoryName: string; amount: number; day: number; period: number; lastMonth: string; /** The interval came from the user, not from the history. */ periodSet?: boolean }
 
-/** Whole months from `a` to `b` (yyyy-mm); negative when b is earlier. */
+/** User's interval per merchant, in months (1 = monthly, 2 = bimonthly…), over the detected one. */
+export type RecurringPeriods = Record<string, number>
+
+/** Months from `a` to `b` (yyyy-mm), negative when `b` is before `a`. */
 export function monthsBetween(a: string, b: string): number {
   const [ya, ma] = a.split('-').map(Number), [yb, mb] = b.split('-').map(Number)
   return (yb - ya) * 12 + (mb - ma)
 }
 
-/**
- * How often something comes, from the months it appeared in: 2 or 3 when the typical gap between
- * them is 2 or 3 months and it never came in two months in a row; otherwise 1 (monthly).
- * Needs three occurrences (two gaps): with fewer there is no pattern to trust.
- */
-export function recurrencePeriod(months: Iterable<string>): number {
-  const ms = [...new Set(months)].sort()
-  if (ms.length < 3) return 1
-  const gaps = ms.slice(1).map((m, i) => monthsBetween(ms[i], m)).sort((a, b) => a - b)
-  if (gaps[0] < 2) return 1
-  const median = gaps[Math.floor(gaps.length / 2)]
-  return median === 2 || median === 3 ? median : 1
-}
-
-/** Is a recurring line due in `month`? Monthly ones always; the others every `period` months after the latest one. */
+/** Whether a recurring line is expected in `month`: every `period` months after its latest entry. */
 export function isDue(e: Pick<RecurringExpect, 'period' | 'lastMonth'>, month: string): boolean {
   if (e.period <= 1) return true
-  const n = monthsBetween(e.lastMonth, month)
-  return n > 0 && n % e.period === 0
+  const d = monthsBetween(e.lastMonth, month)
+  return d >= 0 && d % e.period === 0
 }
+
+/**
+ * The interval of a recurring line from the months it was paid in (sorted, distinct): the median
+ * gap between them, so one late or skipped month does not change it. Fewer than 2 → monthly.
+ */
+export function detectPeriod(months: string[]): number {
+  if (months.length < 2) return 1
+  const gaps = months.slice(1).map((m, i) => monthsBetween(months[i], m)).sort((a, b) => a - b)
+  const mid = gaps.length / 2
+  const median = gaps.length % 2 ? gaps[Math.floor(mid)] : (gaps[mid - 1] + gaps[mid]) / 2
+  return Math.min(12, Math.max(1, Math.round(median)))
+}
+
+/** How many complete months back the interval of a recurring line is read from. */
+export const PERIOD_HISTORY = 12
 export interface PlanManual { month: string; value: number; kind: 'income' | 'expense' | 'transfer'; categoryName: string; merchant?: string }
 
 export interface PlanRow {
@@ -63,6 +67,8 @@ export interface PlanRow {
   pendentes: RecurringExpect[]
   falta: number
   previsto: number
+  /** Set when the user typed `falta`: what the app had worked out, to show and to go back to. */
+  faltaApp?: number
 }
 export interface PlanTotals { media: number; realizado: number; manual: number; recorrente: number; falta: number; previsto: number }
 export interface MonthPlan { month: string; income: PlanRow[]; expense: PlanRow[]; totals: { income: PlanTotals; expense: PlanTotals }; resultado: number }
@@ -71,13 +77,22 @@ export interface MonthPlan { month: string; income: PlanRow[]; expense: PlanRow[
 const signed = (kind: 'income' | 'expense', v: number) => (kind === 'income' ? v : -v)
 
 /**
- * `recurring`: expected recurring lines; one still missing from the month (not imported, not
- * replaced by a manual line of the same merchant) counts in its category, so falta = max(0, max(recorrentes pendentes, média − realizado) − manual).
+ * `recurring`: expected recurring lines; one due in the month (see isDue) and still missing (not
+ * imported, not replaced by a manual line of the same merchant) counts in its category, so
+ * falta = max(0, max(recorrentes mensais pendentes, média − realizado) + recorrentes de intervalo maior pendentes − manual).
+ * An income category with a monthly recurring line (salary) follows that line alone, not the average:
+ * once the salary of the month is in, nothing more is expected there.
+ * A line paid every 2 months or more is left out of the average and of the realizado it is compared
+ * with: it counts only in the months it is due, at its full value, not as a share every month.
  */
 export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: string, avgMonths: string[], recurring: RecurringExpect[] = []): MonthPlan {
   const avgSet = new Set(avgMonths)
   const n = Math.max(1, avgMonths.length)
   const rows = new Map<string, PlanRow>()
+  const periodic = new Set(recurring.filter((e) => e.period > 1).map((e) => `${e.kind}/${e.merchant}`))
+  const isPeriodic = (t: { kind: string; merchant?: string }) => !!t.merchant && periodic.has(`${t.kind}/${t.merchant}`)
+  const extra = new Map<PlanRow, { realPeriodic: number; recPeriodic: number }>()
+  const extraOf = (r: PlanRow) => extra.get(r) ?? extra.set(r, { realPeriodic: 0, recPeriodic: 0 }).get(r)!
   const row = (name: string, kind: 'income' | 'expense') => {
     const key = `${kind}/${name}`
     let r = rows.get(key)
@@ -87,8 +102,13 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
   for (const t of txs) {
     if (t.kind === 'transfer') continue
     // Money from or to outside (a resgate) is a one-off: it counts in its month, not in the average.
-    if (avgSet.has(t.month) && t.categoryName !== EXTERNAL) row(t.categoryName, t.kind).media += signed(t.kind, t.value) / n
-    if (t.month === month) row(t.categoryName, t.kind).realizado += signed(t.kind, t.value)
+    const p = isPeriodic(t)
+    if (avgSet.has(t.month) && t.categoryName !== EXTERNAL && !p) row(t.categoryName, t.kind).media += signed(t.kind, t.value) / n
+    if (t.month === month) {
+      const r = row(t.categoryName, t.kind)
+      r.realizado += signed(t.kind, t.value)
+      if (p) extraOf(r).realPeriodic += signed(t.kind, t.value)
+    }
   }
   for (const m of manual) {
     if (m.kind === 'transfer' || m.month !== month) continue
@@ -98,14 +118,20 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
     ...txs.filter((t) => t.month === month && t.kind !== 'transfer' && t.merchant).map((t) => `${t.kind}/${t.merchant}`),
     ...manual.filter((m) => m.month === month && m.merchant).map((m) => `${m.kind}/${m.merchant}`),
   ])
+  const byRecurring = new Set<PlanRow>() // income rows driven by their monthly recurring lines
   for (const e of recurring) {
+    if (e.kind === 'income' && e.period <= 1) byRecurring.add(row(e.categoryName, e.kind))
     if (done.has(`${e.kind}/${e.merchant}`) || !isDue(e, month)) continue
     const r = row(e.categoryName, e.kind)
     r.recorrente += e.amount
+    if (e.period > 1) extraOf(r).recPeriodic += e.amount
     r.pendentes.push(e)
   }
   const all = [...rows.values()].map((r) => {
-    const falta = Math.max(0, Math.max(r.recorrente, r.media - r.realizado) - r.manual)
+    const x = extra.get(r) ?? { realPeriodic: 0, recPeriodic: 0 }
+    const pending = r.recorrente - x.recPeriodic
+    const base = byRecurring.has(r) ? pending : Math.max(pending, r.media - (r.realizado - x.realPeriodic))
+    const falta = Math.max(0, base + x.recPeriodic - r.manual)
     return { ...r, falta, previsto: r.realizado + r.manual + falta, pendentes: r.pendentes.sort((a, b) => a.day - b.day) }
   }).filter((r) => Math.abs(r.media) > 0.005 || Math.abs(r.realizado) > 0.005 || Math.abs(r.manual) > 0.005 || r.recorrente > 0.005)
   const pick = (kind: 'income' | 'expense') => all.filter((r) => r.kind === kind).sort((a, b) => b.previsto - a.previsto)
@@ -119,33 +145,94 @@ export function buildMonthPlan(txs: PlanTx[], manual: PlanManual[], month: strin
 }
 
 /**
- * What each recurring merchant is expected to bring in or charge: its average over the months it
- * appeared in `avgMonths`, in the category and on the day of its latest entry. Merchants with
- * nothing in those months are left out (nothing to base the value on). The period (monthly, every
- * 2 or 3 months) comes from the months it appeared in during the 12 months up to its latest one.
+ * The plan with the expense `name` expected at `rate` of the salary of the month (the salary row's
+ * previsto), instead of its own average: what is still to pay is that share less what was paid.
+ * The row is added when the month has none yet. Without a salary in the month, the plan as it is.
  */
-export function recurringExpectations(txs: PlanTx[], isRecurring: (merchant: string, kind: 'income' | 'expense') => boolean, avgMonths: string[]): RecurringExpect[] {
-  const set = new Set(avgMonths)
+export function shareOfSalary(plan: MonthPlan, salary: string | undefined, name: string, rate: number): MonthPlan {
+  const pay = plan.income.find((r) => r.name === salary)
+  if (!pay || pay.previsto <= 0.005) return plan
+  const due = pay.previsto * rate
+  const old = plan.expense.find((r) => r.name === name)
+  const base = old ?? { name, kind: 'expense' as const, media: 0, realizado: 0, manual: 0, recorrente: 0, pendentes: [], falta: 0, previsto: 0 }
+  const falta = Math.max(0, due - base.realizado - base.manual)
+  const row: PlanRow = { ...base, falta, previsto: base.realizado + base.manual + falta }
+  const expense = [...plan.expense.filter((r) => r !== old), row].sort((a, b) => b.previsto - a.previsto)
+  const t = plan.totals.expense
+  const totals = { income: plan.totals.income, expense: { ...t, falta: t.falta - (old?.falta ?? 0) + row.falta, previsto: t.previsto - (old?.previsto ?? 0) + row.previsto } }
+  return { ...plan, expense, totals, resultado: totals.income.previsto - totals.expense.previsto }
+}
+
+/**
+ * The plan with one more expense line that is not a category: money that leaves the accounts in
+ * scope for another account of the user (the transfer that pays the bills in Brazil).
+ * `realizado`: already sent in the month; `falta`: still to send. Totals and result follow.
+ */
+export function withExpenseLine(plan: MonthPlan, name: string, realizado: number, falta: number): MonthPlan {
+  if (realizado <= 0.005 && falta <= 0.005) return plan
+  const row: PlanRow = { name, kind: 'expense', media: 0, realizado, manual: 0, recorrente: 0, pendentes: [], falta, previsto: realizado + falta }
+  const expense = [...plan.expense, row].sort((a, b) => b.previsto - a.previsto)
+  const t = plan.totals.expense
+  const totals = { income: plan.totals.income, expense: { ...t, realizado: t.realizado + realizado, falta: t.falta + falta, previsto: t.previsto + row.previsto } }
+  return { ...plan, expense, totals, resultado: totals.income.previsto - totals.expense.previsto }
+}
+
+/**
+ * What each recurring merchant is expected to bring in or charge, and how often. The interval is
+ * read from the last PERIOD_HISTORY complete months (see detectPeriod), unless the user set one.
+ * Monthly ones: the average over the months of `avgMonths` they appeared in, left out when they
+ * did not appear in any (nothing to base the value on). A monthly income (salary) is expected at
+ * its latest full month instead (see latestFull): a raise or the end of a bonus shows at once. Every 2 months or more: the average of
+ * their last 3 payments, left out when the latest is more than two intervals old (stopped).
+ * Category and day are the latest entry's.
+ */
+export function recurringExpectations(txs: PlanTx[], isRecurring: (merchant: string, kind: 'income' | 'expense') => boolean, avgMonths: string[], periods: RecurringPeriods = {}): RecurringExpect[] {
+  const avgSet = new Set(avgMonths)
+  const end = [...avgMonths].sort().at(-1)
+  if (!end) return []
+  const current = nextMonth(end)
+  const inHistory = (m: string) => { const d = monthsBetween(m, end); return d >= 0 && d < PERIOD_HISTORY }
   const by = new Map<string, { kind: 'income' | 'expense'; perMonth: Map<string, number>; last: PlanTx }>()
-  const history = new Map<string, Set<string>>() // kind/merchant → every month it appeared in
   for (const t of txs) {
-    if (t.kind !== 'transfer' && t.merchant) history.set(`${t.kind}/${t.merchant}`, (history.get(`${t.kind}/${t.merchant}`) ?? new Set()).add(t.month))
-  }
-  for (const t of txs) {
-    if (t.kind === 'transfer' || !t.merchant || !set.has(t.month) || !isRecurring(t.merchant, t.kind)) continue
+    if (t.kind === 'transfer' || !t.merchant || !(inHistory(t.month) || t.month === current) || !isRecurring(t.merchant, t.kind)) continue
     const key = `${t.kind}/${t.merchant}`
     const m = by.get(key) ?? { kind: t.kind, perMonth: new Map(), last: t }
     m.perMonth.set(t.month, (m.perMonth.get(t.month) ?? 0) + signed(t.kind, t.value))
-    if ((t.booking_date ?? '') >= (m.last.booking_date ?? '')) m.last = t
+    if ((t.booking_date ?? t.month) >= (m.last.booking_date ?? m.last.month)) m.last = t
     by.set(key, m)
   }
-  return [...by.entries()].map(([key, m]) => {
-    const vals = [...m.perMonth.values()]
-    const seen = [...history.get(key)!].sort()
-    const lastMonth = seen.at(-1)!
-    const period = recurrencePeriod(seen.filter((mo) => monthsBetween(mo, lastMonth) <= 12))
-    return { merchant: m.last.merchant!, kind: m.kind, categoryName: m.last.categoryName, amount: vals.reduce((s, v) => s + v, 0) / vals.length, day: Number((m.last.booking_date ?? '').slice(8, 10)) || 1, period, lastMonth }
-  }).filter((e) => e.amount > 0.005)
+  const out: RecurringExpect[] = []
+  for (const m of by.values()) {
+    const merchant = m.last.merchant!
+    const paid = [...m.perMonth].filter(([, v]) => v > 0.005).map(([mo]) => mo).sort()
+    if (!paid.length) continue
+    const mine = periods[merchant]
+    const period = mine && mine >= 1 ? Math.min(12, Math.round(mine)) : detectPeriod(paid.filter(inHistory))
+    const lastMonth = paid.at(-1)!
+    let amount: number
+    if (period === 1) {
+      const vals = [...m.perMonth].filter(([mo]) => avgSet.has(mo)).map(([, v]) => v)
+      if (!vals.length) continue
+      amount = vals.reduce((s, v) => s + v, 0) / vals.length
+      if (m.kind === 'income') amount = latestFull(m.perMonth, amount, (mo) => avgSet.has(mo) || mo === current)
+    } else {
+      if (monthsBetween(lastMonth, current) > 2 * period) continue
+      const vals = paid.slice(-3).map((mo) => m.perMonth.get(mo)!)
+      amount = vals.reduce((s, v) => s + v, 0) / vals.length
+    }
+    if (amount <= 0.005) continue
+    out.push({ merchant, kind: m.kind, categoryName: m.last.categoryName, amount, day: Number((m.last.booking_date ?? '').slice(8, 10)) || 1, period, lastMonth, ...(mine ? { periodSet: true } : {}) })
+  }
+  return out
+}
+
+/**
+ * The total of the latest month that looks like a full payment: at least half of `average`, so a
+ * month that so far has only a small extra (an expense refund before the salary) is passed over.
+ */
+function latestFull(perMonth: Map<string, number>, average: number, counts: (month: string) => boolean): number {
+  const full = [...perMonth].filter(([mo, v]) => counts(mo) && v >= average / 2).sort(([a], [b]) => a.localeCompare(b)).at(-1)
+  return full ? full[1] : average
 }
 
 /**

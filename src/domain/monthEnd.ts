@@ -1,0 +1,93 @@
+/**
+ * The current month at its end: what is already in (real) plus what is still expected (estimate),
+ * per category, from the month plan. Money comes in only through the BCP accounts: the other
+ * accounts are fed by transfers from it, so their incomes are left out before the plan is built
+ * (see lib/plan). The estimate of each category can come from the app (the plan's `falta`) or
+ * from the local model, which only proposes `falta` per category: the sums are always done here.
+ */
+import type { MonthPlan, PlanRow } from './monthPlan'
+import { nextMonth } from './monthPlan'
+import { isTithe } from './categorize'
+
+/** A salary credited from this day on is the next month's (it is paid at the end of the month before). */
+export const SALARY_FROM_DAY = 20
+
+/**
+ * Moves each salary credited late in a month to the month it is for, so each month has its own; the
+ * tithe paid late in a month goes with it, as it is paid out of that salary.
+ */
+export function shiftSalary<T extends { kind: string; categoryName: string; booking_date: string; month: string }>(txs: T[], salary: string | undefined): T[] {
+  if (!salary) return txs
+  const late = (t: T) => Number(t.booking_date.slice(8, 10)) >= SALARY_FROM_DAY
+  return txs.map((t) => (late(t) && ((t.kind === 'income' && t.categoryName === salary) || (t.kind === 'expense' && isTithe(t.categoryName)))
+    ? { ...t, month: nextMonth(t.month) } : t))
+}
+
+/** The salary of the month after `month` already credited in `month` (rows as shiftSalary leaves them): in today's balance, but not this month's money. */
+export function salaryAhead(txs: { kind: string; categoryName: string; booking_date: string; month: string; value: number }[], salary: string | undefined, month: string): number {
+  if (!salary) return 0
+  const next = nextMonth(month)
+  return txs.filter((t) => t.kind === 'income' && t.categoryName === salary && t.month === next && t.booking_date.slice(0, 7) === month).reduce((s, t) => s + t.value, 0)
+}
+
+export const rowKey = (r: Pick<PlanRow, 'kind' | 'name'>) => `${r.kind}/${r.name}`
+
+export interface MonthEndSide { real: number; estimado: number; total: number }
+export interface MonthEndRow { key: string; name: string; kind: 'income' | 'expense'; real: number; app: number; usado: number; /** Set by the user: replaces the estimate. */ ajustado: boolean }
+export interface MonthEnd {
+  month: string
+  receitas: MonthEndSide
+  despesas: MonthEndSide
+  resultado: MonthEndSide
+  saldoHoje: number
+  /** The next month's salary already credited this month (paid at the end of the month): left out of saldoFim. */
+  salarioSeguinte: number
+  /** Today's balance, without the next month's salary, plus what is still to come in, less what is still to go out, this month. */
+  saldoFim: number
+  rows: MonthEndRow[]
+}
+
+/**
+ * The plan with the user's own "still to come" per category (rowKey → value, manual lines included,
+ * as in monthEnd): falta becomes that value less the manual lines, and the totals follow.
+ */
+export function applyPlanned(plan: MonthPlan, planned?: Map<string, number>): MonthPlan {
+  if (!planned?.size) return plan
+  const fix = (rows: PlanRow[]) => rows.map((r) => {
+    const mine = planned.get(rowKey(r))
+    if (mine === undefined) return r
+    const falta = Math.max(0, mine - r.manual)
+    return { ...r, falta, previsto: r.realizado + r.manual + falta, faltaApp: r.falta }
+  })
+  const income = fix(plan.income), expense = fix(plan.expense)
+  const sum = (rows: PlanRow[], t: MonthPlan['totals']['income']) => ({ ...t, falta: rows.reduce((s, r) => s + r.falta, 0), previsto: rows.reduce((s, r) => s + r.previsto, 0) })
+  const totals = { income: sum(income, plan.totals.income), expense: sum(expense, plan.totals.expense) }
+  return { ...plan, income, expense, totals, resultado: totals.income.previsto - totals.expense.previsto }
+}
+
+/**
+ * `estimate`: what is still expected per category (rowKey → value ≥ 0), replacing the app's `falta`;
+ * a category it does not name keeps the app's. Manual lines are counted as still to come.
+ * `salarioSeguinte`: the next month's salary already in today's balance; the one still to come
+ * at the end of the month is not counted either (it is the next month's, see shiftSalary).
+ * `planned`: what the user set as still to come (rowKey → value, manual lines included); it wins
+ * over any estimate.
+ */
+export function monthEnd(plan: MonthPlan, saldoHoje: number, salarioSeguinte = 0, estimate?: Map<string, number>, planned?: Map<string, number>): MonthEnd {
+  const rows: MonthEndRow[] = [...plan.income, ...plan.expense].map((r) => {
+    const app = r.manual + r.falta
+    const own = estimate?.get(rowKey(r))
+    const mine = planned?.get(rowKey(r))
+    const usado = mine !== undefined ? mine : own === undefined ? app : r.manual + own
+    return { key: rowKey(r), name: r.name, kind: r.kind, real: r.realizado, app, usado, ajustado: mine !== undefined }
+  })
+  const side = (kind: 'income' | 'expense'): MonthEndSide => {
+    const list = rows.filter((r) => r.kind === kind)
+    const real = list.reduce((s, r) => s + r.real, 0), estimado = list.reduce((s, r) => s + r.usado, 0)
+    return { real, estimado, total: real + estimado }
+  }
+  const receitas = side('income'), despesas = side('expense')
+  const resultado = { real: receitas.real - despesas.real, estimado: receitas.estimado - despesas.estimado, total: receitas.total - despesas.total }
+  const saldoFim = saldoHoje - salarioSeguinte + receitas.estimado - despesas.estimado
+  return { month: plan.month, receitas, despesas, resultado, saldoHoje, salarioSeguinte, saldoFim, rows }
+}

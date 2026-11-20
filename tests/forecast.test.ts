@@ -127,3 +127,21 @@ describe('marked recurring in the forecast', () => {
     expect(f.usual).toBe(0)
   })
 })
+
+describe('the month a transfer to Brazil pays for', () => {
+  it('one made with the salary, from the 20th on, pays for the month after', async () => {
+    const { coveredMonth } = await import('../src/domain/forecast')
+    expect(coveredMonth('2026-10-28')).toBe('2026-11')
+    expect(coveredMonth('2026-10-20')).toBe('2026-11')
+    expect(coveredMonth('2026-11-19')).toBe('2026-11')
+    expect(coveredMonth('2026-12-29')).toBe('2027-01')
+  })
+  it('lists the arrivals from abroad in the Brazilian account, not other credits', async () => {
+    const { arrivalsInBrazil } = await import('../src/domain/forecast')
+    expect(arrivalsInBrazil([
+      { booking_date: '2026-10-28', value: 10124.7, kind: 'transfer', description: 'PIX TRANSF Wise Br28/10' },
+      { booking_date: '2026-11-09', value: 0.13, kind: 'income', description: 'REND PAGO APLIC AUT MAIS' },
+      { booking_date: '2026-11-10', value: -50, kind: 'transfer', description: 'PIX TRANSF Wise' },
+    ])).toEqual([{ amount: 10124.7, date: '2026-10-28' }])
+  })
+})

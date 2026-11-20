@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import { payerOf as cardPayers } from '../domain/cards'
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Ctx } from '../App'
 import { byCategory, monthly } from '../domain/analytics'
@@ -8,21 +9,26 @@ import { monthLabel, money } from '../lib/format'
 import { currentMonth, hiddenByDefault, last3, today, useBalances, useFmt, useSubscriptions } from '../lib/hooks'
 import { saveSettings } from '../lib/data'
 import { SERIES, axis, compact, grid, tooltipStyle } from '../components/charts'
-import { countryOf } from '../domain/countries'
 import { monthWindow } from '../domain/period'
-import { CARD_PAYMENT, isTithe } from '../domain/categorize'
+import { isTithe } from '../domain/categorize'
 import { findSalaryCategory, salaryAt } from '../domain/budget'
-import { applyBillMarks, brazilCard, isCardBillPayment, markHistory, recurrenceCandidates, brazilTransfer, forecastNextMonth, monthlyBills, nextMonthOf, sentToBrazil } from '../domain/forecast'
-import { Menu } from './analysis/shared'
+import { markHistory, recurrenceCandidates, forecastNextMonth } from '../domain/forecast'
 import { VERSION, versionLabel } from '../lib/version'
 import { Icon } from '../components/Icons'
 import { AsOf, Stat } from '../components/Page'
+import { MonthEndBox } from '../components/MonthEnd'
+import { shiftSalary } from '../domain/monthEnd'
+import { AccountMenu } from '../components/AccountMenu'
+import { CARD_LINE, useBrazilSend } from '../lib/brazil'
+import { ExplicarIA } from '../components/ExplicarIA'
+import { avgByCategory } from '../domain/analytics'
+import { savingsPrompt, type SavingsFacts } from '../domain/localAi'
 
 // A quick look at the month. Trends, merchants, dates and comparisons live on the Análises page.
-const CARD_LINE = 'Fatura do cartão Itaú'
 export const WIDGETS = [
   { id: 'transfer', label: 'Alerta: transferir do BCP para o Itaú' },
   { id: 'kpis', label: 'Saldos e totais do mês' },
+  { id: 'monthEnd', label: 'Fim do mês: real + estimativa' },
   { id: 'nextMonth', label: 'Mês seguinte: gastos estimados' },
   { id: 'monthly', label: 'Receitas e despesas por mês' },
   { id: 'categories', label: 'Gastos por categoria' },
@@ -57,16 +63,22 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   // Unticked accounts: opens on the BCP joint account; the others are one click away.
   const [hidden, setHidden] = useState<Set<string>>(() => hiddenByDefault(data.accounts))
   const shown = (id: string) => !hidden.has(id)
+  // Month-end box: the ticked accounts, and a card also with the account that pays its bill.
+  const payerOf = useMemo(() => cardPayers(data.accounts), [data.accounts])
+  const inScope = useCallback((id: string) => !hidden.has(id) || (payerOf.has(id) && !hidden.has(payerOf.get(id)!)), [hidden, payerOf])
   const [editing, setEditing] = useState(false)
 
   const txs = useMemo(() => etx.filter((t) => !hidden.has(t.account_id)), [etx, hidden])
-  const series = useMemo(() => monthly(txs).slice(-12), [txs])
+  // Month totals: the salary credited at the end of a month is the next month's (as in the month-end box).
+  const salaryName = useMemo(() => findSalaryCategory(data.categories)?.name, [data.categories])
+  const byMonth = useMemo(() => shiftSalary(txs, salaryName), [txs, salaryName])
+  const series = useMemo(() => monthly(byMonth).slice(-12), [byMonth])
   const cur = useMemo(() => {
-    const ms = monthly(txs).filter((m) => selSet.has(m.month))
+    const ms = monthly(byMonth).filter((m) => selSet.has(m.month))
     const income = ms.reduce((s, m) => s + m.income, 0), expense = ms.reduce((s, m) => s + m.expense, 0)
     return { income, expense, net: income - expense }
-  }, [txs, selSet])
-  const cats = useMemo(() => byCategory(txs, selSet), [txs, selSet])
+  }, [byMonth, selSet])
+  const cats = useMemo(() => byCategory(byMonth, selSet), [byMonth, selSet])
   const balances = useBalances(ctx)
   const subs = useSubscriptions(ctx)
   const budgets = useMemo(() => {
@@ -85,48 +97,41 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
       name: cat.name,
       b: planned.reduce<number>((s, v) => s + (v ?? 0), 0) * rate,
       missing: selMonths.filter((_, i) => planned[i] === undefined),
-      a: txs.filter((t) => t.category_id === cat.id && t.kind === 'income' && selSet.has(t.month)).reduce((s, t) => s + t.value, 0),
+      a: byMonth.filter((t) => t.category_id === cat.id && t.kind === 'income' && selSet.has(t.month)).reduce((s, t) => s + t.value, 0),
     }
-  }, [data, currency, fx, selMonths, selSet, txs])
+  }, [data, currency, fx, selMonths, selSet, byMonth])
   const checking = balances.filter((b) => b.account.type === 'checking' && b.account.currency === 'EUR').reduce((s, b) => s + b.display, 0)
   const insights = useMemo(() => savingsInsights({ txs: txs.filter((t) => !isTithe(t.categoryName)), last3: last3(), current: today().slice(0, 7), budgets, subs, checkingBalance: checking, fmt }), [txs, subs, checking, fmt, budgets])
+  // What the local model gets for its savings suggestions: the averages of the last 3 complete months.
+  const savingFacts = useMemo((): SavingsFacts => {
+    const months = last3()
+    const spend = txs.filter((t) => !isTithe(t.categoryName))
+    const avg = avgByCategory(spend, months)
+    const income = spend.filter((t) => t.kind === 'income' && months.includes(t.month)).reduce((s, t) => s + t.value, 0) / months.length
+    const active = subs.filter((s) => s.status !== 'possibly_cancelled' && !isTithe(s.merchant))
+    const recurring = new Set(active.map((s) => s.merchant))
+    const byMerchant = new Map<string, { total: number; n: number }>()
+    for (const t of spend) {
+      if (t.kind !== 'expense' || !months.includes(t.month) || recurring.has(t.merchant)) continue
+      const m = byMerchant.get(t.merchant) ?? { total: 0, n: 0 }
+      m.total -= t.value; m.n++
+      byMerchant.set(t.merchant, m)
+    }
+    return {
+      moeda: currency, meses: `${monthLabel(months[0])} a ${monthLabel(months.at(-1)!)}`,
+      receitaMedia: income, despesaMedia: [...avg.values()].reduce((s, v) => s + v, 0),
+      categorias: [...avg].filter(([, v]) => v > 1).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([nome, media]) => ({ nome, media, orcamento: budgets.get(nome) ?? null })),
+      recorrentes: active.sort((a, b) => b.monthlyCost - a.monthlyCost).slice(0, 12).map((s) => ({ nome: s.merchant, mensal: s.monthlyCost })),
+      estabelecimentos: [...byMerchant].sort((a, b) => b[1].total - a[1].total).slice(0, 10).map(([nome, m]) => ({ nome, media: m.total / months.length, vezes: m.n })),
+      sinais: insights.slice(0, 8).map((i) => i.title),
+    }
+  }, [txs, subs, budgets, currency, insights])
   const alerts = subscriptionAlerts(subs, today(), fmt).filter((a) => !data.settings.dismissed_alerts.includes(a.key))
 
-  // Next month: what to expect in the accounts on screen, and what to send to Brazil.
-  // The Brazil side ignores the account filter: it is about the Itaú accounts, always in reais.
-  const nextMonth = useMemo(() => {
-    const now = today()
-    const skip = (n: string) => isTithe(n)
-    const mine = forecastNextMonth(txs, now, skip, 3, data.settings.dashboard?.billMarks ?? {})
-    const brIds = new Set(data.accounts.filter((a) => countryOf(a.bank) === 'Brasil').map((a) => a.id))
-    const brTx = ctx.etx.filter((t) => brIds.has(t.account_id)).map((t) => ({ ...t, value: fx.convert(t.amount, t.currency, 'BRL', t.booking_date) }))
-    // The card payment in the checking account is the bill itself, counted apart: not a recurring charge.
-    const skipBr = (n: string) => skip(n) || n === 'Cartão Itaú'
-    // Only the Itaú checking account counts here: card purchases already are in the bill, so a
-    // yearly charge on the card would be counted twice.
-    const checkingIds = new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type !== 'card').map((a) => a.id))
-    // The bill payment itself is left out (the bill is counted apart); the account's own fees stay.
-    const brChecking = brTx.filter((t) => checkingIds.has(t.account_id) && !isCardBillPayment(t))
-    const marksBr = data.settings.dashboard?.billMarks ?? {}
-    const br0 = forecastNextMonth(brChecking, now, skipBr, 3, marksBr)
-    // Monthly bills come from the checking account (health plan, power, phone, condo…), whatever
-    // the amount does from month to month; the non-monthly ones stay as detected.
-    const periodicNames = new Set(br0.periodic.map((l) => l.label))
-    const bills = applyBillMarks(monthlyBills(brChecking, now, skipBr).filter((l) => !periodicNames.has(l.label)), brChecking, marksBr)
-    const br = { ...br0, monthly: bills.reduce((a, l) => a + l.amount, 0), monthlyLines: bills }
-    // The card bill that falls in the coming month: the imported open bills, or, while none is
-    // imported, the card purchases already assigned to that month's bill (statement_due) or, failing
-    // that, made this month, which is what that bill will carry.
-    const next = nextMonthOf(now)
-    const cardIds = new Set(data.accounts.filter((a) => brIds.has(a.id) && a.type === 'card').map((a) => a.id))
-    const openBills = brazilCard(data.cardStatements, cardIds, now.slice(0, 7)).open
-    const cardBuys = brTx.filter((t) => cardIds.has(t.account_id) && t.amount < 0 && t.bank_category !== CARD_PAYMENT)
-    const dueNext = cardBuys.filter((t) => t.statement_due?.slice(0, 7) === next)
-    const cardNext = openBills > 0 ? openBills
-      : -(dueNext.length ? dueNext : cardBuys.filter((t) => t.month === now.slice(0, 7))).reduce((a, t) => a + t.value, 0)
-    const balance = balances.filter((b) => brIds.has(b.account.id) && b.account.type === 'checking').reduce((s, b) => s + fx.convert(b.native, b.account.currency, 'BRL', now), 0)
-    return { mine, br, send: brIds.size ? { ...brazilTransfer(br, cardNext, balance, now), lines: [{ label: CARD_LINE, amount: cardNext, date: '' }, ...br.monthlyLines, ...br.periodic], sent: sentToBrazil(brTx, now.slice(0, 7)) } : null }
-  }, [txs, ctx.etx, data.accounts, data.cardStatements, data.settings.dashboard?.billMarks, balances, fx])
+  // What to send to Brazil before next month starts; it ignores the account filter (see useBrazilSend).
+  const send = useBrazilSend(ctx)
+  // Next month in the accounts on screen: recurring charges on their dates plus the usual month.
+  const nextForecast = useMemo(() => forecastNextMonth(txs, today(), isTithe, 3, data.settings.dashboard?.billMarks ?? {}), [txs, data.settings.dashboard?.billMarks])
   const brl = money('BRL')
   // Takes a wrong line out of the estimate for good: the merchant is marked as not recurring in its whole history.
   const notRecurring = async (merchant: string) => {
@@ -135,7 +140,6 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
   }
   const toAsk = useMemo(() => recurrenceCandidates(ctx.etx, data.settings.dashboard?.billMarks ?? {}, today(), (n) => isTithe(n) || n === 'Cartão Itaú').length, [ctx.etx, data.settings.dashboard?.billMarks])
   const dayMonth = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
-  const send = nextMonth.send
   const sendEur = send ? money('EUR')(send.transfer / fx.latest()) : ''
   // A transfer already made this month settles it: the alert only asks for one when none went yet.
   const open = !!send && send.transfer > 0 && !send.sent
@@ -191,6 +195,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
               sub={(cur?.income ?? 0) > 0 ? `${Math.round((net / cur.income) * 100)}% das receitas` : period} />
           </div>)
       }
+      case 'monthEnd': return <MonthEndBox ctx={ctx} inScope={inScope} />
       case 'transfer': return !send ? (
         <div className="alert" style={{ display: 'block', gridColumn: '1/-1' }}>Transferência para o Brasil: ainda não há conta do Itaú no app. Importe um extrato do Itaú para eu estimar quanto enviar do BCP.</div>
       ) : (
@@ -203,7 +208,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
               {l.label !== CARD_LINE && <button style={{ fontSize: 12, padding: '2px 8px' }} onClick={() => notRecurring(l.label)}>Não é recorrente</button>}</div>)}</details>}
         </div>)
       case 'nextMonth': {
-        const { mine } = nextMonth
+        const mine = nextForecast
         return (
           <div className="card"><h3>Mês seguinte — {monthLabel(mine.month)}</h3>
             <p><strong>Gasto estimado nas contas em tela: {fmt(mine.total)}</strong></p>
@@ -234,6 +239,10 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
               <div className="muted" style={{ fontSize: 13 }}>{i.detail}</div>
             </div>
           ))}
+          {savingFacts.categorias.length > 0 && <ExplicarIA label="Sugerir cortes com a IA local"
+            signature={JSON.stringify([savingFacts.meses, Math.round(savingFacts.despesaMedia), savingFacts.categorias.length, savingFacts.recorrentes.length])}
+            build={() => savingsPrompt(savingFacts)}
+            note="Sugestões escritas por um modelo que roda neste computador, a partir das médias dos últimos 3 meses das contas marcadas; nada sai daqui. Os valores vêm do app; a escolha dos cortes é do modelo e pode não servir para você." />}
         </div>)
       case 'monthly': return (
         <div className="card"><h3>Receitas e despesas</h3>
@@ -354,19 +363,7 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
             ))}
           </div>
         </details>
-        <Menu label={`Contas: ${hidden.size ? `${data.accounts.length - hidden.size} de ${data.accounts.length}` : 'todas'}`} active={hidden.size > 0}>
-          <div className="row" style={{ marginBottom: 8 }}>
-            {[...new Set(data.accounts.map((a) => countryOf(a.bank)))].map((c) => (
-              <button key={c} onClick={() => setHidden(new Set(data.accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
-            ))}
-            <button onClick={() => setHidden(new Set())}>Todas</button>
-          </div>
-          {data.accounts.map((a) => (
-            <label key={a.id} className="inline opt"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
-              const s = new Set(prev); if (s.has(a.id)) s.delete(a.id); else s.add(a.id); return s
-            })} />{a.name}</label>
-          ))}
-        </Menu>
+        <AccountMenu compact accounts={data.accounts} hidden={hidden} onChange={setHidden} />
         <AsOf data={data} ids={data.accounts.filter((a) => a.type !== 'card' && shown(a.id)).map((a) => a.id)} onImport={() => ctx.go('Importar')} />
         </div>
         <button className={editing ? 'primary' : ''} onClick={() => setEditing(!editing)}><Icon name="editar" size={16} /> {editing ? 'Pronto' : 'Personalizar painel'}</button>

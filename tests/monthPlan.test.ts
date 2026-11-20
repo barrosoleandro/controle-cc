@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildMonthPlan, nextMonth, recurringExpectations, steadyIncomes, type PlanTx } from '../src/domain/monthPlan'
+import { buildMonthPlan, detectPeriod, isDue, nextMonth, recurringExpectations, steadyIncomes, type PlanTx } from '../src/domain/monthPlan'
 
 const tx = (month: string, categoryName: string, value: number, kind: PlanTx['kind'] = value < 0 ? 'expense' : 'income'): PlanTx => ({ month, value, kind, categoryName })
 const AVG = ['2026-07', '2026-08', '2026-09']
@@ -89,6 +89,22 @@ describe('recurring lines in the month plan', () => {
     const plan = buildMonthPlan([...txs, salary('2026-10', 3100)], [], '2026-10', avg, rec)
     expect(plan.income.find((r) => r.name === 'Salário')).toMatchObject({ pendentes: [], realizado: 3100, previsto: 3100 })
   })
+
+  it('a salary lower than the average is the whole month: nothing is added to reach the average', () => {
+    const history = [salary('2026-07', 4000), salary('2026-08', 4000), salary('2026-09', 3000), salary('2026-10', 2900)]
+    const rec = recurringExpectations(history, isRec(new Set(['ACME'])), avg)
+    expect(buildMonthPlan(history, [], '2026-10', avg, rec).income[0]).toMatchObject({ realizado: 2900, falta: 0, previsto: 2900 })
+  })
+
+  it('expects a monthly income at its latest full month, passing over a month with only a small extra', () => {
+    const history = [salary('2026-07', 4000), salary('2026-08', 4000), salary('2026-09', 3000)]
+    const expected = (list: PlanTx[]) => recurringExpectations(list, isRec(new Set(['ACME'])), avg)[0].amount
+    expect(expected(history)).toBe(3000)
+    expect(expected([...history, salary('2026-10', 150)])).toBe(3000)
+    expect(expected([...history, salary('2026-10', 3200)])).toBe(3200)
+    // The month after still expects the salary, at that value, not at the average.
+    expect(buildMonthPlan(history, [], '2026-11', avg, recurringExpectations(history, isRec(new Set(['ACME'])), avg)).income[0]).toMatchObject({ falta: 3000, previsto: 3000 })
+  })
 })
 
 describe('money from or to outside', () => {
@@ -100,36 +116,77 @@ describe('money from or to outside', () => {
   })
 })
 
-describe('recurring every two or three months', () => {
-  it('detects the period from the gaps between months', async () => {
-    const { recurrencePeriod } = await import('../src/domain/monthPlan')
-    expect(recurrencePeriod(['2026-01', '2026-03', '2026-05'])).toBe(2)
-    expect(recurrencePeriod(['2026-01', '2026-03', '2026-05', '2026-09'])).toBe(2) // one bill skipped
-    expect(recurrencePeriod(['2026-01', '2026-04', '2026-07'])).toBe(3)
-    expect(recurrencePeriod(['2025-11', '2026-01', '2026-03'])).toBe(2) // across New Year
-    expect(recurrencePeriod(['2026-01', '2026-02', '2026-04'])).toBe(1) // came in two months in a row
-    expect(recurrencePeriod(['2026-01', '2026-03'])).toBe(1) // too few to tell
-    expect(recurrencePeriod(['2026-01', '2026-07', '2027-01'])).toBe(1) // half-yearly: not handled
+describe('recorrentes com intervalo', () => {
+  const avg = ['2026-08', '2026-09', '2026-10']
+  const bill = (month: string, value = -120): PlanTx => ({ month, value, kind: 'expense', categoryName: 'Agua', merchant: 'AGUA', booking_date: `${month}-10` })
+  const rent = (month: string): PlanTx => ({ month, value: -1000, kind: 'expense', categoryName: 'Moradia', merchant: 'ALUGUEL', booking_date: `${month}-05` })
+  const history = [...['2026-02', '2026-04', '2026-06', '2026-08', '2026-10'].map((m) => bill(m)), ...['2026-08', '2026-09', '2026-10'].map(rent)]
+  const all = () => true
+
+  it('detecta o intervalo pela mediana dos espaços entre pagamentos', () => {
+    expect(detectPeriod(['2026-02', '2026-04', '2026-06', '2026-08'])).toBe(2)
+    expect(detectPeriod(['2026-01', '2026-02', '2026-04', '2026-05', '2026-06'])).toBe(1)
+    expect(detectPeriod(['2026-10'])).toBe(1)
+    expect(isDue({ period: 2, lastMonth: '2026-10' }, '2026-11')).toBe(false)
+    expect(isDue({ period: 2, lastMonth: '2026-10' }, '2026-12')).toBe(true)
   })
 
-  const water = (month: string, value = -60): PlanTx => ({ month, value, kind: 'expense', categoryName: 'Casa', merchant: 'EAU', booking_date: `${month}-12` })
-  const hist = [water('2026-03'), water('2026-05'), water('2026-07'), water('2026-09', -80)]
-  const avg = ['2026-07', '2026-08', '2026-09']
-
-  it('expects the full amount only in the months it is due', () => {
-    const [e] = recurringExpectations(hist, () => true, avg)
-    expect(e).toMatchObject({ merchant: 'EAU', period: 2, lastMonth: '2026-09', amount: 70, day: 12 })
-    const pend = (month: string) => buildMonthPlan(hist, [], month, avg, [e]).expense[0]?.pendentes.map((p) => p.merchant) ?? []
-    expect(pend('2026-10')).toEqual([])
-    expect(pend('2026-11')).toEqual(['EAU'])
-    expect(pend('2026-12')).toEqual([])
-    expect(pend('2027-01')).toEqual(['EAU'])
+  it('um bimestral só entra no mês em que vence, pelo valor cheio, e fica fora da média', () => {
+    const rec = recurringExpectations(history, all, avg)
+    expect(rec.find((e) => e.merchant === 'AGUA')).toMatchObject({ period: 2, lastMonth: '2026-10', amount: 120 })
+    expect(rec.find((e) => e.merchant === 'ALUGUEL')).toMatchObject({ period: 1, amount: 1000 })
+    const nov = buildMonthPlan(history, [], '2026-11', avg, rec)
+    expect(nov.expense.find((r) => r.name === 'Agua')).toBeUndefined()
+    const dec = buildMonthPlan(history, [], '2026-12', avg, rec)
+    expect(dec.expense.find((r) => r.name === 'Agua')).toMatchObject({ media: 0, falta: 120, previsto: 120 })
+    expect(dec.expense.find((r) => r.name === 'Moradia')).toMatchObject({ falta: 1000 })
   })
 
-  it('a monthly one is still expected every month', () => {
-    const rent = ['2026-06', '2026-07', '2026-08', '2026-09'].map((m): PlanTx => ({ month: m, value: -1000, kind: 'expense', categoryName: 'Moradia', merchant: 'ALUGUEL', booking_date: `${m}-10` }))
-    const [e] = recurringExpectations(rent, () => true, avg)
-    expect(e.period).toBe(1)
-    expect(buildMonthPlan(rent, [], '2026-10', avg, [e]).expense[0].pendentes).toHaveLength(1)
+  it('na categoria, o bimestral soma ao que falta da média das outras despesas', () => {
+    const txs = [...history, ...avg.map((m) => ({ ...bill(m, -60), merchant: 'MERCADINHO', booking_date: `${m}-15` })),
+      { ...bill('2026-12', -20), merchant: 'MERCADINHO', booking_date: '2026-12-02' }]
+    const rec = recurringExpectations(txs, (m) => m === 'AGUA', avg)
+    const dec = buildMonthPlan(txs, [], '2026-12', avg, rec)
+    expect(dec.expense.find((r) => r.name === 'Agua')).toMatchObject({ media: 60, realizado: 20, falta: 40 + 120 })
+    const paid = buildMonthPlan([...txs, bill('2026-12', -130)], [], '2026-12', avg, rec)
+    expect(paid.expense.find((r) => r.name === 'Agua')).toMatchObject({ realizado: 150, falta: 40, previsto: 190 })
+  })
+
+  it('o intervalo escolhido por você vale por cima do detectado, e um que parou sai', () => {
+    const rec = recurringExpectations(history, all, avg, { AGUA: 1, ALUGUEL: 3 })
+    expect(rec.find((e) => e.merchant === 'AGUA')).toMatchObject({ period: 1, periodSet: true })
+    expect(rec.find((e) => e.merchant === 'ALUGUEL')).toMatchObject({ period: 3, periodSet: true })
+    const old = ['2026-01', '2026-03', '2026-05'].map((m) => bill(m))
+    expect(recurringExpectations(old, all, avg)).toEqual([])
+  })
+})
+
+describe('a line that is not a category (the transfer that pays the bills abroad)', () => {
+  it('adds to the expenses what was sent and what is still to send, and the result follows', async () => {
+    const { withExpenseLine } = await import('../src/domain/monthPlan')
+    const plan = buildMonthPlan(txs, [], '2026-10', avg)
+    const mine = withExpenseLine(plan, 'Envio', 200, 500)
+    expect(mine.expense.find((r) => r.name === 'Envio')).toMatchObject({ kind: 'expense', realizado: 200, falta: 500, previsto: 700, media: 0 })
+    expect(mine.totals.expense.previsto).toBe(plan.totals.expense.previsto + 700)
+    expect(mine.totals.expense.falta).toBe(plan.totals.expense.falta + 500)
+    expect(mine.resultado).toBe(plan.resultado - 700)
+    expect(mine.income).toBe(plan.income)
+    expect(withExpenseLine(plan, 'Envio', 0, 0)).toBe(plan)
+  })
+})
+
+describe('tithe: 10% of the salary of the month', () => {
+  it('expects 10% of the salary previsto, less what was paid, and adds the row when there is none', async () => {
+    const { shareOfSalary } = await import('../src/domain/monthPlan')
+    const tithe = (month: string, value: number): PlanTx => ({ month, value, kind: 'expense', categoryName: 'Dízimo', booking_date: `${month}-28` })
+    const history = [...avg.map((m) => salary(m, 3000)), ...avg.map((m) => tithe(m, -250)), salary('2026-10', 3200), tithe('2026-10', -100)]
+    const plan = shareOfSalary(buildMonthPlan(history, [], '2026-10', avg), 'Salário', 'Dízimo', 0.1)
+    expect(plan.expense.find((r) => r.name === 'Dízimo')).toMatchObject({ realizado: 100, falta: 220, previsto: 320 })
+    expect(plan.totals.expense.previsto).toBe(320)
+    expect(plan.resultado).toBe(3200 - 320)
+    const fresh = shareOfSalary(buildMonthPlan([salary('2026-10', 3000)], [], '2026-10', avg), 'Salário', 'Dízimo', 0.1)
+    expect(fresh.expense).toMatchObject([{ name: 'Dízimo', falta: 300, previsto: 300 }])
+    const noSalary = buildMonthPlan([tithe('2026-10', -100)], [], '2026-10', avg)
+    expect(shareOfSalary(noSalary, 'Salário', 'Dízimo', 0.1)).toBe(noSalary)
   })
 })

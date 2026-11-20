@@ -1,6 +1,5 @@
 import { detectSubscriptions, nextDate, type Subscription } from './subscriptions'
 import { CARD_PAYMENT } from './categorize'
-import { recurrencePeriod } from './monthPlan'
 
 /** What the forecast needs from an enriched transaction (value signed, in the display currency). */
 export interface FcTx { booking_date: string; month: string; value: number; kind: string; categoryName: string; merchant: string }
@@ -127,12 +126,28 @@ export function brazilCard(bills: CardBill[], cardIds: Set<string>, month: strin
 
 /** The card bill paid from the checking account: counted apart from the account's own bills. */
 export const isCardBillPayment = (t: { bank_category: string | null; description: string }) =>
-  t.bank_category === CARD_PAYMENT || /FATURA|ITAUCARD|PAG(TO|AMENTO)? CART/i.test(t.description)
+  t.bank_category === CARD_PAYMENT || /FATURA|ITAUCARD|PAG(TO|AMENTO)? CART|\bPERS (INFINIT|BLACK)\b|PERSONNALITE/i.test(t.description)
 
 /** Money that arrived from abroad in the Brazilian accounts: what a transfer from the French account looks like there. */
 const ARRIVAL = /OP REC EXT|WISE|REVOLUT|EXTERIOR|C[AÂ]MBIO|REMESSA/i
 
 export interface SentToBrazil { amount: number; date: string }
+
+/** A transfer to Brazil made from this day on goes with the salary paid at the end of the month: it pays for the month after. */
+export const COVER_FROM_DAY = 20
+
+/** The month a transfer to Brazil pays for (yyyy-mm): its own, or the next one when made from COVER_FROM_DAY on. */
+export function coveredMonth(date: string): string {
+  const month = date.slice(0, 7)
+  if (Number(date.slice(8, 10)) < COVER_FROM_DAY) return month
+  const [y, m] = month.split('-').map(Number)
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`
+}
+
+/** Every transfer received in the Brazilian accounts from abroad (txs: Brazilian accounts only, value in BRL). */
+export function arrivalsInBrazil(txs: { booking_date: string; value: number; kind: string; description: string }[]): SentToBrazil[] {
+  return txs.filter((t) => t.kind === 'transfer' && t.value > 0 && ARRIVAL.test(t.description)).map((t) => ({ amount: t.value, date: t.booking_date }))
+}
 
 /** Transfers already received in Brazil during `month` (txs: Brazilian accounts only, value in BRL). */
 export function sentToBrazil(txs: { booking_date: string; month: string; value: number; kind: string; description: string }[], month: string): SentToBrazil | null {
@@ -203,7 +218,7 @@ export function applyBillMarks(auto: ForecastLine[], txs: FcTx[], marks: BillMar
   return [...kept, ...added].sort((a, b) => b.amount - a.amount)
 }
 
-export interface Candidate { merchant: string; months: string[]; amounts: number[]; avg: number; period: number }
+export interface Candidate { merchant: string; months: string[]; amounts: number[]; avg: number }
 
 /**
  * Merchants worth asking about: spent in three months of the last six (the three most recent
@@ -226,7 +241,7 @@ export function recurrenceCandidates(txs: FcTx[], marks: BillMarks, today: strin
     const amounts = seen.map(([, v]) => v)
     const med = [...amounts].sort((a, b) => a - b)[1]
     if (amounts.some((v) => Math.abs(v - med) > med * tolerance)) continue
-    out.push({ merchant, months: seen.map(([mo]) => mo), amounts, avg: amounts.reduce((a, b) => a + b, 0) / 3, period: recurrencePeriod(seen.map(([mo]) => mo)) })
+    out.push({ merchant, months: seen.map(([mo]) => mo), amounts, avg: amounts.reduce((a, b) => a + b, 0) / 3 })
   }
   return out.sort((a, b) => b.avg - a.avg)
 }

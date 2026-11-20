@@ -1,4 +1,5 @@
 import type { Cell, Row } from './pdfText'
+import { unaccent } from '../domain/util'
 
 /**
  * French "bulletin de paie" (layout used by Vallourec / SAP HR: columns RUBRIQUE, BASE/HEURES,
@@ -16,6 +17,9 @@ export interface PayslipLine {
   deduction: number | null
   employer: number | null
   nonTaxable: boolean // '*' = gain not taxable / deduction not tax-deductible
+  /** US statements only: the statement the line comes from (several are paid in one month). */
+  doc?: string
+  payDate?: string
 }
 
 export interface PayslipTotals {
@@ -40,7 +44,11 @@ export interface ParsedPayslip {
   lines: PayslipLine[]
   totals: PayslipTotals
   warnings: string[]
+  /** Currency of every amount; absent = EUR (French bulletin de paie). */
+  currency?: PayCurrency
 }
+
+export type PayCurrency = 'EUR' | 'USD'
 
 const NUM = /^-?[\d.]+,\d{2,3}-?$/
 const MONTHS: Record<string, string> = {
@@ -97,7 +105,7 @@ export function parsePayslipRows(pages: Row[][]): ParsedPayslip {
       const s = text(r.cells)
       const per = /PERIODE DE PAIE\s+(\S+)\s+(\d{4})/.exec(s)
       if (per) {
-        const mm = MONTHS[per[1].normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()]
+        const mm = MONTHS[unaccent(per[1]).toLowerCase()]
         if (mm) period = `${per[2]}-${mm}`
       }
       const pd = /DATE DE PAIE\s+(\d{2}\.\d{2}\.\d{4})/.exec(s)
@@ -152,5 +160,5 @@ export function parsePayslipRows(pages: Row[][]): ParsedPayslip {
   // Self-check: coded earnings must add up to the gross printed by payroll.
   const sumGains = lines.filter((l) => l.code && /^[0-6]/.test(l.code)).reduce((s, l) => s + (l.gain ?? 0), 0)
   if (t.gross !== null && Math.abs(sumGains - t.gross) > 0.01) warnings.push(`earnings ${sumGains.toFixed(2)} ≠ gross ${t.gross.toFixed(2)}`)
-  return { period, payDate, transferDate, employer, lines, totals: t, warnings }
+  return { period, payDate, transferDate, employer, lines, totals: t, warnings, currency: 'EUR' }
 }

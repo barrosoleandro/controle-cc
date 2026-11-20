@@ -16,9 +16,11 @@ import { nextMonth } from '../domain/monthPlan'
 import { buildSimSheet, projectCardBill, type BrazilLink } from '../domain/simSheet'
 import { findSalaryCategory } from '../domain/budget'
 import { CARD_PAYMENT } from '../domain/categorize'
-import { CARD_BILL, matchBillDebits, matchCardPayments } from '../domain/cards'
+import { CARD_BILL, matchBillDebits, matchCardPayments, payerOf as cardPayers } from '../domain/cards'
 import { AsOf, Tabs } from '../components/Page'
 import { skipRecurring, useRecurring } from '../lib/recurring'
+import { MonthEndBox } from '../components/MonthEnd'
+import { AccountMenu } from '../components/AccountMenu'
 
 const TIPO: Record<CategoryKind, string> = { expense: 'despesa', income: 'receita', transfer: 'transferência' }
 const NEW = '__new' // select option that opens the new-category form
@@ -44,7 +46,9 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const mine = balances.filter((b) => shown(b.account.id))
   const totalBalance = mine.reduce((s, b) => s + b.display, 0)
   const nShown = accounts.filter((a) => shown(a.id)).length
-  const countries = [...new Set(accounts.map((a) => countryOf(a.bank)))]
+  // Month-end box: the ticked accounts, and a card with the account that pays its bill.
+  const payerOf = useMemo(() => cardPayers(ctx.data.accounts), [ctx.data.accounts])
+  const inScope = useCallback((id: string) => shown(id) || (payerOf.has(id) && shown(payerOf.get(id)!)), [shown, payerOf])
 
   return <>
     <div className="card" style={{ marginBottom: 20 }}>
@@ -67,6 +71,7 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
         {mine.length === 0 && <p className="muted">Nenhuma conta marcada.</p>}
       </div>
     </div>
+    <div style={{ marginBottom: 20 }}><MonthEndBox ctx={ctx} inScope={inScope} /></div>
 
     <div className="toolbar" style={{ borderBottom: '1px solid var(--line)', marginBottom: 20 }}>
       <Tabs label="Como ver os lançamentos" items={VIEWS} value={view} onChange={(v) => { setView(v); setMerchant('') }} />
@@ -78,22 +83,7 @@ export function Transactions({ ctx, sub }: { ctx: Ctx; sub?: string }) {
         <option value="yes">Só recorrentes</option>
         <option value="no">Só não recorrentes</option>
       </select>}
-      <Menu align="right" active={nShown < accounts.length}
-        label={nShown === accounts.length ? 'Todas as contas' : nShown === 1 ? accounts.find((a) => shown(a.id))?.name ?? '1 conta' : `${nShown} de ${accounts.length} contas`}>
-        <div className="row" style={{ marginBottom: 8 }}>
-          {countries.map((c) => (
-            <button key={c} onClick={() => setHidden(new Set(accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
-          ))}
-          <button onClick={() => setHidden(new Set())}>Todas</button>
-        </div>
-        <div className="opts">
-          {accounts.map((a) => (
-            <label key={a.id} className="inline opt"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
-              const next = new Set(prev); if (next.has(a.id)) next.delete(a.id); else next.add(a.id); return next
-            })} />{a.name} <span className="muted" style={{ fontSize: 12 }}>· {countryOf(a.bank)}</span></label>
-          ))}
-        </div>
-      </Menu>
+      <AccountMenu align="right" accounts={accounts} hidden={hidden} onChange={setHidden} />
       <ExcelExport ctx={ctx} accounts={accounts.filter((a) => shown(a.id))} />
     </div>
     {view === 'Lista'
@@ -138,7 +128,7 @@ function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accou
       const etx = externalize(enrich(data.transactions, data.categories, data.accounts, ctx.fx, ctx.currency), data.accounts, ctx.fx)
       const txs = etx.filter((t) => ids.has(t.account_id)).map((t) => ({ ...t, amount: Number(t.amount), merchant: t.merchant || '(sem descrição)' }))
       const rows = buildSimSheet(sim, txs, months, cur, last3(),
-        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel, brazilLink(cur, data, etx), findSalaryCategory(data.categories)?.name)
+        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel, brazilLink(cur, data, etx), findSalaryCategory(data.categories)?.name, data.settings.dashboard?.billPeriods)
       const { default: writeExcelFile } = await import('write-excel-file/browser')
       await writeExcelFile(rows, {
         sheet: 'Lançamentos', stickyRowsCount: 2, stickyColumnsCount: 2,
@@ -176,7 +166,7 @@ function RecurringQuestions({ ctx }: { ctx: Ctx }) {
       <summary><strong>{toAsk.length} despesa(s) apareceram em 3 meses com valor parecido (até 20%). São recorrentes?</strong></summary>
       {toAsk.slice(0, asked).map((c) => (
         <div key={c.merchant} className="row" style={{ marginTop: 6, justifyContent: 'space-between' }}>
-          <span>{c.merchant} <span className="muted">· ≈ {fmt(c.avg)} em {c.months.map((m) => monthLabel(m).split(' ')[0]).join(', ')}{c.period > 1 && ` · a cada ${c.period} meses`}</span></span>
+          <span>{c.merchant} <span className="muted">· ≈ {fmt(c.avg)} em {c.months.map((m) => monthLabel(m).split(' ')[0]).join(', ')}</span></span>
           <span className="row" style={{ margin: 0 }}>
             <button className="primary" onClick={() => setRecurring(c.merchant, true)}>É recorrente</button>
             <button onClick={() => setRecurring(c.merchant, false)}>Não</button>
@@ -568,7 +558,8 @@ function Periodo({ ctx, shown, rec, n, onOpen }: { ctx: Ctx; shown: (accountId: 
         {receitas.length > 0 && <div className="kpi"><div className="l">Resultado</div>
           <div className={`v ${receitaGrand - grand < 0 ? 'neg' : 'pos'}`}>{fmt(receitaGrand - grand)}</div>
           {n > 1 && <div className="sub">{fmt((receitaGrand - grand) / months.length)}/mês</div>}</div>}
-        <div className="kpi"><div className="l">Saldo no fim de {monthLabel(months.at(-1)!)}</div>
+        {/* The month is still running: the balance is today's (up to the last imported line), not its end. */}
+        <div className="kpi"><div className="l">{months.at(-1) === currentMonth() ? 'Saldo atual' : `Saldo no fim de ${monthLabel(months.at(-1)!)}`}</div>
           <div className={`v ${(saldos.closing.at(-1) ?? 0) < 0 ? 'neg' : ''}`}>{fmt(saldos.closing.at(-1) ?? 0)}</div></div>
         {n > 1 && <div className="kpi"><div className="l">Despesa média/mês</div><div className="v">{fmt(grand / months.length)}</div></div>}
       </div>

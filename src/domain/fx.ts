@@ -31,7 +31,12 @@ export class FxTable {
 
 /** Fetches ECB reference rates (Frankfurter, no key needed) for a date range. */
 export async function fetchEurBrl(from: string, to: string): Promise<Map<string, number>> {
-  const res = await fetch(`https://api.frankfurter.dev/v1/${from}..${to}?from=EUR&to=BRL`)
+  return fetchToBrl('EUR', from, to)
+}
+
+/** `base`→BRL daily ECB reference rates (USD→BRL is the ECB cross rate) for a date range. */
+export async function fetchToBrl(base: 'EUR' | 'USD', from: string, to: string): Promise<Map<string, number>> {
+  const res = await fetch(`https://api.frankfurter.dev/v1/${from}..${to}?from=${base}&to=BRL`)
   if (!res.ok) throw new Error(`FX service error ${res.status}`)
   const json = (await res.json()) as { rates: Record<string, { BRL: number }> }
   return new Map(Object.entries(json.rates).map(([d, v]) => [d, v.BRL]))

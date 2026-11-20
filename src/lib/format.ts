@@ -1,6 +1,6 @@
 import type { Currency } from '../domain/types'
-export const money = (cur: Currency, digits = 0) => {
-  const f = new Intl.NumberFormat(cur === 'BRL' ? 'pt-BR' : 'fr-FR', { style: 'currency', currency: cur, maximumFractionDigits: digits, minimumFractionDigits: digits })
+export const money = (cur: Currency | 'USD', digits = 0) => {
+  const f = new Intl.NumberFormat(cur === 'BRL' ? 'pt-BR' : cur === 'USD' ? 'en-US' : 'fr-FR', { style: 'currency', currency: cur, maximumFractionDigits: digits, minimumFractionDigits: digits })
   return (n: number) => f.format(n)
 }
 export const monthLabel = (m: string) => {

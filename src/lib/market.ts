@@ -46,11 +46,6 @@ export async function addRole(role: Omit<BenchmarkRole, 'id'>): Promise<Benchmar
   return data as BenchmarkRole
 }
 
-export async function updateRole(id: string, patch: Partial<BenchmarkRole>): Promise<void> {
-  const { error } = await supabase.from('benchmark_roles').update(patch).eq('id', id)
-  if (error) throw new Error(missing(error.message))
-}
-
 /** Deleting a role takes its readings with it (on delete cascade), so it asks first in the UI. */
 export async function deleteRole(id: string): Promise<void> {
   const { error } = await supabase.from('benchmark_roles').delete().eq('id', id)

@@ -1,6 +1,7 @@
 import type { Subscription } from './subscriptions'
 import type { Account, Currency, Transaction } from './types'
 import { balanceSeries } from './analytics'
+import { lastDayOfMonth } from './util'
 
 /** What the period view needs from an enriched transaction (value is signed, display currency). */
 export interface PeriodTx { month: string; value: number; categoryName: string; merchant: string; kind: string }
@@ -85,7 +86,6 @@ export function buildPeriod(
 }
 
 const dayBefore = (month: string) => new Date(Date.parse(`${month}-01T00:00:00Z`) - 86400000).toISOString().slice(0, 10)
-const lastDay = (month: string) => { const [y, m] = month.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10) }
 
 /**
  * Per month, for the given accounts summed in the display currency: the balance at the
@@ -115,7 +115,7 @@ export function monthBalances(
     if (v >= 0) inflow[i] += v
     else outflow[i] -= v
   }
-  return { opening: months.map((m) => at(dayBefore(m))), inflow, outflow, closing: months.map((m) => at(lastDay(m))) }
+  return { opening: months.map((m) => at(dayBefore(m))), inflow, outflow, closing: months.map((m) => at(lastDayOfMonth(m))) }
 }
 
 /** Why a recurring charge deserves a look, or null when it is running as usual. */

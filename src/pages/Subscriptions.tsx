@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Ctx } from '../App'
 import { detectSubscriptions, subscriptionAlerts, type Subscription } from '../domain/subscriptions'
-import { countryOf } from '../domain/countries'
 import { isTithe } from '../domain/categorize'
 import { addCategory, addRule, setCategoryForTransactions } from '../lib/data'
 import { money } from '../lib/format'
@@ -9,7 +8,7 @@ import { hiddenByDefault, today, useFmt } from '../lib/hooks'
 import type { CategoryKind } from '../domain/types'
 import { byName } from '../domain/categorize'
 import { Help } from '../components/Page'
-import { Menu } from './analysis/shared'
+import { AccountMenu } from '../components/AccountMenu'
 
 const CADENCIA: Record<Subscription['cadence'], string> = {
   weekly: 'semanal', monthly: 'mensal', bimonthly: 'bimestral', quarterly: 'trimestral', yearly: 'anual',
@@ -43,21 +42,7 @@ export function Subscriptions({ ctx }: { ctx: Ctx }) {
       <div className="card" style={{ gridColumn: '1/-1' }}>
         <div className="card-head">
           <h3>Cobranças recorrentes</h3>
-          <Menu align="right" active={hidden.size > 0} label={hidden.size ? `${data.accounts.length - hidden.size} de ${data.accounts.length} contas` : 'Todas as contas'}>
-            <div className="row" style={{ marginBottom: 8 }}>
-              {[...new Set(data.accounts.map((a) => countryOf(a.bank)))].map((c) => (
-                <button key={c} onClick={() => setHidden(new Set(data.accounts.filter((a) => countryOf(a.bank) !== c).map((a) => a.id)))}>{c}</button>
-              ))}
-              <button onClick={() => setHidden(new Set())}>Todas</button>
-            </div>
-            <div className="opts">
-              {data.accounts.map((a) => (
-                <label key={a.id} className="inline opt"><input type="checkbox" checked={shown(a.id)} onChange={() => setHidden((prev) => {
-                  const next = new Set(prev); if (next.has(a.id)) next.delete(a.id); else next.add(a.id); return next
-                })} />{a.name}</label>
-              ))}
-            </div>
-          </Menu>
+          <AccountMenu align="right" accounts={data.accounts} hidden={hidden} onChange={setHidden} />
         </div>
         <div className="kpis" style={{ marginBottom: 14 }}>
           <div className="kpi total"><div className="l">Por mês</div><div className="v">{fmt(total)}</div></div>

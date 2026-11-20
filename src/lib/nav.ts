@@ -1,4 +1,5 @@
 import type { IconName } from '../components/Icons'
+import { unaccent } from '../domain/util'
 
 /**
  * Every page, grouped the way the side menu shows them, with the one line that says what the
@@ -50,9 +51,9 @@ export const SECTIONS: { tab: Tab; sub: string; label: string; keywords?: string
   { tab: 'Ajustes', sub: 'Mapa do banco', label: 'Mapa do banco' },
   { tab: 'Ajustes', sub: 'Cotações', label: 'Cotações EUR → BRL', keywords: 'câmbio real euro' },
   { tab: 'Ajustes', sub: 'IA local', label: 'IA local (Ollama)', keywords: 'inteligência artificial modelo' },
-  { tab: 'Ajustes', sub: 'Aparelhos', label: 'Aparelhos e acesso', keywords: 'login código lembrar dispositivo celular revogar sessão' },
+  { tab: 'Ajustes', sub: 'Aparelhos', label: 'Aparelhos e acesso', keywords: 'login código lembrar dispositivo celular revogar sessão casa pessoa membro convidar aprovar acesso qr' },
   { tab: 'Ajustes', sub: 'Aparência', label: 'Aparência', keywords: 'tema claro escuro modo' },
 ]
 
 /** Accent- and case-insensitive text, for matching what is typed in the search. */
-export const fold = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+export const fold = (s: string) => unaccent(s).toLowerCase()

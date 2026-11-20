@@ -28,8 +28,8 @@ describe('bill debits', () => {
   it('match the paying-account debit to an imported bill total near the due date, once', async () => {
     const { matchBillDebits } = await import('../src/domain/cards')
     const accounts = [
-      { id: 'card', type: 'card', parent_account_id: 'chk' },
-      { id: 'chk', type: 'checking', parent_account_id: null },
+      { id: 'card', bank: 'ITAU', type: 'card', parent_account_id: 'chk' },
+      { id: 'chk', bank: 'ITAU', type: 'checking', parent_account_id: null },
     ] as never
     const bill = (due_date: string, total: number) => ({ account_id: 'card', due_date, total, status: 'paga' as const })
     const tx = (id: string, booking_date: string, amount: number) => ({ id, account_id: 'chk', booking_date, amount })

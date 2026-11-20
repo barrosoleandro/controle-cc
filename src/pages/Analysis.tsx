@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { payerOf as cardPayers } from '../domain/cards'
 import type { Ctx } from '../App'
 import { monthLabel } from '../lib/format'
 import { today, useFmt } from '../lib/hooks'
 import { byName } from '../domain/categorize'
-import { countryOf } from '../domain/countries'
 import { addDays, addMonths, compareRange, daysIn, fold, lastDayOf, monthRange, monthsOf, rankCategories, select, type CompareMode, type Filter, type Measure, type Range } from '../domain/explore'
 import { Menu, Swatch } from './analysis/shared'
 import { fullDate, OTHER_COLOR, type ViewProps } from './analysis/util'
@@ -17,6 +17,7 @@ import { Icon } from '../components/Icons'
 import { AsOf, Empty } from '../components/Page'
 import { hiddenByDefault } from '../lib/hooks'
 import type { Account } from '../domain/types'
+import { AccountMenu } from '../components/AccountMenu'
 
 const VIEWS = [
   ['geral', 'Visão geral'], ['tendencia', 'Tendência'], ['categorias', 'Categorias'],
@@ -86,7 +87,7 @@ export function Analysis({ ctx, sub }: { ctx: Ctx; sub?: string }) {
   const periodMonths = useMemo(() => monthsOf(range), [range.from, range.to]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Accounts: a card with a paying account follows it (ticking Itaú Conta brings the Itaú card's purchases).
-  const payerOf = useMemo(() => new Map(data.accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!])), [data.accounts])
+  const payerOf = useMemo(() => cardPayers(data.accounts), [data.accounts])
   const listed = data.accounts.filter((a) => !payerOf.has(a.id))
   const hidden = useMemo(() => new Set(st.hidden), [st.hidden])
   const inScope = useCallback((id: string) => !hidden.has(payerOf.get(id) ?? id), [hidden, payerOf])
@@ -112,9 +113,7 @@ export function Analysis({ ctx, sub }: { ctx: Ctx; sub?: string }) {
 
   const unfiltered = !st.categories.length && !st.search && !st.min
   const toggleCat = (c: string) => set({ categories: st.categories.includes(c) ? st.categories.filter((x) => x !== c) : [...st.categories, c] })
-  const toggleAcc = (id: string) => set({ hidden: hidden.has(id) ? st.hidden.filter((x) => x !== id) : [...st.hidden, id] })
   const shownCount = listed.filter((a) => !hidden.has(a.id)).length
-  const countries = [...new Set(listed.map((a) => countryOf(a.bank)))]
 
   const props: ViewProps = {
     ctx, fmt, measure: st.measure, range, prevRange, months: periodMonths, rows, prevRows, hist, colorOf, unfiltered, inScope,
@@ -158,16 +157,8 @@ export function Analysis({ ctx, sub }: { ctx: Ctx; sub?: string }) {
             {COMPARE.map(([id, l]) => <option key={id} value={id}>{l}</option>)}
           </select>
         </label>
-        <Menu label={`Contas: ${shownCount === listed.length ? 'todas' : `${shownCount} de ${listed.length}`}`} active={shownCount !== listed.length}>
-          <div className="row" style={{ marginBottom: 8 }}>
-            {countries.map((c) => <button key={c} onClick={() => set({ hidden: listed.filter((a) => countryOf(a.bank) !== c).map((a) => a.id) })}>{c}</button>)}
-            <button onClick={() => set({ hidden: [] })}>Todas</button>
-          </div>
-          {listed.map((a) => (
-            <label key={a.id} className="inline opt"><input type="checkbox" checked={!hidden.has(a.id)} onChange={() => toggleAcc(a.id)} />{a.name}
-              {data.accounts.some((c) => payerOf.get(c.id) === a.id) && <span className="muted" style={{ fontSize: 12 }}>+ cartão</span>}</label>
-          ))}
-        </Menu>
+        <AccountMenu compact accounts={listed} hidden={hidden} onChange={(h) => set({ hidden: [...h] })}
+          note={(a) => data.accounts.some((c) => payerOf.get(c.id) === a.id) && <span className="muted" style={{ fontSize: 12 }}> + cartão</span>} />
         <Menu label={`Categorias: ${st.categories.length === 0 ? 'todas' : st.categories.length === 1 ? st.categories[0] : st.categories.length}`} active={st.categories.length > 0}>
           <input type="search" placeholder="Procurar categoria" value={catQ} onChange={(e) => setCatQ(e.target.value)} style={{ width: '100%', marginBottom: 6 }} />
           <div className="row" style={{ marginBottom: 6 }}><button onClick={() => set({ categories: [] })}>Todas</button></div>

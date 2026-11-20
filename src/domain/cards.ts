@@ -1,5 +1,23 @@
 import type { Account } from './types'
 import { CARD_PAYMENT } from './categorize'
+import { countryOf } from './countries'
+
+/** An account can pay a card's bill only in the card's own country (a BCP account never pays the Itaú bill directly: it sends a transfer to Brazil). */
+export const canPay = (card: Pick<Account, 'bank'>, account: Pick<Account, 'bank' | 'type'>) => account.type !== 'card' && countryOf(account.bank) === countryOf(card.bank)
+
+/**
+ * Card → the account that pays its bill. A link to an account of another country is ignored:
+ * a euro account does not pay the Itaú card, it funds Brazil with one transfer a month.
+ */
+export function payerOf(accounts: Account[]): Map<string, string> {
+  const byId = new Map(accounts.map((a) => [a.id, a]))
+  const out = new Map<string, string>()
+  for (const a of accounts) {
+    const p = a.type === 'card' && a.parent_account_id ? byId.get(a.parent_account_id) : undefined
+    if (p && canPay(a, p)) out.set(a.id, p.id)
+  }
+  return out
+}
 
 export interface StoredCardStatement {
   account_id: string
@@ -30,7 +48,7 @@ const WINDOW_DAYS = 5 // the card may credit the payment a day or two after the 
  * (Cards whose purchases carry no bill due date, imported before migration 004, are not checked.)
  */
 export function matchCardPayments(accounts: Account[], txs: PayTx[]) {
-  const parentOf = new Map(accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!]))
+  const parentOf = payerOf(accounts)
   const used = new Set<string>()
   const out: { cardTx: PayTx; bankTx: PayTx }[] = []
   const dues = new Map<string, number[]>() // per card: due dates of the bills whose purchases are imported
@@ -63,7 +81,7 @@ export function matchCardPayments(accounts: Account[], txs: PayTx[]) {
  * so the debit is a transfer, not a second expense.
  */
 export function matchBillDebits(accounts: Account[], bills: StoredCardStatement[], txs: PayTx[], alreadyUsed: Set<string> = new Set()) {
-  const parentOf = new Map(accounts.filter((a) => a.type === 'card' && a.parent_account_id).map((a) => [a.id, a.parent_account_id!]))
+  const parentOf = payerOf(accounts)
   const used = new Set(alreadyUsed)
   const out: { bill: StoredCardStatement; bankTx: PayTx }[] = []
   for (const bill of [...bills].sort((a, b) => a.due_date.localeCompare(b.due_date))) {
@@ -90,6 +108,33 @@ export function billPayment<T extends PayTx>(bill: StoredCardStatement, cardTxs:
     .map((t) => ({ t, gap: Math.abs(Date.parse(t.booking_date) - due) / DAY }))
     .filter((c) => c.gap <= 10)
     .sort((a, b) => a.gap - b.gap)[0]?.t
+}
+
+/**
+ * The debit in the paying account that paid a bill, from 10 days before to 5 days after the due
+ * date: the one of the bill total to the cent, or else the card-bill debit (`isBillPayment`) nearest
+ * the due date. The total stored can differ from the debit when the bill was imported before it
+ * closed (the "fatura aberta" export), and the debit is still the payment of that bill.
+ */
+export function billDebit<T extends PayTx>(accounts: Account[], bill: StoredCardStatement, txs: T[], isBillPayment: (t: T) => boolean): T | undefined {
+  const parent = payerOf(accounts).get(bill.account_id)
+  if (!parent) return undefined
+  const due = Date.parse(bill.due_date)
+  const near = txs.filter((t) => t.account_id === parent && Number(t.amount) < 0)
+    .map((t) => ({ t, d: (Date.parse(t.booking_date) - due) / DAY }))
+    .filter((c) => c.d >= -10 && c.d <= 5)
+    .sort((a, b) => Math.abs(a.d) - Math.abs(b.d))
+  return (near.find((c) => Math.abs(Number(c.t.amount) + Number(bill.total)) < 0.005) ?? near.find((c) => isBillPayment(c.t)))?.t
+}
+
+/**
+ * Bills with their status as of today: one imported while still open ("aberta") is paid once its
+ * payment shows, either as its debit in the paying account (billDebit) or as the payment recorded
+ * on the card, which comes on a later bill (billPayment). The stored
+ * status is the one printed when the bill was imported and is not updated by later statements.
+ */
+export function withPaidStatus<B extends StoredCardStatement, T extends PayTx>(accounts: Account[], bills: B[], txs: T[], isBillPayment: (t: T) => boolean = () => false): B[] {
+  return bills.map((b) => (b.status === 'aberta' && (billDebit(accounts, b, txs, isBillPayment) || billPayment(b, txs)) ? { ...b, status: 'paga' as const } : b))
 }
 
 /** What the instalment estimate needs from a card transaction. */

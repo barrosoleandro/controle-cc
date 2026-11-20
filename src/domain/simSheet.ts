@@ -19,9 +19,11 @@
  * balance, rounded up to 10 — as a formula, mirrored in the sender through the exchange-rate cell.
  */
 import type { Cell } from 'write-excel-file/browser'
-import { isDue, nextMonth, recurringExpectations, steadyIncomes, type PlanTx } from './monthPlan'
+import { isDue, nextMonth, recurringExpectations, steadyIncomes, type PlanTx, type RecurringPeriods } from './monthPlan'
 import { isCardBillPayment, sentToBrazil } from './forecast'
 import { EXTERNAL } from './audit'
+import { SALARY_FROM_DAY } from './monthEnd'
+import { round2 } from './util'
 
 export type Kind = 'income' | 'expense' | 'transfer'
 export interface SimTx { account_id: string; month: string; amount: number; kind: Kind; categoryName: string; merchant: string; booking_date: string; description?: string; bank_category?: string | null }
@@ -35,7 +37,6 @@ export interface BrazilLink { from: string; to: string; rate: number; bill: (mon
 export type { Cell }
 export const OTHERS = '(demais, média 3 meses)'
 export const BILL = 'Fatura do cartão Itaú'
-const SALARY_FROM_DAY = 20 // a salary credited from this day on is the next month's
 export const SENT = 'Transferência para o Itaú (estimada)'
 export const RECEIVED = 'Transferência do exterior (estimada)'
 const NUM = '#,##0.00;[Red]-#,##0.00'
@@ -48,11 +49,11 @@ const colName = (n: number): string => (n > 26 ? colName(Math.floor((n - 1) / 26
 const col = (i: number) => colName(i + 3) // month i → C, D, … (any number of months)
 /** A merchant row is shown only when it has a value in the period; the estimated transfers always are. */
 const keep = (m: string, v: number[]) => m === SENT || m === RECEIVED || v.some((x) => Math.abs(x) > 0.005)
-const round = (v: number) => Math.round(v * 100) / 100
+const round = round2
 /** Sign that makes a value positive for its kind: income counts up, the rest counts down. */
 const mag = (kind: Kind, v: number) => (kind === 'income' ? v : -v)
 
-export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: string[], current: string, avgMonths: string[], isRecurring: IsRecurring, labels: (m: string) => string, brazil?: BrazilLink, salary?: string): Cell[][] {
+export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: string[], current: string, avgMonths: string[], isRecurring: IsRecurring, labels: (m: string) => string, brazil?: BrazilLink, salary?: string, periods: RecurringPeriods = {}): Cell[][] {
   const cur = months.indexOf(current)
   const ahead = (i: number) => cur >= 0 && i >= cur // current month and after: (partly) projected
   const link = brazil && accounts.some((a) => a.id === brazil.from) && accounts.some((a) => a.id === brazil.to) ? brazil : undefined
@@ -99,10 +100,10 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     // Recurring lines not in yet, from the current month on.
     const plan: PlanTx[] = mine.map((t) => ({ month: t.month, value: t.amount, kind: t.kind, categoryName: t.categoryName, merchant: t.merchant, booking_date: t.booking_date }))
     const steady = steadyIncomes(plan, avgMonths)
-    const recurring = recurringExpectations(plan, (m, kind) => m !== BILL && isRecurring(m, kind, steady), avgMonths)
+    const recurring = recurringExpectations(plan, (m, kind) => m !== BILL && isRecurring(m, kind, steady), avgMonths, periods)
     for (const e of recurring) {
       for (let i = Math.max(cur, 0); cur >= 0 && i < months.length; i++) {
-        if (!seen.has(`${e.kind}/${e.merchant}/${months[i]}`) && isDue(e, months[i])) cell(e.kind, e.categoryName, e.merchant)[i] += e.kind === 'income' ? e.amount : -e.amount
+        if (isDue(e, months[i]) && !seen.has(`${e.kind}/${e.merchant}/${months[i]}`)) cell(e.kind, e.categoryName, e.merchant)[i] += e.kind === 'income' ? e.amount : -e.amount
       }
     }
     const avgSet = new Set(avgMonths)

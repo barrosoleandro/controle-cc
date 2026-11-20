@@ -116,3 +116,22 @@ describe('payslip explanation prompt', () => {
     expect(prompt).not.toContain('Linha 39')
   })
 })
+
+describe('savings suggestions prompt', () => {
+  it('lists only the facts given and forbids new numbers', async () => {
+    const { savingsPrompt } = await import('../src/domain/localAi')
+    const { prompt, system } = savingsPrompt({
+      moeda: 'EUR', meses: 'ago/26 a out/26', receitaMedia: 10000, despesaMedia: 8000,
+      categorias: [{ nome: 'Restaurante', media: 650, orcamento: 400 }, { nome: 'Mercado', media: 900, orcamento: null }],
+      recorrentes: [{ nome: 'NETFLIX', mensal: 13.49 }], estabelecimentos: [{ nome: 'UBER EATS', media: 210, vezes: 14 }],
+      sinais: ['Restaurante está 250,00 €/mês acima do orçamento'],
+    })
+    expect(prompt).toContain('- Restaurante: 650,00 EUR (orçamento 400,00 EUR)')
+    expect(prompt).toContain('- NETFLIX: 13,49 EUR')
+    expect(prompt).toContain('UBER EATS: 210,00 EUR (14 compra(s) no período)')
+    expect(prompt).toContain('sobra: 2.000,00 EUR/mês')
+    expect(prompt).toContain('NÃO cite número que não esteja na lista')
+    expect(prompt.split('\n').length).toBeGreaterThan(10)
+    expect(system).toMatch(/cortes de gastos/)
+  })
+})

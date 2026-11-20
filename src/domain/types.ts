@@ -1,3 +1,4 @@
+import type { FgtsDeposit } from './fgts'
 import type { ParsedPayslip } from '../parsers/payslipPdf'
 export type Currency = 'EUR' | 'BRL'
 export type CategoryKind = 'income' | 'expense' | 'transfer'
@@ -50,7 +51,8 @@ export interface ParseResult {
   warnings: string[]
   accounts?: AccountHint[]
   cardStatements?: CardStatement[]
-  payslip?: ParsedPayslip // a bulletin de paie dropped among the statements: saved as a payslip, not as rows
+  payslips?: ParsedPayslip[] // a bulletin de paie or US pay statements dropped among the statements: saved as payslips, not as rows
+  fgts?: FgtsDeposit[] // an FGTS extract dropped among the statements: its deposits go to Rescisão → Conferir o FGTS
 }
 
 export interface Account {

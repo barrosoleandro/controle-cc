@@ -160,3 +160,76 @@ describe('matchCardPayments with bill due dates', () => {
     expect(matchCardPayments(accounts, txs).map((m) => m.bankTx.id)).toEqual(['d-sep'])
   })
 })
+
+describe('conta que paga o cartão', () => {
+  it('só uma conta do país do cartão: o BCP não paga o cartão Itaú', async () => {
+    const { payerOf, matchBillDebits } = await import('../src/domain/cards')
+    const accounts = [
+      { id: 'itau-card', bank: 'ITAU', type: 'card', parent_account_id: 'bcp' },
+      { id: 'card2', bank: 'ITAU', type: 'card', parent_account_id: 'itau' },
+      { id: 'bcp', bank: 'BCP', type: 'checking', parent_account_id: null },
+      { id: 'itau', bank: 'ITAU', type: 'checking', parent_account_id: null },
+    ] as never
+    expect([...payerOf(accounts)]).toEqual([['card2', 'itau']])
+    // A BCP debit of the bill's exact amount is not taken as the bill payment.
+    const m = matchBillDebits(accounts, [{ account_id: 'itau-card', due_date: '2026-10-10', total: 500, status: 'paga' }],
+      [{ id: 'x', account_id: 'bcp', booking_date: '2026-10-09', amount: -500 }])
+    expect(m).toEqual([])
+  })
+})
+
+describe('Cartão Itaú fora do Brasil', () => {
+  it('no BCP, um lançamento "Cartão Itaú" é a transferência que cobre o Brasil, não despesa', async () => {
+    const { enrich } = await import('../src/domain/analytics')
+    const fx = { convert: (v: number) => v } as never
+    const cats = [{ id: 'c', name: 'Cartão Itaú', kind: 'expense' }] as never
+    const accounts = [{ id: 'bcp', name: 'BCP', bank: 'BCP' }, { id: 'itau', name: 'Itaú', bank: 'ITAU' }] as never
+    const t = (id: string, account_id: string) => ({ id, account_id, booking_date: '2026-10-05', amount: -900, currency: 'EUR', category_id: 'c' })
+    const [bcp, itau] = enrich([t('1', 'bcp'), t('2', 'itau')] as never, cats, accounts, fx, 'EUR')
+    expect(bcp.kind).toBe('transfer')
+    expect(itau.kind).toBe('expense')
+  })
+})
+
+describe('bill status after the payment is imported', () => {
+  const accounts = [
+    { id: 'card', bank: 'ITAU', type: 'card', parent_account_id: 'itau' },
+    { id: 'itau', bank: 'ITAU', type: 'checking', parent_account_id: null },
+  ] as never
+  const bill = (due_date: string, total: number, status: 'paga' | 'aberta' = 'aberta') => ({ account_id: 'card', due_date, total, status })
+  it('an open bill is paid once the debit of its total shows in the paying account, or the payment on the card', async () => {
+    const { withPaidStatus } = await import('../src/domain/cards')
+    const bills = [bill('2026-10-10', 11744.52), bill('2026-11-10', 7231.51), bill('2026-12-10', 5000), bill('2026-09-10', 100, 'paga')]
+    const out = withPaidStatus(accounts, bills, [
+      { id: 'a', account_id: 'card', booking_date: '2026-10-11', amount: 11744.52, bank_category: CARD_PAYMENT },
+      { id: 'b', account_id: 'itau', booking_date: '2026-11-11', amount: -7231.51 },
+      { id: 'c', account_id: 'itau', booking_date: '2026-11-11', amount: -4999 },
+    ])
+    expect(out.map((b) => [b.due_date, b.status])).toEqual([['2026-10-10', 'paga'], ['2026-11-10', 'paga'], ['2026-12-10', 'aberta'], ['2026-09-10', 'paga']])
+    expect(withPaidStatus(accounts, [bill('2026-09-10', 100, 'paga')], [])).toEqual([bill('2026-09-10', 100, 'paga')])
+  })
+})
+
+describe('bill paid by the Personnalité debit in the Itaú account', () => {
+  const accounts = [
+    { id: 'card', bank: 'ITAU', type: 'card', parent_account_id: 'itau' },
+    { id: 'itau', bank: 'ITAU', type: 'checking', parent_account_id: null },
+  ] as never
+  const tx = (id: string, booking_date: string, amount: number, description: string) => ({ id, account_id: 'itau', booking_date, amount, description, bank_category: null })
+  it('takes the card debit near the due date even when the stored total was exported before the bill closed', async () => {
+    const { billDebit, withPaidStatus } = await import('../src/domain/cards')
+    const { isCardBillPayment } = await import('../src/domain/forecast')
+    const bill = { account_id: 'card', due_date: '2026-11-11', total: 6717.21, status: 'aberta' as const }
+    const txs = [tx('seguro', '2026-11-04', -26.09, 'SEGURO CARTAO 0000'), tx('pers', '2026-11-11', -7231.51, 'PERS INFINIT 7609-0945'), tx('pix', '2026-11-10', -500, 'PIX TRANSF FULANO')]
+    expect(billDebit(accounts, bill, txs, isCardBillPayment)?.id).toBe('pers')
+    expect(withPaidStatus(accounts, [bill], txs, isCardBillPayment)[0].status).toBe('paga')
+    // Without a card debit nor the exact total, the bill stays open.
+    expect(billDebit(accounts, bill, [txs[0], txs[2]], isCardBillPayment)).toBeUndefined()
+  })
+  it('recognises the Personnalité debits as card bill payments, not the card insurance', async () => {
+    const { isCardBillPayment } = await import('../src/domain/forecast')
+    const is = (description: string) => isCardBillPayment({ bank_category: null, description })
+    expect(['PERS INFINIT 7609-0945', 'Pers Black 4002-9666', 'Fatura Paga PERSONNALITE'].map(is)).toEqual([true, true, true])
+    expect(['SEGURO CARTAO 0000', 'PIX TRANSF Wise Br28/10'].map(is)).toEqual([false, false])
+  })
+})
