@@ -6,6 +6,8 @@ import { looksLikeItauCardXlsx, parseItauCardXlsx, type Cell } from './itauCardX
 import { looksLikeMillenniumPdf, looksLikeMillenniumReceipt, parseMillenniumPdf } from './millenniumPdf'
 import { looksLikeItauCardPdf, parseItauCardPdf } from './itauCardPdf'
 import { looksLikeItauMonthlyPdf, parseItauMonthlyPdf } from './itauMonthlyPdf'
+import { looksLikeItauAccountPdf, parseItauAccountPdf } from './itauAccountPdf'
+import { looksLikeItauCardBillPdf, parseItauCardBillPdf } from './itauCardBillPdf'
 import { looksLikeCcfPdf, parseCcfPdf } from './ccfPdf'
 import { pdfToRows, rowsToLines, type PdfLoader } from './pdfText'
 import { looksLikePayslip, parsePayslipRows } from './payslipPdf'
@@ -32,6 +34,8 @@ export async function parseStatement(fileName: string, bytes: Uint8Array, loadPd
     if (looksLikeMillenniumPdf(lines)) return parseMillenniumPdf(lines)
     if (looksLikeMillenniumReceipt(lines)) return ignored('Comprovante Millennium: a operação já vem no extrato combinado — ignorado.')
     if (looksLikeItauCardPdf(lines)) return parseItauCardPdf(pages, lines)
+    if (looksLikeItauCardBillPdf(lines)) return parseItauCardBillPdf(pages, lines, fileName.split(/[\\/]/).pop())
+    if (looksLikeItauAccountPdf(lines)) return parseItauAccountPdf(pages, lines)
     if (looksLikeItauMonthlyPdf(lines)) return parseItauMonthlyPdf(pages, lines)
     if (looksLikeCcfPdf(lines)) return parseCcfPdf(pages, lines)
     if (looksLikeFgtsExtract(lines)) return { ...ignored('Extrato do FGTS: depósitos salvos em Rescisão → Conferir o FGTS.'), fgts: parseFgtsExtract(lines) }
