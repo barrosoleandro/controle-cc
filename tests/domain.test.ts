@@ -110,6 +110,15 @@ describe('simulation', () => {
     expect(r.projection[1].savings).toBe(1000 + 300 * 24)
   })
 
+  it('taxes the company car like salary but pays out no cash for it', () => {
+    // 40% total rate: 500/month of car raises the deductions by 200 and the cash net by nothing.
+    const r = runScenario({ ...s, carBenefitMonth: 500 })
+    expect(r.net.grossYear).toBe(126000)
+    expect(r.carBenefitMonth).toBe(500)
+    expect(r.incomeMonth).toBeCloseTo(6000 - 200)
+    expect(r.expenses.tithe).toBeCloseTo(580)
+  })
+
   const measured: RealBase = { rent: 1900.4, school: 500, brazil: 320.6, variable: 2500, months: ['2026-04', '2026-09'] }
 
   it('takes housing and school from the statements only in France', () => {

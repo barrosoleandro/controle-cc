@@ -6,7 +6,13 @@ export interface Scenario {
   name: string
   country: Country
   household: Household
-  grossYear: number // main salary, local currency
+  grossYear: number // main salary, local currency (cash only: no in-kind benefits)
+  /**
+   * Company car as a benefit in kind (avantage en nature), local currency per month. It is
+   * taxed and pays social charges like salary, but no money comes in: the payslip adds it
+   * to the gross and takes it back out of the net. Absent in scenarios saved before it existed.
+   */
+  carBenefitMonth?: number
   partnerGrossYear: number
   otherIncomeMonth: number // net, e.g. rental income, local currency
   rentMonth: number
@@ -27,6 +33,8 @@ export interface ScenarioResult {
   net: NetResult
   partnerNet: NetResult | null
   incomeMonth: number
+  /** The car benefit taken back out of the net: what the payslip deducts, not money spent. */
+  carBenefitMonth: number
   expenses: { rent: number; school: number; variable: number; extras: number; tithe: number; total: number }
   surplusMonth: number
   savingsRate: number
@@ -41,11 +49,13 @@ export interface ScenarioResult {
 export const TITHE_RATE = 0.1
 
 export function runScenario(s: Scenario): ScenarioResult {
-  const net = grossToNet(s.country, s.grossYear, s.household)
+  const car = Math.max(0, s.carBenefitMonth ?? 0)
+  // Charges and tax are computed on salary + car; the car is then removed, being no cash.
+  const net = grossToNet(s.country, s.grossYear + car * 12, s.household)
   const partnerNet = s.partnerGrossYear > 0 ? grossToNet(s.country, s.partnerGrossYear, { ...s.household, married: false, children: 0 }) : null
   const currency = net.currency
   const toLocal = (eur: number) => (currency === 'BRL' ? eur * s.fxEurBrl : eur)
-  const incomeMonth = net.netMonth + (partnerNet?.netMonth ?? 0) + s.otherIncomeMonth
+  const incomeMonth = net.netMonth - car + (partnerNet?.netMonth ?? 0) + s.otherIncomeMonth
   const variable = toLocal(s.baselineVariableMonth) * s.costOfLivingIndex
   const extras = s.extraLines.reduce((a, l) => a + l.monthly, 0)
   const school = s.schoolYear / 12
@@ -61,7 +71,7 @@ export function runScenario(s: Scenario): ScenarioResult {
     projection.push({ year: y, savings: Math.round(bal), savingsReal: Math.round(bal / Math.pow(1 + inf, y)) })
   }
   return {
-    currency, net, partnerNet, incomeMonth,
+    currency, net, partnerNet, incomeMonth, carBenefitMonth: car,
     expenses: { rent: s.rentMonth, school, variable, extras, tithe, total },
     surplusMonth, savingsRate: incomeMonth > 0 ? surplusMonth / incomeMonth : 0,
     surplusMonthEur: currency === 'BRL' ? surplusMonth / s.fxEurBrl : surplusMonth,
