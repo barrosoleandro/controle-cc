@@ -12,6 +12,7 @@ import { ExplicarIA } from '../components/ExplicarIA'
 import { simulationPrompt } from '../domain/localAi'
 import { isTithe } from '../domain/categorize'
 import { isRescisao } from '../domain/rescisao'
+import { DEFAULT_CONTRACT } from '../domain/payroll'
 
 /** Measurement windows offered for the real base, in complete months. */
 const WINDOWS = [3, 6, 12]
@@ -86,9 +87,13 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
   const parcial = base.covered > 0 && base.covered < (win ?? 6)
   const lines = base.lines.map((l) => ({ ...l, value: edits[l.name] ?? l.value }))
 
+  // The company car on the payslip ("Avantage en nature voiture"), as in the contract on Holerites.
+  const carOnPayslip = (data.settings.payroll_contract?.length ? data.settings.payroll_contract : DEFAULT_CONTRACT)
+    .find((c) => c.code === '3026')?.amount ?? 0
   const make = (country: Country): Scenario => ({
     name: PRESETS[country].label, country, household: { married: true, children: 2 },
-    grossYear: country === 'BR' ? 600000 : 110000, partnerGrossYear: 0, otherIncomeMonth: 0,
+    // France: the local contract's base salary (no impatriation bonus) plus the company car.
+    grossYear: country === 'BR' ? 600000 : 110000, carBenefitMonth: country === 'FR' ? carOnPayslip : 0, partnerGrossYear: 0, otherIncomeMonth: 0,
     rentMonth: 0, schoolYear: 0, baselineVariableMonth: 0, costOfLivingIndex: PRESETS[country].col,
     extraLines: [],
     savingsReturnPct: 3, inflationPct: 2, years: 10, startingSavings: 0, fxEurBrl: Math.round(fx.latest() * 100) / 100,
@@ -146,7 +151,7 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
     },
     cenario: {
       nome: s.name, pais: PRESETS[s.country].label, moeda: r.currency,
-      brutoAno: r.net.grossYear, liquidoMes: r.net.netMonth, aliquota: r.net.effectiveRate,
+      brutoAno: r.net.grossYear, liquidoMes: r.net.netMonth - r.carBenefitMonth, aliquota: r.net.effectiveRate,
       rendaMes: r.incomeMonth, moradia: r.expenses.rent, escola: r.expenses.school, outros: r.expenses.variable,
       indiceCustoVida: s.costOfLivingIndex, extras: r.expenses.extras, dizimo: r.expenses.tithe,
       sobraMes: r.surplusMonth, taxaPoupanca: r.savingsRate, anos: s.years, poupancaFinalReal: r.projection.at(-1)?.savingsReal ?? 0,
@@ -213,6 +218,7 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
         <label>País<select value={s.country} onChange={(e) => { const c = e.target.value as Country; setS({ ...s, country: c, costOfLivingIndex: PRESETS[c].col }) }}>
           {(Object.keys(PRESETS) as Country[]).map((c) => <option key={c} value={c}>{PRESETS[c].label}</option>)}</select></label>
         <label>Seu salário bruto / ano ({PRESETS[s.country].currency})<input {...num('grossYear')} step={1000} /></label>
+        <label title="Benefício em espécie: entra no bruto para encargos e imposto, mas não é dinheiro recebido. Zere se o contrato não tiver carro e ponha o custo de um carro próprio em Custos extras.">Carro da empresa / mês (benefício em espécie)<input type="number" step={10} value={s.carBenefitMonth ?? 0} onChange={(e) => set('carBenefitMonth', Number(e.target.value))} /></label>
         <label>Bruto do cônjuge / ano<input {...num('partnerGrossYear')} step={1000} /></label>
         <label className="inline" style={{ alignSelf: 'end' }}><input type="checkbox" checked={s.household.married} onChange={(e) => set('household', { ...s.household, married: e.target.checked })} />Casado / declaração conjunta</label>
         <label>Filhos<input type="number" min={0} value={s.household.children} onChange={(e) => set('household', { ...s.household, children: Number(e.target.value) })} /></label>
@@ -245,10 +251,11 @@ export function Simulation({ ctx }: { ctx: Ctx }) {
 
     <div className="card"><h3>Resultado — {s.name}</h3>
       <table><tbody>
-        <tr><td>Bruto / ano</td><td className="num">{loc(r.net.grossYear)}</td></tr>
+        <tr><td>Bruto / ano{r.carBenefitMonth > 0 && ` (com o carro: ${loc(r.carBenefitMonth * 12)})`}</td><td className="num">{loc(r.net.grossYear)}</td></tr>
         <tr><td>Contribuições sociais</td><td className="num neg">−{loc(r.net.social)}</td></tr>
         <tr><td>Imposto de renda</td><td className="num neg">−{loc(r.net.incomeTax)}</td></tr>
-        <tr><td><strong>Líquido / mês (você)</strong></td><td className="num"><strong>{loc(r.net.netMonth)}</strong> ({(r.net.effectiveRate * 100).toFixed(1)}% de descontos no total)</td></tr>
+        {r.carBenefitMonth > 0 && <tr><td>Carro da empresa (sai do líquido: não é dinheiro)</td><td className="num neg">−{loc(r.carBenefitMonth)}/mês</td></tr>}
+        <tr><td><strong>Líquido / mês (você)</strong></td><td className="num"><strong>{loc(r.net.netMonth - r.carBenefitMonth)}</strong> ({(r.net.effectiveRate * 100).toFixed(1)}% de descontos no total)</td></tr>
         {r.partnerNet && <tr><td>Líquido / mês (cônjuge)</td><td className="num">{loc(r.partnerNet.netMonth)}</td></tr>}
         <tr><td>Renda da família / mês</td><td className="num pos">{loc(r.incomeMonth)}</td></tr>
         <tr><td>Aluguel</td><td className="num">{loc(r.expenses.rent)}</td></tr>
