@@ -121,6 +121,24 @@ describe('simulation sheet', () => {
     expect(v('Saldo final', 2)).toBe(3500 + 3 * 3000 - 3 * 1000)
   })
 
+  it('adjusted balance of the month: closing less the salary credited from day 20 on, projected too', () => {
+    const pay = (m: string) => ({ ...tx(m, 3000, 'income', 'Salário', 'ACME'), booking_date: `${m}-28` })
+    const data = [...['2026-07', '2026-08', '2026-09'].map(pay), ...['2026-08', '2026-09'].map((m) => tx(m, -1000, 'expense', 'Moradia', 'ALUGUEL'))]
+    const label = 'Saldo ajustado do mês (sem o salário do mês seguinte)'
+    const v = evaluate(buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], data, months, '2026-10', avg, isRec, (m) => m, undefined, 'Salário'))
+    expect(v(label, 0)).toBe(v('Saldo final', 0) - 3000) // salary of 28/ago is September's
+    expect(v(label, 1)).toBe(v('Saldo final', 1) - 3000)
+    // October (current) and November: the projected salary, usually paid on the 28th.
+    expect(v(label, 2)).toBe(v('Saldo final', 2) - v('Salário', 2))
+    expect(v(label, 3)).toBe(v('Saldo final', 3) - v('Salário', 3))
+    // Salary paid early in the month, or no salary category: no row.
+    const early = data.map((t) => ({ ...t, booking_date: `${t.month}-05` }))
+    const rows = buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], early, months, '2026-10', avg, isRec, (m) => m, undefined, 'Salário')
+    expect(rows.some((r) => r[0] && typeof r[0] === 'object' && r[0].value === label)).toBe(false)
+    expect(buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], data, months, '2026-10', avg, isRec, (m) => m)
+      .some((r) => r[0] && typeof r[0] === 'object' && r[0].value === label)).toBe(false)
+  })
+
   it('checks each month against the bank statement balance', () => {
     const pay = (m: string) => ({ ...tx(m, 3000, 'income', 'Salário', 'ACME'), booking_date: `${m}-30` })
     const data = [...['2026-07', '2026-08', '2026-09'].map(pay), tx('2026-08', -1000, 'expense', 'Moradia', 'ALUGUEL'), tx('2026-09', -1000, 'expense', 'Moradia', 'ALUGUEL')]

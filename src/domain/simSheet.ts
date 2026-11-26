@@ -6,7 +6,9 @@
  * account's own currency: income positive, expenses and money sent negative.
  *
  * Every row is in the month it was booked, salary included (one paid on the 28th counts in that
- * month), so the opening and closing balances are the bank's.
+ * month), so the opening and closing balances are the bank's. Salary (optional category name): a
+ * "Saldo ajustado do mês" row takes out of the closing the salary credited from day 20 on, which is
+ * the next month's (in projected months, the projected salary, when it is usually paid late).
  *
  * Current month: what came in plus the recurring lines not in yet. Future months: the same,
  * plus "(demais, média 3 meses)" per category, so a category is at least its 3-month average.
@@ -17,6 +19,7 @@
  * balance, rounded up to 10 — as a formula, mirrored in the sender through the exchange-rate cell.
  */
 import type { Cell } from 'write-excel-file/browser'
+import { SALARY_FROM_DAY } from './monthEnd'
 import { isDue, nextMonth, recurringExpectations, steadyIncomes, type PlanTx, type RecurringPeriods } from './monthPlan'
 import { isCardBillPayment, sentToBrazil } from './forecast'
 import { EXTERNAL } from './audit'
@@ -50,7 +53,7 @@ const round = round2
 /** Sign that makes a value positive for its kind: income counts up, the rest counts down. */
 const mag = (kind: Kind, v: number) => (kind === 'income' ? v : -v)
 
-export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: string[], current: string, avgMonths: string[], isRecurring: IsRecurring, labels: (m: string) => string, brazil?: BrazilLink, periods: RecurringPeriods = {}): Cell[][] {
+export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: string[], current: string, avgMonths: string[], isRecurring: IsRecurring, labels: (m: string) => string, brazil?: BrazilLink, salary?: string, periods: RecurringPeriods = {}): Cell[][] {
   const cur = months.indexOf(current)
   const ahead = (i: number) => cur >= 0 && i >= cur // current month and after: (partly) projected
   const link = brazil && accounts.some((a) => a.id === brazil.from) && accounts.some((a) => a.id === brazil.to) ? brazil : undefined
@@ -132,6 +135,7 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     const openRow: Cell[] = ['Saldo inicial', null] // months filled once the closing row is known
     rows.push(openRow)
     const totals: number[] = []
+    let salaryRow = 0 // subtotal row of the salary category, when it has one
     for (const [kind, label] of SECTIONS) {
       const cats = [...(grid.get(kind) ?? [])]
         .map(([cat, ms]) => ({ cat, ms: [...ms].filter(([m, v]) => keep(m, v)) }))
@@ -145,6 +149,7 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
         ms.sort(([ka, a], [kb, b]) => (ka === OTHERS ? 1 : kb === OTHERS ? -1 : abs(b) - abs(a)))
         const at = r()
         catRows.push(at)
+        if (kind === 'income' && cat === salary) salaryRow = at
         rows.push([{ value: cat, fontWeight: 'bold' }, null, ...months.map((_, i) => num(`=SUM(${col(i)}${at + 1}:${col(i)}${at + ms.length})`, i, true))])
         for (const [merchant, v] of ms) {
           if (isTo && (merchant === BILL || recurringExpense.has(merchant))) est.bills.push(r())
@@ -163,6 +168,15 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     rows.push([{ value: 'Saldo final', fontWeight: 'bold' }, null, ...months.map((_, i) => num(`=${col(i)}${opening}+${col(i)}${result}`, i, true))])
     // The opening of each month after the first points at the previous closing.
     openRow.push(...months.map((_, i) => num(i === 0 ? round(openingBalance) : `=${col(i - 1)}${close}`, i, true)))
+    // The closing with only the month's own money: less the salary credited from day 20 on (the next month's).
+    const late = (t: { booking_date: string }) => Number(t.booking_date.slice(8, 10)) >= SALARY_FROM_DAY
+    const salaries = salary ? mine.filter((t) => t.kind === 'income' && t.categoryName === salary) : []
+    const early = months.map((m) => round(salaries.filter((t) => t.month === m && late(t)).reduce((s, t) => s + t.amount, 0)))
+    const paidLate = salaries.length > 0 && late([...salaries].sort((x, y) => x.booking_date.localeCompare(y.booking_date)).at(-1)!)
+    const takeOut = (i: number) => (Math.abs(early[i]) > 0.005 ? `-${early[i]}` : ahead(i) && paidLate && salaryRow ? `-${col(i)}${salaryRow}` : '')
+    if (months.some((_, i) => takeOut(i))) {
+      rows.push([{ value: 'Saldo ajustado do mês (sem o salário do mês seguinte)', fontWeight: 'bold' }, null, ...months.map((_, i) => num(`=${col(i)}${close}${takeOut(i)}`, i, true))])
+    }
     // Check against the bank: the last statement balance of each month, and how far the sheet is from it.
     const bankAt = months.map((m) => Object.entries(a.bank ?? {}).filter(([d]) => d.slice(0, 7) === m).sort(([x], [y]) => x.localeCompare(y)).at(-1))
     if (bankAt.some(Boolean)) {

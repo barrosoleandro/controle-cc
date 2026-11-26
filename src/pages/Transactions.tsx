@@ -13,6 +13,7 @@ import { countryOf, flowsByCountry, type Country } from '../domain/countries'
 import { purchaseDate } from '../domain/simplify'
 import { billEffective, recurrenceCandidates } from '../domain/forecast'
 import { nextMonth } from '../domain/monthPlan'
+import { findSalaryCategory } from '../domain/budget'
 import { buildSimSheet, projectCardBill, type BrazilLink } from '../domain/simSheet'
 import { CARD_PAYMENT } from '../domain/categorize'
 import { CARD_BILL, matchBillDebits, matchCardPayments, payerOf as cardPayers } from '../domain/cards'
@@ -127,7 +128,7 @@ function ExcelExport({ ctx, accounts }: { ctx: Ctx; accounts: Ctx['data']['accou
       const etx = externalize(enrich(data.transactions, data.categories, data.accounts, ctx.fx, ctx.currency), data.accounts, ctx.fx)
       const txs = etx.filter((t) => ids.has(t.account_id)).map((t) => ({ ...t, amount: Number(t.amount), merchant: t.merchant || '(sem descrição)' }))
       const rows = buildSimSheet(sim, txs, months, cur, last3(),
-        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel, brazilLink(cur, data, etx), data.settings.dashboard?.billPeriods)
+        (m, kind, steady) => (kind === 'expense' ? isBill({ merchant: m }) : billEffective(m, marks, steady.has(m))), monthLabel, brazilLink(cur, data, etx), findSalaryCategory(data.categories)?.name, data.settings.dashboard?.billPeriods)
       const { default: writeExcelFile } = await import('write-excel-file/browser')
       await writeExcelFile(rows, {
         sheet: 'Lançamentos', stickyRowsCount: 2, stickyColumnsCount: 2,
