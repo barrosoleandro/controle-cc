@@ -5,10 +5,10 @@
  * any value in Excel flows into the totals and the month-to-month balance. Values are in the
  * account's own currency: income positive, expenses and money sent negative.
  *
- * Salary (optional category name): paid at the end of the month before the one it is for, it is
- * shown in the month it is for, so each month has its own salary. The balances follow: a month's
- * closing leaves out the next month's salary already credited, unlike the bank's. A second
- * closing row, "como no banco", adds it back (in projected months, the next month's salary row).
+ * Every row is in the month it was booked, salary included (one paid on the 28th counts in that
+ * month), so the opening and closing balances are the bank's. Salary (optional category name): a
+ * "Saldo ajustado do mês" row takes out of the closing the salary credited from day 20 on, which is
+ * the next month's (in projected months, the projected salary, when it is usually paid late).
  *
  * Current month: what came in plus the recurring lines not in yet. Future months: the same,
  * plus "(demais, média 3 meses)" per category, so a category is at least its 3-month average.
@@ -19,10 +19,10 @@
  * balance, rounded up to 10 — as a formula, mirrored in the sender through the exchange-rate cell.
  */
 import type { Cell } from 'write-excel-file/browser'
+import { SALARY_FROM_DAY } from './monthEnd'
 import { isDue, nextMonth, recurringExpectations, steadyIncomes, type PlanTx, type RecurringPeriods } from './monthPlan'
 import { isCardBillPayment, sentToBrazil } from './forecast'
 import { EXTERNAL } from './audit'
-import { SALARY_FROM_DAY } from './monthEnd'
 import { round2 } from './util'
 
 export type Kind = 'income' | 'expense' | 'transfer'
@@ -78,10 +78,7 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     // In the Itaú account the card is its bill total, an expense line of its own.
     const mine = txs.filter((t) => t.account_id === a.id).map((t) => (isTo && (t.categoryName === 'Cartão Itaú' || isCardBillPayment({ bank_category: t.bank_category ?? null, description: t.description ?? '' }))
       ? { ...t, kind: 'expense' as const, categoryName: BILL, merchant: BILL } : t))
-      .map((t) => (t.kind === 'income' && t.categoryName === salary && Number(t.booking_date.slice(8, 10)) >= SALARY_FROM_DAY ? { ...t, month: nextMonth(t.month) } : t))
-    // A salary credited just before the first month is in the bank's opening balance but shows in
-    // the first month: taken out of the opening so it is not counted twice.
-    const openingBalance = a.opening - mine.filter((t) => t.month === months[0] && t.booking_date.slice(0, 7) < months[0]).reduce((s, t) => s + t.amount, 0)
+    const openingBalance = a.opening
     const idx = new Map(months.map((m, i) => [m, i]))
     // kind → category → merchant → value per month
     const grid = new Map<Kind, Map<string, Map<string, number[]>>>()
@@ -171,22 +168,21 @@ export function buildSimSheet(accounts: SimAccount[], txs: SimTx[], months: stri
     rows.push([{ value: 'Saldo final', fontWeight: 'bold' }, null, ...months.map((_, i) => num(`=${col(i)}${opening}+${col(i)}${result}`, i, true))])
     // The opening of each month after the first points at the previous closing.
     openRow.push(...months.map((_, i) => num(i === 0 ? round(openingBalance) : `=${col(i - 1)}${close}`, i, true)))
-    // The closing as the bank has it: plus the next month's salary already credited; in the
-    // current and projected months, while it is not in yet, the next month's salary row.
-    const early = months.map((m) => mine.filter((t) => t.month === nextMonth(m) && t.booking_date.slice(0, 7) === m).reduce((s, t) => s + t.amount, 0))
-    const paysEarly = early.some((v) => Math.abs(v) > 0.005)
-    const addBack = (i: number) => (Math.abs(early[i]) > 0.005 ? `+${round(early[i])}` : ahead(i) && salaryRow && i + 1 < months.length ? `+${col(i + 1)}${salaryRow}` : '')
-    let asBank = close
-    if (paysEarly) {
-      asBank = r()
-      rows.push([{ value: 'Saldo final (como no banco)', fontWeight: 'bold' }, null, ...months.map((_, i) => num(`=${col(i)}${close}${addBack(i)}`, i, true))])
+    // The closing with only the month's own money: less the salary credited from day 20 on (the next month's).
+    const late = (t: { booking_date: string }) => Number(t.booking_date.slice(8, 10)) >= SALARY_FROM_DAY
+    const salaries = salary ? mine.filter((t) => t.kind === 'income' && t.categoryName === salary) : []
+    const early = months.map((m) => round(salaries.filter((t) => t.month === m && late(t)).reduce((s, t) => s + t.amount, 0)))
+    const paidLate = salaries.length > 0 && late([...salaries].sort((x, y) => x.booking_date.localeCompare(y.booking_date)).at(-1)!)
+    const takeOut = (i: number) => (Math.abs(early[i]) > 0.005 ? `-${early[i]}` : ahead(i) && paidLate && salaryRow ? `-${col(i)}${salaryRow}` : '')
+    if (months.some((_, i) => takeOut(i))) {
+      rows.push([{ value: 'Saldo ajustado do mês (sem o salário do mês seguinte)', fontWeight: 'bold' }, null, ...months.map((_, i) => num(`=${col(i)}${close}${takeOut(i)}`, i, true))])
     }
     // Check against the bank: the last statement balance of each month, and how far the sheet is from it.
     const bankAt = months.map((m) => Object.entries(a.bank ?? {}).filter(([d]) => d.slice(0, 7) === m).sort(([x], [y]) => x.localeCompare(y)).at(-1))
     if (bankAt.some(Boolean)) {
       const bankRow = r()
       rows.push(['Saldo no extrato do banco', null, ...bankAt.map((b, i) => (b ? num(round(b[1]), i) : null))])
-      rows.push(['Diferença (planilha − banco)', null, ...bankAt.map((b, i) => (b ? num(`=${col(i)}${asBank}-${col(i)}${bankRow}`, i) : null))])
+      rows.push(['Diferença (planilha − banco)', null, ...bankAt.map((b, i) => (b ? num(`=${col(i)}${close}-${col(i)}${bankRow}`, i) : null))])
     }
     rows.push([])
   }

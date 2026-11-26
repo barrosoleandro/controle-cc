@@ -111,42 +111,45 @@ describe('simulation sheet', () => {
     expect(short.some((r) => r[1] === 'CINEMA')).toBe(false)
   })
 
-  it('salary paid at the end of the month before shows in the month it is for, counted once', () => {
-    // Paid on the 30th for the next month, from June on; the one of 30/out (November's) is already in.
+  it('salary paid at the end of the month stays in that month, and the opening is the bank balance', () => {
+    // Paid on the 30th, from June on; the one of 30/out is already in.
     const pay = (m: string) => ({ ...tx(m, 3000, 'income', 'Salário', 'ACME'), booking_date: `${m}-30` })
     const data = [...['2026-06', '2026-07', '2026-08', '2026-09', '2026-10'].map(pay), ...['2026-08', '2026-09', '2026-10'].map((m) => tx(m, -1000, 'expense', 'Moradia', 'ALUGUEL'))]
-    const rows = buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], data, months, '2026-10', avg, isRec, (m) => m, undefined, 'Salário')
-    const v = evaluate(rows)
-    // 2026-08 … 2026-11: one salary each, November's being the one credited on 30/out; none extra after.
-    expect([0, 1, 2, 3].map((i) => v('ACME', i))).toEqual([3000, 3000, 3000, 3000])
-    // The opening (bank: 3500) leaves out August's salary, credited on 30/jul and shown in August.
-    expect(v('Saldo inicial', 0)).toBe(500)
-    expect(v('Saldo final', 3)).toBe(500 + 4 * 3000 - 1000 * 4)
-    // Without the salary category, the same data is plain cash: the 30/out credit stays in October.
-    expect(evaluate(buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], data, months, '2026-10', avg, isRec, (m) => m))('ACME', 2)).toBe(3000)
+    const v = evaluate(buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], data, months, '2026-10', avg, isRec, (m) => m))
+    expect(v('Saldo inicial', 0)).toBe(3500) // the bank's balance on 31/jul, July's salary in it
+    expect([0, 1, 2].map((i) => v('ACME', i))).toEqual([3000, 3000, 3000])
+    expect(v('Saldo final', 2)).toBe(3500 + 3 * 3000 - 3 * 1000)
   })
 
-  it('checks each month against the bank statement balance, salary paid early added back', () => {
+  it('adjusted balance of the month: closing less the salary credited from day 20 on, projected too', () => {
+    const pay = (m: string) => ({ ...tx(m, 3000, 'income', 'Salário', 'ACME'), booking_date: `${m}-28` })
+    const data = [...['2026-07', '2026-08', '2026-09'].map(pay), ...['2026-08', '2026-09'].map((m) => tx(m, -1000, 'expense', 'Moradia', 'ALUGUEL'))]
+    const label = 'Saldo ajustado do mês (sem o salário do mês seguinte)'
+    const v = evaluate(buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], data, months, '2026-10', avg, isRec, (m) => m, undefined, 'Salário'))
+    expect(v(label, 0)).toBe(v('Saldo final', 0) - 3000) // salary of 28/ago is September's
+    expect(v(label, 1)).toBe(v('Saldo final', 1) - 3000)
+    // October (current) and November: the projected salary, usually paid on the 28th.
+    expect(v(label, 2)).toBe(v('Saldo final', 2) - v('Salário', 2))
+    expect(v(label, 3)).toBe(v('Saldo final', 3) - v('Salário', 3))
+    // Salary paid early in the month, or no salary category: no row.
+    const early = data.map((t) => ({ ...t, booking_date: `${t.month}-05` }))
+    const rows = buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], early, months, '2026-10', avg, isRec, (m) => m, undefined, 'Salário')
+    expect(rows.some((r) => r[0] && typeof r[0] === 'object' && r[0].value === label)).toBe(false)
+    expect(buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], data, months, '2026-10', avg, isRec, (m) => m)
+      .some((r) => r[0] && typeof r[0] === 'object' && r[0].value === label)).toBe(false)
+  })
+
+  it('checks each month against the bank statement balance', () => {
     const pay = (m: string) => ({ ...tx(m, 3000, 'income', 'Salário', 'ACME'), booking_date: `${m}-30` })
     const data = [...['2026-07', '2026-08', '2026-09'].map(pay), tx('2026-08', -1000, 'expense', 'Moradia', 'ALUGUEL'), tx('2026-09', -1000, 'expense', 'Moradia', 'ALUGUEL')]
-    // Bank: 3500 on 31/jul (with August's salary), 5500 on 31/ago, but 6000 on 30/set: 1500 short in the app.
-    const bank = { '2026-07-31': 3500, '2026-08-31': 5500, '2026-09-30': 6000 }
-    const v = evaluate(buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500, bank }], data, months, '2026-10', avg, isRec, (m) => m, undefined, 'Salário'))
+    // Bank: 5500 on 31/ago as the sheet, but 6000 on 30/set while the sheet has 7500.
+    const bank = { '2026-08-31': 5500, '2026-09-30': 6000 }
+    const rows = buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500, bank }], data, months, '2026-10', avg, isRec, (m) => m)
+    const v = evaluate(rows)
     expect(v('Saldo no extrato do banco', 0)).toBe(5500)
     expect(v('Diferença (planilha − banco)', 0)).toBe(0)
     expect(v('Diferença (planilha − banco)', 1)).toBe(1500)
-  })
-
-  it('closing as the bank has it: the next salary already credited, or expected in projected months', () => {
-    const pay = (m: string) => ({ ...tx(m, 3000, 'income', 'Salário', 'ACME'), booking_date: `${m}-30` })
-    const data = [...['2026-07', '2026-08', '2026-09'].map(pay), ...['2026-08', '2026-09'].map((m) => tx(m, -1000, 'expense', 'Moradia', 'ALUGUEL'))]
-    const v = evaluate(buildSimSheet([{ id: 'a', name: 'Conta A', currency: 'EUR', opening: 3500 }], data, months, '2026-10', avg, isRec, (m) => m, undefined, 'Salário'))
-    // August and September: September's / October's salary credited on the 30th.
-    expect(v('Saldo final (como no banco)', 0)).toBe(v('Saldo final', 0) + 3000)
-    expect(v('Saldo final (como no banco)', 1)).toBe(v('Saldo final', 1) + 3000)
-    // October (current, November's salary not in yet): November's salary as projected; last month: nothing to add.
-    expect(v('Saldo final (como no banco)', 2)).toBe(v('Saldo final', 2) + v('Salário', 3))
-    expect(v('Saldo final (como no banco)', 3)).toBe(v('Saldo final', 3))
+    expect(rows.some((r) => r[0] && typeof r[0] === 'object' && String(r[0].value).includes('como no banco'))).toBe(false)
   })
 
   it('Brazil: money from abroad that became income (no other side) still counts as the month sent', () => {
