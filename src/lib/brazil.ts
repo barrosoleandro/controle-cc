@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import type { Ctx } from '../App'
 import { CARD_PAYMENT, isTithe } from '../domain/categorize'
 import { countryOf } from '../domain/countries'
-import { applyBillMarks, arrivalsInBrazil, brazilCard, brazilTransfer, forecastNextMonth, isCardBillPayment, monthlyBills, nextMonthOf, sentToBrazil } from '../domain/forecast'
+import { applyBillMarks, arrivalsInBrazil, brazilCard, brazilTransfer, forecastNextMonth, isCardBillPayment, monthlyBills, nextMonthOf, sentToBrazil, transferMade } from '../domain/forecast'
 import { today, useBalances } from './hooks'
 
 export const CARD_LINE = 'Fatura do cartão Itaú'
@@ -51,10 +51,15 @@ export function useBrazilSend(ctx: Ctx) {
     const cardNext = openBills > 0 ? openBills
       : -(dueNext.length ? dueNext : cardBuys.filter((t) => t.month === now.slice(0, 7))).reduce((a, t) => a + t.value, 0)
     const balance = balances.filter((b) => brIds.has(b.account.id) && b.account.type === 'checking').reduce((s, b) => s + fx.convert(b.native, b.account.currency, 'BRL', now), 0)
+    // The Wise transfer out of the accounts outside Brazil (BCP): it settles the month as soon as
+    // it leaves, before the Itaú statement showing it is imported.
+    const senders = new Set(data.accounts.filter((a) => !brIds.has(a.id) && a.type !== 'card').map((a) => a.id))
+    const debits = ctx.etx.filter((t) => senders.has(t.account_id) && Number(t.amount) < 0 && WISE.test(t.description))
+      .map((t) => ({ ...t, value: fx.convert(Number(t.amount), t.currency, 'BRL', t.booking_date) }))
     return {
       ...brazilTransfer(br, cardNext, balance, now),
       lines: [{ label: CARD_LINE, amount: cardNext, date: '' }, ...br.monthlyLines, ...br.periodic],
-      sent: sentToBrazil(brTx, now.slice(0, 7)),
+      sent: transferMade(sentToBrazil(brTx, now.slice(0, 7)), debits, now.slice(0, 7)),
       arrivals: arrivalsInBrazil(brTx),
     }
   }, [ctx.etx, data.accounts, data.cardStatements, data.settings.dashboard?.billMarks, balances, fx])

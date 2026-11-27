@@ -157,6 +157,19 @@ export function sentToBrazil(txs: { booking_date: string; month: string; value: 
 }
 
 /**
+ * The transfer to Brazil made in `month`: what arrived there or, while the Itaú statement does not
+ * show it yet (not imported, or still on its way), what left the sending account (debits: the Wise
+ * transfers out of the accounts outside Brazil, value in BRL, negative). Both are the same money,
+ * so an arrival, when there is one, is the figure.
+ */
+export function transferMade(arrived: SentToBrazil | null, debits: { booking_date: string; month: string; value: number }[], month: string): SentToBrazil | null {
+  if (arrived) return arrived
+  const hits = debits.filter((t) => t.month === month && t.value < 0)
+  if (!hits.length) return null
+  return { amount: -hits.reduce((s, t) => s + t.value, 0), date: hits.map((t) => t.booking_date).sort().at(-1)! }
+}
+
+/**
  * Bills that come every month with a changing amount (health plan, power, phone, condo fee):
  * charged in at least `minMonths` of the last `window` complete months and still in the last two.
  * The amount is the average of the last three months it was charged. Looser than
