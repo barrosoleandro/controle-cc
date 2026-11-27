@@ -60,6 +60,18 @@ describe('sentToBrazil', () => {
   })
 })
 
+import { transferMade } from '../src/domain/forecast'
+describe('transferMade', () => {
+  const d = (date: string, value: number) => ({ booking_date: date, month: date.slice(0, 7), value })
+  it('counts the Wise debit while the arrival in Brazil is not in yet', () => {
+    expect(transferMade(null, [d('2026-11-26', -7000), d('2026-10-27', -6500)], '2026-11')).toEqual({ amount: 7000, date: '2026-11-26' })
+    expect(transferMade(null, [d('2026-10-27', -6500)], '2026-11')).toBeNull()
+  })
+  it('takes the arrival when there is one, not both sides of the same money', () => {
+    expect(transferMade({ amount: 6900, date: '2026-11-27' }, [d('2026-11-26', -7000)], '2026-11')).toEqual({ amount: 6900, date: '2026-11-27' })
+  })
+})
+
 describe('brazilCard', () => {
   const bill = (due_date: string, status: 'paga' | 'aberta', total = 1000) => ({ account_id: 'c', due_date, total, status })
   it('knows what is open and whether this month was paid', () => {
